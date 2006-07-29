@@ -1,19 +1,38 @@
 #include <rtems.h>
 
+
+/* I'm not a fan of those macros...
+ * Note that e.g., MCF5282_EPDR_EPD(bit) doesn't protect 'bit' in the
+ * expansion -- this tells me that whoever wrote those was maybe a novice...
+ */
 #include <mcf5282/mcf5282.h>
+
 #include <rtems/rtems/cache.h>
+#include <rtems/bspIo.h>
 
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <net/if.h>
 
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include <dev/mii/mii.h>
+#include <machine/in_cksum.h>
 
 #define __KERNEL__
 #include <rtems/rtems_mii_ioctl.h>
 #undef __KERNEL__
 
 #include <stdio.h>
+#include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "drv5282DMA.h"
+
+#define LAN9118_PIN	(4)
+#define LAN9118_VECTOR	(64+4)
 
 #define __GET_BITS(x,s,m)	(((x)>>s)&m)
 #define __SET_BITS(x,s,m)	(((x)&m)<<s)
@@ -170,6 +189,7 @@ typedef enum {
 #define E2P_CMD_EPC_ADDR_GET(x)		_GET_BITS(x, 0,0xff)
 #define E2P_CMD_EPC_ADDR_SET(x)		_SET_BITS(x, 0,0xff)
 	E2P_DATA	= 0xb4,
+	FIFO_ALIAS	= 0x0800
 } DrvLan9118RegOff;
 
 typedef enum {
@@ -222,7 +242,43 @@ typedef enum {
 
 typedef struct DrvLan9118Rec_ {
 	uint32_t	base;
+	rtems_id	sync;
+	rtems_isr_entry	oh;
 } DrvLan9118Rec, *DrvLan9118;
+
+typedef struct EtherHeaderRec_ {
+	uint8_t		dst[6];
+	uint8_t		src[6];
+	uint16_t	type;
+} EtherHeaderRec;
+
+typedef struct IpHeaderRec_ {
+	uint8_t		vhl;
+	uint8_t		tos;
+	uint16_t	len;
+	uint16_t	id;
+	uint16_t	off;
+	uint8_t		ttl;
+	uint8_t		prot;
+	uint16_t	csum;
+	uint32_t	src;
+	uint32_t	dst;
+	
+} IpHeaderRec;
+
+typedef struct UdpHeaderRec_ {
+	uint16_t	sport;
+	uint16_t	dport;
+	uint16_t	len;
+	uint16_t	csum;
+} UdpHeaderRec;
+
+typedef struct UdpPacketRec_ {
+	EtherHeaderRec	eh;
+	IpHeaderRec	ih;
+	UdpHeaderRec 	uh;
+} UdpPacketRec;
+
 
 /* TX buffer command words */
 
@@ -259,10 +315,38 @@ typedef struct DrvLan9118Rec_ {
 #define TXSTS_FIFO_UNDERRUN	(1<< 1)
 #define TXSTS_DEFERRED		(1<< 0)
 
+/* RX status word           */
+#define RXSTS_FILT_FAIL		(1<<30)
+#define RXSTS_PKTLEN_GET(x)		__GET_BITS(x,16,0x3fff)
+#define RXSTS_PKTLEN_SET(x)		__SET_BITS(x,16,0x3fff)
+#define RXSTS_ERROR		(1<<15) /* or of 11,7,6,1 */
+#define RXSTS_BCST		(1<<13)
+#define RXSTS_LEN_ERR		(1<<12)
+#define RXSTS_RUNT_FRAME	(1<<11)
+#define RXSTS_MCST_FRAME	(1<<10)
+#define RXSTS_FRAME_TOO_LONG	(1<< 7)
+#define RXSTS_LATE_COLL		(1<< 6)
+#define RXSTS_FRAME_TYPE	(1<< 5)
+#define RXSTS_RX_WDOG_TO	(1<< 4)
+#define RXSTS_MII_ERROR		(1<< 3)
+#define RXSTS_DRIBBLING		(1<< 2)
+#define RXSTS_FCS_ERROR		(1<< 1)
+
+#define RXSTS_ERR_ANY	(RXSTS_FILT_FAIL | RXSTS_ERROR | RXSTS_LEN_ERR | RXSTS_RX_WDOG_TO | RXSTS_MII_ERROR)
+
+/* IRQ configuration bits we set */
+#define IRQ_CFG_BITS IRQ_CFG_IRQ_PUSHPULL
+
 DrvLan9118Rec theLan9118;
 
 extern void Timer_initialize();
 extern uint32_t Read_timer();
+
+static inline uint32_t byterev(uint32_t x)
+{
+	asm volatile("byterev %0":"+r"(x));
+	return x;
+}
 
 
 /* Hmm __IPSBAR is defined in the linker script :-( */
@@ -368,20 +452,83 @@ static struct rtems_mdio_info lan9118_mdio = {
 	has_gmii: 0,
 };
 
-/* I'm not a fan of those macros...
- * Note that e.g., MCF5282_EPDR_EPD(bit) doesn't protect 'bit' in the
- * expansion -- this tells me that whoever wrote those was maybe a novice...
- */
+
+inline void
+drvLan9118IrqEnable()
+{
+int level;
+	rtems_interrupt_disable(level);	
+	MCF5282_EPORT_EPIER |= (MCF5282_EPORT_EPIER_EPIE(LAN9118_PIN));
+	rtems_interrupt_enable(level);	
+}
+
+inline void
+drvLan9118IrqDisable()
+{
+int level;
+	rtems_interrupt_disable(level);	
+	MCF5282_EPORT_EPIER &= ~(MCF5282_EPORT_EPIER_EPIE(LAN9118_PIN));
+	rtems_interrupt_enable(level);	
+}
+
+/* Get environment var from the flash; implemented by GeSys/uC5282 */
+extern const char *getbenv(const char *);
+
+int
+drvLan9118ResetChip(DrvLan9118 plan)
+{
+uint32_t tmp;
+	/* make sure interrupts are masked */
+	drvLan9118IrqDisable();
+
+	/* soft reset; first the PHY, then the chip */
+	lan9118_mdio_w(0, plan, MII_BMCR, BMCR_RESET);
+	do {
+		lan9118_mdio_r(0, plan, MII_BMCR, &tmp);
+	} while ( BMCR_RESET & tmp );
+
+	/* chip soft reset; endianness is unaffected */
+	wr9118Reg(plan, HW_CFG, HW_CFG_SRST);
+	DELAY45ns();
+	do { 
+		tmp = rd9118Reg(plan, HW_CFG);
+		if ( HW_CFG_SRST_TO & tmp ) {
+			fprintf(stderr,"ERROR: Soft Reset Timeout\n");
+			return -1;
+		}
+	} while (HW_CFG_SRST & tmp);
+	return 0;
+}
+
+static rtems_isr
+lan9118isr( rtems_vector_number v )
+{
+	drvLan9118IrqDisable();
+	rtems_semaphore_release(theLan9118.sync);
+#ifdef IRQ_DEBUG
+	printk("LAN ISR\n");
+#endif
+}
 
 DrvLan9118
 drvLan9118Setup(unsigned char *enaddr)
 {
-DrvLan9118 plan;
-uint32_t   tmp,i;
+DrvLan9118	plan;
+uint32_t	tmp,i;
+unsigned char	buf[6];
+unsigned short	sbuf[6];
+rtems_status_code sc;
 
 	if ( !enaddr ) {
-		fprintf(stderr,"Need ethernet address (6 bytes) argument\n");
-		return 0;
+		const char *p = getbenv("HWADDR1");
+		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf,sbuf+1,sbuf+2,sbuf+3,sbuf+4,sbuf+5) ) {
+			fprintf(stderr,"Need ethernet address (6 bytes) argument\n");
+			return 0;
+		} else {
+			for ( i=0; i<6; i++ )
+				buf[i]=sbuf[i];
+			enaddr = buf;
+		}
 	}
 	/* CHIP SELECT setup */
 
@@ -407,22 +554,13 @@ uint32_t   tmp,i;
 	/* EPORT & GPIO setup */
 
 	/* make sure interrupts are masked */
-	MCF5282_EPORT_EPIER &= ~(MCF5282_EPORT_EPIER_EPIE4);
+	drvLan9118IrqDisable();
 
-	/* make pin 4 active low, level triggered */
-	MCF5282_EPORT_EPPAR &= ~MCF5282_EPORT_EPPAR_EPPA4_BOTHEDGE;
-	MCF5282_EPORT_EPPAR |= ~MCF5282_EPORT_EPPAR_EPPA4_LEVEL;
+	/* make pin LAN9118_PIN active low, level triggered */
+	MCF5282_EPORT_EPPAR &= ~(MCF5282_EPORT_EPPAR_EPPA1_BOTHEDGE<<(2*(LAN9118_PIN-1)));
+	MCF5282_EPORT_EPPAR |=  (MCF5282_EPORT_EPPAR_EPPA1_LEVEL<<(2*(LAN9118_PIN-1)));
 
-	MCF5282_EPORT_EPDDR &= ~MCF5282_EPORT_EPDDR_EPDD4;
-
-#if 0
-	/* clear outputs 1&3 */
-	MCF5282_EPORT_EPDR  &= ~(MCF5282_EPORT_EPDR_EPD1 | MCF5282_EPORT_EPDR_EPD1);
-
-	/* make pin 1+3 outputs, pin 2 an input */
-	MCF5282_EPORT_EPDDR |= MCF5282_EPORT_EPDDR_EPDD3 | MCF5282_EPORT_EPDDR_EPDD1;
-	MCF5282_EPORT_EPDDR &= ~MCF5282_EPORT_EPDDR_EPDD2;
-#endif
+	MCF5282_EPORT_EPDDR &= ~MCF5282_EPORT_EPDDR_EPDD(LAN9118_PIN);
 
 	/* Initialize the 9118 */
 	theLan9118.base = LAN_9118_BASE;
@@ -435,22 +573,25 @@ uint32_t   tmp,i;
 	if ( 0x87654321 != tmp )
 		wr9118Reg(plan, ENDIAN, 0xffffffff);
 
-	/* soft reset; first the PHY, then the chip */
-	lan9118_mdio_w(0, plan, MII_BMCR, BMCR_RESET);
-	do {
-		lan9118_mdio_r(0, plan, MII_BMCR, &tmp);
-	} while ( BMCR_RESET & tmp );
+	if ( drvLan9118ResetChip(plan) )
+		return 0;
 
-	/* chip soft reset; endianness is unaffected */
-	wr9118Reg(plan, HW_CFG, HW_CFG_SRST);
-	DELAY45ns();
-	do { 
-		tmp = rd9118Reg(plan, HW_CFG);
-		if ( HW_CFG_SRST_TO & tmp ) {
-			fprintf(stderr,"ERROR: Soft Reset Timeout\n");
-			return 0;
-		}
-	} while (HW_CFG_SRST & tmp);
+	if ( !plan->sync ) {
+		sc = rtems_semaphore_create(
+			rtems_build_name('9','1','1','8'), 
+			0,
+			RTEMS_SIMPLE_BINARY_SEMAPHORE,
+			0,
+			&plan->sync);
+		assert(RTEMS_SUCCESSFUL == sc);
+		rtems_interrupt_catch( lan9118isr, LAN9118_VECTOR, &plan->oh );
+		MCF5282_INTC0_IMRL &= ~((MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1)) | MCF5282_INTC_IMRL_MASKALL);
+		drvLan9118IrqEnable();
+
+		/* configure IRQ output as push-pull, enable interrupts */
+		wr9118Reg(plan, IRQ_CFG, IRQ_CFG_BITS | IRQ_CFG_IRQ_EN);
+		wr9118Reg(plan, INT_EN,  TSFL_INT | RSFL_INT);
+	}
 
 	/* Enable LEDs */
 	wr9118Reg(plan, GPIO_CFG, GPIO_CFG_LED3_EN | GPIO_CFG_LED2_EN | GPIO_CFG_LED1_EN);
@@ -478,6 +619,25 @@ uint32_t   tmp,i;
 	return plan;
 }
 
+void
+drvLan9118Shutdown(DrvLan9118 plan)
+{
+extern volatile int runDaemon;
+	MCF5282_INTC0_IMRL |= (MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1));
+
+	runDaemon = 0;
+	rtems_semaphore_flush( plan->sync );
+	rtems_task_wake_after( 20 );
+
+	drvLan9118ResetChip(plan);
+
+	rtems_semaphore_delete(plan->sync);
+	plan->sync = 0;
+	rtems_interrupt_catch( plan->oh, LAN9118_VECTOR, &plan->oh );
+	plan->oh = 0;
+	
+}
+
 /* just the SIOCSIFMEDIA/SIOCGIFMEDIA ioctls */
 int
 drvLan9118ioctl(DrvLan9118 plan, int cmd, int *p_media)
@@ -503,6 +663,89 @@ uint32_t flags;
 	return 0;
 }
 
+void
+drvLan9118BufRev(uint32_t *buf, int nwords)
+{
+register int i;
+	for (i=0; i<nwords; i++)
+		buf[i] = byterev(buf[i]);
+}
+
+uint32_t
+drvLan9118SendPacket(DrvLan9118 plan, void *buf, int nbytes, int nosync)
+{
+uint32_t rval;
+
+	/* push the command words */
+	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes));
+	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_B_PKTLEN_SET(nbytes));
+
+	/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
+	nbytes = (nbytes+3) & ~3;
+
+#if 0
+	/* DMA the packet */
+	drv5282ioDMA((void*)(plan->base + TX_DATA_FIFO), buf, nbytes, 0, 0, 0);
+#else
+	/* cache flushing is slow; memcpy is faster */
+	memcpy( (void*)(plan->base + FIFO_ALIAS),buf,nbytes);
+#endif
+
+	if ( nosync )
+		return 0;
+
+	if ( RTEMS_SUCCESSFUL != rtems_semaphore_obtain(plan->sync, RTEMS_WAIT, 100) )
+		return -1; /* timeout */
+
+	rval = rd9118Reg(plan, TX_STS_FIFO );
+
+	/* clear and re-enable interrupt */
+	wr9118Reg(plan, INT_STS, TSFL_INT);
+	drvLan9118IrqEnable();
+
+	/* assume timing is OK to now read the status FIFIO entry */
+	return rval;
+}
+
+const uint8_t dstenaddr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }; /* { 0x00,0x30,0x65,0xC9,0x9D,0xF8 }; */
+const uint8_t srcenaddr[6] = { 0x08,0x00,0x56,0x00,0x01,0x00 };
+
+uint16_t csum(uint16_t *d, int n)
+{
+uint32_t s = 0;
+	while (n--)
+		s+=*d++;
+	while ( s > 0xffff )
+		s = (s & 0xffff) + (s >> 16);
+	return ~s & 0xffff;
+}
+
+void
+drvLan9118InitUdpPacket(UdpPacketRec *p, int payload_len)
+{
+	memcpy(p->eh.dst, dstenaddr, 6);
+	memcpy(p->eh.src, srcenaddr, 6);
+	p->eh.type  = htons(0x0800);	/* IP */
+
+	p->ih.vhl   = 0x45;	/* version 4, 5words length */
+	p->ih.tos   = 0x30; 	/* priority, minimize delay */
+	p->ih.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
+	p->ih.id    = htons(0);	/* ? */
+	p->ih.off   = htons(0);
+	p->ih.ttl   = 4;
+	p->ih.prot  = 17;	/* UDP */
+	p->ih.src   = inet_addr("134.79.219.35"); 
+	p->ih.dst   = inet_addr("134.79.216.68"); 
+	p->ih.csum  = 0;
+	
+	p->ih.csum  = htons(in_cksum_hdr((void*)&p->ih));
+
+	p->uh.sport = 0xabcd; 
+	p->uh.dport = 0xabcd; 
+	p->uh.len   = htons(payload_len + sizeof(UdpHeaderRec));
+	p->uh.csum  = 0; /* csum disabled */
+}
+
 int 
 tstLong()
 {
@@ -516,4 +759,55 @@ register unsigned a,b;
 	a = *(volatile short*)0x31000064;
 	b = *(volatile short*)0x31000066;
 	return (a<<16) | b;
+}
+
+#define PAYLOAD_LEN 1024
+
+uint32_t
+drvLan9118SkipPacket(DrvLan9118 plan)
+{
+uint32_t then;
+	then = Read_timer();
+	wr9118Reg(plan, RX_DP_CTL, RX_DP_CTL_FFWD);
+	/* drop the status word; this also introduces the required
+	 * delay before we may read RX_DP_CTL back
+	 */
+	rd9118Reg(plan, RX_STS_FIFO);
+	while ( RX_DP_CTL_FFWD & rd9118Reg(plan, RX_DP_CTL) )
+		/* wait */;
+	return Read_timer() - then;
+}
+
+volatile uint32_t maxFFDDelay = 0;
+
+volatile int runDaemon = 1;
+
+void
+lan_echo_daemon(DrvLan9118 plan)
+{
+void *p = malloc(2000);
+
+	/* setup UDP packet */
+	drvLan9118InitUdpPacket(p, PAYLOAD_LEN);
+	drvLan9118BufRev(p, (PAYLOAD_LEN + sizeof(UdpPacketRec))/4);
+
+	/* enable receiver; disable TX interrupts */
+	wr9118Reg(plan, INT_EN,  RSFL_INT);
+	macCsrWrite(plan, MAC_CR, macCsrRead(plan, MAC_CR) | MAC_CR_RXEN);
+	runDaemon = 1;
+	while (runDaemon) {
+		rtems_semaphore_obtain(plan->sync, RTEMS_WAIT, RTEMS_NO_TIMEOUT);
+		drvLan9118SendPacket(plan, p, PAYLOAD_LEN+sizeof(UdpPacketRec), 1);
+		/* skip */
+		while ( RX_FIFO_INF_RXSUSED_GET(rd9118Reg(plan, RX_FIFO_INF)) > 0 ) {
+			uint32_t dly = drvLan9118SkipPacket(plan);
+			if ( dly > maxFFDDelay )
+				maxFFDDelay = dly;
+		}
+		/* clear and re-enable IRQ */
+		wr9118Reg(plan, INT_STS, RSFL_INT);
+		drvLan9118IrqEnable();
+	}
+	free(p);
+	rtems_task_delete(RTEMS_SELF);
 }
