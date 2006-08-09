@@ -6,7 +6,7 @@
 #
 
 # C source names, if any, go here -- minus the .c
-C_PIECES=drvLan9118 drv5282DMA
+C_PIECES=drvLan9118 drv5282DMA fecmii
 C_FILES=$(C_PIECES:%=%.c)
 C_O_FILES=$(C_PIECES:%=${ARCH}/%.o)
 
@@ -29,7 +29,7 @@ OBJS=$(C_O_FILES) $(CC_O_FILES) $(S_O_FILES)
 # linked application is generated.
 # If it has a '.obj' extension, a loadable module is built.
 
-PGMS=${ARCH}/bpmadc.obj
+PGMS=${ARCH}/drvLan9118.obj
 
 #  List of RTEMS Classic API Managers to be included in the application
 #  goes here. Use:
