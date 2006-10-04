@@ -1,5 +1,80 @@
-#include <rtems.h>
+/* $Id$ */
 
+/* Raw packet driver for the lan9118 10/100 ethernet chip */
+
+/* This driver was written for the uC5282 BSP and BSP-specifica
+ * have not been separated out [yet].
+ */
+
+/* Author: Till Straumann <strauman@slac.stanford.edu>, 2006 */
+
+/* Look for compile-time configurable parameters after the 
+ * include file section...
+ */
+
+/* ENDIANNESS NOTES
+ * ----------------
+ *
+ * The lan9118 is internally (always, i.e., regardless of the ENDIAN register)
+ * **little-endian**. There is a 'ENDIAN' register but it does not really swap
+ * endianness. All it does is helping adjust the A1 line if a 16-bit data port
+ * is used.
+ * Note that all transfers are always 32-bit.
+ * a) If a 32-bit data port exists and if the byte lanes between a big-endian
+ *    CPU and the 9118 are wired straight through:
+ *      lan9118
+ *      (MSB)  B3 B2 B1 B0 (LSB)
+ *      BE CPU
+ *    then both chips will interpret a number 0x10000000 written to the 32-bit
+ *    port as being 256M.
+ * b) If a 16-bit data port exists then a 32-bit write has to be broken into
+ *    two 16-bit writes. Here's where the difference in endianness comes into
+ *    play: The BE associates the most-significant half-word with the lower
+ *    address (A1 == 0), the 9118 with the higher (A1==1) one. Hence if a
+ *    BE CPU writes 0x10000000 this would be broken into 
+ *        1st write cycle  (A1 = 0)  0x1000
+ *        2nd write cycle  (A1 = 1)  0x0000
+ *    and the 9118 reading from the 16-bit port reassembles the 32-bit word to
+ *        1st read cycle   (A1 = 0) goes into least significant half-word
+ *        2nd read cycle   (A1 = 1) goes into most significant half-word
+ *    ==> 0x00001000 is what the 9118 gets.
+ *    
+ *    All the 'ENDIAN' register does (when set to 0xffffffff) is inverting
+ *    the A1 line (unused in 32-bit data port mode) so that the 1st read cycle
+ *    of the example is associated with /A1 == 1, i.e., the most-significant
+ *    half-word and vice versa, i.e., the 9118 correctly reads 0x10000000 as
+ *    it would if a 32-bit port was used.
+ *
+ * This would indicate that the BE CPU and the 9118 work together seamlessly
+ * regardless of endianness and data port width (provided that a BE CPU using
+ * a 16-bit data port sets ENDIAN=0xffffffff).
+ *
+ * CAVEAT CAVEAT CAVEAT:
+ * Even though register values now look fine, the 9118 IS STILL A LE CHIP.
+ * In particular, the first byte it sends on the wire during transmission
+ * is the one a LE system associates with the lowest address, i.e., the
+ * LSB of the first 32-bit word in the FIFO.
+ *
+ * However, a BE CPU writing a block of memory to the FIFO sticks the byte
+ * at the lowest address of the TX buffer into the MSB of the first word
+ * which is the 4th byte send by the 9118!
+ * 
+ * ===> On a BE system THE ENTIRE TX/RX BUFFERS NEED TO BE BYTE SWAPPED
+ *      (in 32-bit chunks).
+ *      Since this is a potentially expensive operation, it seems better
+ *      to swap byte lanes in hardware (interconnection of the lan9118 with
+ *      the bus). This means that the register contents are now swapped also
+ *      and need to be swapped again (in software) when the driver accesses
+ *      registers.
+ *
+ * THIS DRIVER ASSUMES THAT BYTE LANES CONNECTING THE 9118 TO A BIG-ENDIAN
+ * SYSTEM ARE SWAPPED IN HARDWARE.
+ *
+ * The 'ENDIAN' register is unused in this scenario and the port-width doesn't
+ * matter.
+ */
+
+#include <rtems.h>
 
 /* I'm not a fan of those macros...
  * Note that e.g., MCF5282_EPDR_EPD(bit) doesn't protect 'bit' in the
@@ -33,18 +108,38 @@
 
 #include "drv5282DMA.h"
 
+/****** COMPILE-TIME CONFIGURATION PARAMETERS ****************/
+
+/****** BOARD-SPECIFIC CONFIGURATION *************************/
+
+/* To which EPORT pin is the lan9118's interrupt wire hooked */
+#define LAN9118_PIN	(4)
+/* Which vector is the ISR connected to                      */
+#define LAN9118_VECTOR	(64+LAN9118_PIN)
+
+/* Enable debugging messages; this also makes more symbols globally visible */
 #define DEBUG
 
-#define KILL_EVENT	RTEMS_EVENT_0
-#define IRQ_EVENT	RTEMS_EVENT_1
+/* Which RTEMS events to use to signal the driver task that service is needed */ 
+#define KILL_EVENT	RTEMS_EVENT_0	/* terminate task */
+#define IRQ_EVENT	RTEMS_EVENT_1	/* interrupt happened, needs service */
 
+	/* Even though we can switch endianness for register access
+	 * this doesn't change the way the chip puts data out on the
+	 * wire. The first byte that makes it out is always going to
+	 * be the LSB in little endian, as seen by lan9118, i.e., the
+	 * byte lane that ships bits 0..8.
+	 */ 
+
+/* How deep should the TX request queue be (maximum) */
 #define TXQ_DEPTH	4
 
+/* Default priority and stack of the driver task (can be overridden by run-time
+ * args to drvLan9118Start()
+ */
 #define DEFLT_PRIO	30
 #define DEFLT_STACK	2000
 
-#define LAN9118_PIN	(4)
-#define LAN9118_VECTOR	(64+4)
 
 #define __GET_BITS(x,s,m)	(((x)>>s)&m)
 #define __SET_BITS(x,s,m)	(((x)&m)<<s)
@@ -433,6 +528,8 @@ static inline uint32_t byterev(uint32_t x)
 
 #include <stdint.h>
 
+/* Configuration Parameters */
+
 #define FIFO_ADDR ((volatile uint16_t *)0x30000000)
 #define LAN_9118_BASE  (0x31000000)
 
@@ -451,7 +548,7 @@ static inline uint32_t byterev(uint32_t x)
  */
 static inline uint32_t	rd9118Reg(DrvLan9118 plan, DrvLan9118RegOff off)
 {
-	return *(volatile uint32_t *)(plan->base + off);
+	return byterev(*(volatile uint32_t *)(plan->base + off));
 }
 
 static inline uint32_t	rd9118RegSlow(DrvLan9118 plan, DrvLan9118RegOff off)
@@ -463,7 +560,7 @@ static inline uint32_t	rd9118RegSlow(DrvLan9118 plan, DrvLan9118RegOff off)
 
 static inline void	wr9118Reg(DrvLan9118 plan, DrvLan9118RegOff off, uint32_t val)
 {
-	*(volatile uint32_t *)(plan->base + off) = val;
+	*(volatile uint32_t *)(plan->base + off) = byterev(val);
 }
 
 static void macCsrAccess(DrvLan9118 plan, uint32_t rNw, int addr)
@@ -681,9 +778,11 @@ rtems_status_code sc;
 	/* First, we must perform a read access to the BYTE TEST register */
 	tmp = rd9118Reg(&theLan9118,BYTE_TEST);
 	
+#if 0
 	/* Setup for big endian mode */
 	if ( 0x87654321 != tmp )
 		wr9118Reg(plan, ENDIAN, 0xffffffff);
+#endif
 
 	if ( drvLan9118ResetChip(plan) )
 		return 0;
