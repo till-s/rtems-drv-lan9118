@@ -88,10 +88,14 @@
 
 #include <sys/socket.h>
 #include <sys/sockio.h>
+#include <sys/sockio.h>
 #include <net/if.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+#include <errno.h>
+#include <time.h>
 
 #include <dev/mii/mii.h>
 #include <machine/in_cksum.h>
@@ -119,6 +123,7 @@
 
 /* Enable debugging messages; this also makes more symbols globally visible */
 #define DEBUG
+#undef  DEBUG_IP
 
 /* Which RTEMS events to use to signal the driver task that service is needed */ 
 #define KILL_EVENT	RTEMS_EVENT_0	/* terminate task */
@@ -295,12 +300,28 @@ typedef enum {
 #define AFC_CFG_FCANY		(1<<0)
 	E2P_CMD		= 0xb0,
 #define E2P_CMD_BUSY		(1<<31)
-#define E2P_CMD_EPC_CMD_GET(x)		_GET_BITS(x,28,7)
-#define E2P_CMD_EPC_CMD_SET(x)		_SET_BITS(x,28,7)
+#define E2P_CMD_EPC_CMD_GET(x)		__GET_BITS(x,28,7)
+#define E2P_CMD_EPC_CMD_SET(x)		__SET_BITS(x,28,7)
+/* Read Selected Location         */
+#define E2P_CMD_READ				E2P_CMD_EPC_CMD_SET(0)
+/* Erase/Write Disable            */
+#define E2P_CMD_EWDS				E2P_CMD_EPC_CMD_SET(1)
+/* Erase/Write Enable             */
+#define E2P_CMD_EWEN				E2P_CMD_EPC_CMD_SET(2)
+/* Write Selected Location        */
+#define E2P_CMD_WRITE				E2P_CMD_EPC_CMD_SET(3)
+/* Write Data to All Locations    */
+#define E2P_CMD_WRAL				E2P_CMD_EPC_CMD_SET(4)
+/* Erase Selected Location        */
+#define E2P_CMD_ERASE				E2P_CMD_EPC_CMD_SET(5)
+/* Bulk Erase (Erase ALL)         */
+#define E2P_CMD_ERAL				E2P_CMD_EPC_CMD_SET(6)
+/* Reload MAC address from EEPROM */
+#define E2P_CMD_RELOAD				E2P_CMD_EPC_CMD_SET(7)
 #define E2P_CMD_EPC_TIMEOUT	(1<<9)
 #define E2P_CMD_MAC_LOADED	(1<<8)
-#define E2P_CMD_EPC_ADDR_GET(x)		_GET_BITS(x, 0,0xff)
-#define E2P_CMD_EPC_ADDR_SET(x)		_SET_BITS(x, 0,0xff)
+#define E2P_CMD_EPC_ADDR_GET(x)		__GET_BITS(x, 0,0xff)
+#define E2P_CMD_EPC_ADDR_SET(x)		__SET_BITS(x, 0,0xff)
 	E2P_DATA	= 0xb4,
 	FIFO_ALIAS	= 0x0800
 } DrvLan9118RegOff;
@@ -371,42 +392,9 @@ typedef int (*DrvLan9118CB)(struct DrvLan9118Rec_ *plan, uint32_t sts, void *clo
 
 #define REGLOCK(plan)		rtems_semaphore_obtain((plan)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
 #define REGUNLOCK(plan) 	rtems_semaphore_release((plan)->mutx)
-typedef struct DrvLan9118Rec_ {
-	uint32_t	base;
-	uint32_t	int_msk;
-	uint32_t	phy_int_msk;
-	rtems_id	mutx;
-	rtems_id	tid;
-	rtems_id	txq;
-	rtems_isr_entry	oh;
-	DrvLan9118CB	rx_cb;
-	void			*rx_cb_arg;
-	DrvLan9118CB	tx_cb;
-	void			*tx_cb_arg;
-	DrvLan9118CB	err_cb;
-	void			*err_cb_arg;
-	DrvLan9118CB	phy_cb;
-	void			*phy_cb_arg;
-	struct {
-		uint32_t	rxp;
-		uint32_t	txp;
-		uint32_t	rwt;
-		uint32_t	rxe;
-		uint32_t	txe;
-		uint32_t	tdfu;
-		uint32_t	tdfo;
-		uint32_t	rxdf;
-		uint32_t	rsff;
-		uint32_t	tsff;
-		uint32_t	filf;
-		uint32_t	lerr;
-		uint32_t	mii;
-		uint32_t	runt;
-		uint32_t	tool;
-		uint32_t	lcol;
-		uint32_t	csum;
-	} stats;
-} DrvLan9118Rec, *DrvLan9118;
+
+#define TXLOCK(plan)		rtems_semaphore_obtain((plan)->tmutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
+#define TXUNLOCK(plan) 		rtems_semaphore_release((plan)->tmutx)
 
 #define PAD_BYTES 2
 /* uint32_t aligned ethernet header */
@@ -428,7 +416,6 @@ typedef struct IpHeaderRec_ {
 	uint16_t	csum;
 	uint32_t	src;
 	uint32_t	dst;
-	
 } IpHeaderRec;
 
 typedef struct UdpHeaderRec_ {
@@ -438,11 +425,80 @@ typedef struct UdpHeaderRec_ {
 	uint16_t	csum;
 } UdpHeaderRec;
 
+/* sizeof(UdpPacketRec) is 44 */
 typedef struct UdpPacketRec_ {
 	EtherHeaderRec	eh;
 	IpHeaderRec		ih;
 	UdpHeaderRec 	uh;
 } UdpPacketRec;
+
+typedef struct IpArpRec_ {
+	uint16_t	htype;
+	uint16_t	ptype;
+	uint8_t		hlen;
+	uint8_t		plen;
+	uint16_t	oper;
+	uint8_t		sha[6];
+	uint8_t		spa[4];
+	uint8_t		tha[6];
+	uint8_t		tpa[4];
+} IpArpRec;
+
+typedef struct IcmpHeaderRec_ {
+	uint8_t		type;
+	uint8_t		code;
+	uint16_t	csum;
+	uint16_t	ident;
+	uint16_t	seq;
+} IcmpHeaderRec;
+
+typedef struct DrvLan9118Rec_ {
+	uint32_t	base;
+	uint32_t	int_msk;
+	uint32_t	phy_int_msk;
+	rtems_id	mutx;
+	rtems_id	tmutx;
+	rtems_id	tid;
+	rtems_id	txq;
+	rtems_isr_entry	oh;
+	DrvLan9118CB	rx_cb;
+	void			*rx_cb_arg;
+	DrvLan9118CB	tx_cb;
+	void			*tx_cb_arg;
+	DrvLan9118CB	err_cb;
+	void			*err_cb_arg;
+	DrvLan9118CB	phy_cb;
+	void			*phy_cb_arg;
+	uint32_t		ipaddr;
+	EtherHeaderRec	ebcst;
+	struct {
+		EtherHeaderRec  ll;
+		IpArpRec		arp;
+	} arpreq;
+	struct {
+		EtherHeaderRec  ll;
+		IpArpRec		arp;
+	} arprep;
+	struct {
+		uint32_t	rxp;
+		uint32_t	txp;
+		uint32_t	rwt;
+		uint32_t	rxe;
+		uint32_t	txe;
+		uint32_t	tdfu;
+		uint32_t	tdfo;
+		uint32_t	rxdf;
+		uint32_t	rsff;
+		uint32_t	tsff;
+		uint32_t	filf;
+		uint32_t	lerr;
+		uint32_t	mii;
+		uint32_t	runt;
+		uint32_t	tool;
+		uint32_t	lcol;
+		uint32_t	csum;
+	} stats;
+} DrvLan9118Rec, *DrvLan9118;
 
 void drvLan9118Daemon(rtems_task_argument);
 
@@ -549,6 +605,12 @@ static inline uint32_t byterev(uint32_t x)
 static inline uint32_t	rd9118Reg(DrvLan9118 plan, DrvLan9118RegOff off)
 {
 	return byterev(*(volatile uint32_t *)(plan->base + off));
+}
+
+/* read byte stream from fifo w/o byte-swapping */
+static inline uint32_t rd9118RxFifo(DrvLan9118 plan)
+{
+	return *(volatile uint32_t *) (plan->base + RX_DATA_FIFO);
 }
 
 static inline uint32_t	rd9118RegSlow(DrvLan9118 plan, DrvLan9118RegOff off)
@@ -710,6 +772,7 @@ uint32_t tmp;
 
 DrvLan9118
 drvLan9118Setup(	unsigned char *enaddr,
+					char *ipaddr,
 					uint32_t flags,
 					DrvLan9118CB rx_cb, 	void *rx_cb_arg,
 					DrvLan9118CB tx_cb, 	void *tx_cb_arg,
@@ -795,13 +858,26 @@ rtems_status_code sc;
 		plan->phy_int_msk = 0;
 
 		sc = rtems_semaphore_create(
-			rtems_build_name('9','1','1','8'), 
+			rtems_build_name('l','a','n','d'), 
 			1,
 			RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
 			0,
 			&plan->mutx);
 		if ( RTEMS_SUCCESSFUL != sc ) {
 			rtems_error(sc, "drvLan9118: unable to create mutex\n");
+			return 0;
+		}
+
+		sc = rtems_semaphore_create(
+			rtems_build_name('l','a','n','t'), 
+			1,
+			RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+			0,
+			&plan->tmutx);
+		if ( RTEMS_SUCCESSFUL != sc ) {
+			rtems_semaphore_delete( plan->mutx );
+			plan->mutx = 0;
+			rtems_error(sc, "drvLan9118: unable to create TX mutex\n");
 			return 0;
 		}
 
@@ -814,6 +890,7 @@ rtems_status_code sc;
 								&plan->txq);
 			if ( RTEMS_SUCCESSFUL != sc ) {
 				rtems_error(sc, "drvLan9118: unable to create message queue\n");
+				rtems_semaphore_delete(plan->tmutx);
 				rtems_semaphore_delete(plan->mutx);
 				plan->mutx = 0;
 				return 0;
@@ -829,6 +906,7 @@ rtems_status_code sc;
 		plan->phy_cb		= phy_cb;
 		plan->phy_cb_arg	= phy_cb_arg;
 
+
 		rtems_interrupt_catch( lan9118isr, LAN9118_VECTOR, &plan->oh );
 		MCF5282_INTC0_IMRL &= ~((MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1)) | MCF5282_INTC_IMRL_MASKALL);
 
@@ -837,6 +915,40 @@ rtems_status_code sc;
 		wr9118Reg(plan, INT_EN,  plan->int_msk);
 
 		drvLan9118IrqEnable();
+	}
+
+
+	{
+		plan->ipaddr = inet_addr(ipaddr);
+
+		/* Setup the convenience headers */
+		memcpy( plan->ebcst.src, enaddr, 6);
+		memset( plan->ebcst.dst, 0xff,   6);
+
+		plan->arprep.arp.htype = plan->arpreq.arp.htype = htons(1);     /* Ethernet */
+		plan->arprep.arp.ptype = plan->arpreq.arp.ptype = htons(0x800); /* IP       */
+		plan->arprep.arp.hlen  = plan->arpreq.arp.hlen  = 6; 
+		plan->arprep.arp.plen  = plan->arpreq.arp.plen  = 4; 
+		plan->arprep.arp.oper  = htons(2); /* ARP REPLY   */
+		plan->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
+
+		/* our ether addr into arp reply (source hw addr) */
+		memcpy(plan->arprep.arp.sha, enaddr, 6);
+		/* our IP addr into arp reply (source proto addr) */
+		memcpy(plan->arprep.arp.spa, &plan->ipaddr, 4);
+
+
+		/* bcst addr into arp request hw addr             */
+		memset(plan->arpreq.arp.tha, 0xff,   6);
+		memcpy(&plan->arpreq.arp.sha, enaddr, 6);
+		memcpy(&plan->arpreq.arp.spa, &plan->ipaddr, 4);
+		memcpy(&plan->arpreq.ll, &plan->ebcst, sizeof(plan->ebcst));
+
+		memcpy(&plan->arprep.ll.src, enaddr, 6);
+
+		/* set type after copying broadcast packet */
+		plan->arprep.ll.type = plan->arpreq.ll.type = htons(0x806);
+
 	}
 
 	/* Enable LEDs */
@@ -878,7 +990,7 @@ rtems_status_code 	sc;
 	sc = rtems_task_create(
 					rtems_build_name('9','1','1','8'),
 					prio  ? prio  : DEFLT_PRIO,
-					stack ? stack : DEFLT_STACK,
+					stack && stack > DEFLT_STACK ? stack : DEFLT_STACK,
 					RTEMS_FLOATING_POINT | RTEMS_DEFAULT_ATTRIBUTES,
 					RTEMS_DEFAULT_MODES,
 					&tid);
@@ -886,7 +998,11 @@ rtems_status_code 	sc;
 		rtems_error(sc,"drvLan9118; unable to create task\n");
 		return -1;
 	}
+
+	/* lock 'tid' against EEPROM access routines */
+	REGLOCK(plan);
 	plan->tid = tid;
+	REGUNLOCK(plan);
 	
 	sc = rtems_task_start(tid, drvLan9118Daemon, (rtems_task_argument)plan);
 	if ( RTEMS_SUCCESSFUL != sc ) {
@@ -922,6 +1038,7 @@ drvLan9118Shutdown(DrvLan9118 plan)
 
 	drvLan9118ResetChip(plan);
 
+	rtems_semaphore_delete(plan->tmutx);
 	rtems_semaphore_delete(plan->mutx);
 	plan->mutx = 0;
 	if ( plan->txq )
@@ -993,27 +1110,58 @@ register int i;
 	for (i=0; i<nwords; i++)
 		buf[i] = byterev(buf[i]);
 }
-
+ 
 /* To be called from TX thread ONLY */
+
+/* NOTE: The head of the packet must be padded with 2 bytes, i.e.,
+ *       the destination ethernet address starts at buf[2]
+ *       The byte count includes the pad bytes but they are not
+ *       sent out on the wire.
+ *       Also, data are read out of the buffer in 32-bit words,
+ *       i.e., even if nbytes is not a multiple of four the
+ *       bytes up to the next word boundary are still read
+ *       (but not sent).
+ *       For sake of performance it is recommended to align
+ *       buffers on a word boundary.
+ *
+ *       It is legal to provide a NULL buffer pointer. In this case,
+ *       the routine merely puts the command words into the fifo
+ *       and it is up to the user to write the actual data (again:
+ *       2 pad-bytes at the beginning and the necessary padding
+ *       at the end of the packet must be written to the chip!)
+ *
+ *       If a NULL buffer is used then the routine leaves the
+ *       TX mutex locked and it must be unlocked by the user.
+ */
 uint32_t
-drvLan9118TxPacket(DrvLan9118 plan, void *buf, int nbytes)
+drvLan9118TxPacket(DrvLan9118 plan, void *buf, int nbytes, unsigned short tag)
 {
+	TXLOCK(plan);
 	/* push the command words */
-	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes) | TXCMD_A_START_ALIGN_SET(PAD_BYTES));
-	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_B_PKTLEN_SET(nbytes));
+	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes - PAD_BYTES) | TXCMD_A_START_ALIGN_SET(PAD_BYTES));
+	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_B_TAG_SET(tag) | TXCMD_B_PKTLEN_SET(nbytes - PAD_BYTES));
 
 	/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
 	nbytes = (nbytes+3) & ~3;
 
+	if ( buf ) {
 #if 0
-	/* DMA the packet */
-	drv5282ioDMA((void*)(plan->base + TX_DATA_FIFO), buf, nbytes, 0, 0, 0);
+		/* DMA the packet */
+		drv5282ioDMA((void*)(plan->base + TX_DATA_FIFO), buf, nbytes, 0, 0, 0);
 #else
-	/* cache flushing is slow; memcpy is faster */
-	memcpy( (void*)(plan->base + FIFO_ALIAS),buf,nbytes);
+		/* cache flushing is slow; memcpy is faster */
+		memcpy( (void*)(plan->base + FIFO_ALIAS),buf,nbytes);
 #endif
+		TXUNLOCK(plan);
+	}
 
 	return 0;
+}
+
+void
+drvLan9118TxUnlock(DrvLan9118 plan)
+{
+	TXUNLOCK(plan);
 }
 
 rtems_status_code
@@ -1047,7 +1195,7 @@ uint32_t then;
 	if ( !which )
 		return -1;
 	then = Read_timer();
-	wr9118Reg(plan, TX_CFG, which);
+	wr9118Reg(plan, TX_CFG, which | rd9118Reg(plan, TX_CFG));
 	DELAY45ns();
 	while ( which & rd9118Reg(plan, TX_CFG) )
 		/* poll */;
@@ -1063,12 +1211,6 @@ uint32_t then = Read_timer();
 	while ( RX_CFG_RX_DUMP & rd9118Reg(plan, RX_CFG) )
 		/* poll */;
 	return Read_timer() - then;	
-}
-
-uint32_t
-drvLan9118StopRx(DrvLan9118 plan)
-{
-uint32_t then = Read_timer();
 }
 
 const uint8_t dstenaddr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }; /* { 0x00,0x30,0x65,0xC9,0x9D,0xF8 }; */
@@ -1254,8 +1396,11 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 				tx_sts = rd9118Reg(plan, TX_STS_FIFO);
 				if ( plan->tx_cb )
 					plan->tx_cb(plan, tx_sts, plan->tx_cb_arg);
-				else
-					rtems_message_queue_send(plan->txq, &tx_sts, sizeof(tx_sts));
+				else {
+					/* status with tag 0 is dropped */
+					if ( TXSTS_TAG_GET(tx_sts) )
+						rtems_message_queue_send(plan->txq, &tx_sts, sizeof(tx_sts));
+				}
 
 				/* at least 135ns delay after reading STS_FIFO - this is probably
 				 * burnt by what happened up to here...
@@ -1315,6 +1460,126 @@ int i;
 	for (i=0; i<5; i++)
 		fprintf(f,"%02X:",*ea++);
 	fprintf(f,"%02X",*ea);
+}
+
+
+static inline uint32_t e2p_busywait(DrvLan9118 plan)
+{
+uint32_t cmd;
+	while ( E2P_CMD_BUSY & (cmd = rd9118Reg(plan, E2P_CMD)) )
+		/* busy wait -- this can take up to 30ms */ ;
+	return cmd;
+}
+
+int e2p_cmd_exec(DrvLan9118 plan, uint32_t cmd)
+{
+
+	/* timeout bit is clear-on-write; make sure we reset any old
+	 * timeout condition...
+	 */
+	wr9118Reg(plan, E2P_CMD, cmd | E2P_CMD_BUSY | E2P_CMD_EPC_TIMEOUT);
+
+	cmd = e2p_busywait(plan);
+
+	if ( E2P_CMD_EPC_TIMEOUT & cmd ) {
+		return -ETIMEDOUT;
+	}
+	return 0;
+}
+
+#define ERASE_LOC(off)	(E2P_CMD_ERASE | E2P_CMD_EPC_ADDR_SET(off))
+
+static int doit(DrvLan9118 plan, uint32_t cmd, uint8_t *d, uint8_t *s, unsigned off, unsigned len)
+{
+int rval = -1;
+
+	if ( !plan || !len || off + len > 256 )
+		return -EINVAL;
+
+	REGLOCK(plan);
+	/* Reject access while driver is running */
+	if ( plan->tid ) {
+		rval = -EACCES;
+		goto bail;
+	}
+
+	if ( E2P_CMD_BUSY & rd9118Reg(plan, E2P_CMD) ) {
+		rval = -EBUSY;
+		goto bail;
+	}
+	
+	while ( len-- ) {
+
+		if ( s ) {
+			/* WRITE operation */
+
+			/* erase target location first */
+			if ( (rval = e2p_cmd_exec(plan, ERASE_LOC(off))) )
+				goto bail;
+
+			/* write data */
+			wr9118Reg(plan, E2P_DATA, *s);
+			s++;
+		}
+
+		if ( (rval = e2p_cmd_exec(plan, cmd | E2P_CMD_EPC_ADDR_SET(off) )) )
+			goto bail;
+
+		if ( d ) {
+			/* READ operation */
+			*d = rd9118Reg(plan, E2P_DATA);
+			d++;
+		}
+
+		off++;
+	}
+
+	rval = 0;
+
+bail:
+	REGUNLOCK(plan);
+	return rval;
+}
+
+/* NOTE: All EEPROM access routines lock the registers and busy wait.
+ *       They are intended to be used during initialization or maintenance
+ *       and may impact daemon operation (latencies).
+ *       Therefore, executing any EEPROM access routine is rejected if
+ *       the driver is already running (after the start routine is executed).
+ */
+
+/* Read from EEPROM; return 0 (success) or (-ERRNO) on error */
+int
+drvLan9118E2PRead(DrvLan9118 plan, void *dst, unsigned src, unsigned len)
+{
+	return doit(plan, E2P_CMD_READ, dst, 0, src, len);
+}
+
+/* Write to EEPROM (erasing target locations first);
+ * return 0 (success) or (-ERRNO) on error
+ */
+int
+drvLan9118E2PWrite(DrvLan9118 plan, void *src, unsigned dst, unsigned len)
+{
+	return doit(plan, E2P_CMD_WRITE, 0, src, dst, len);
+}
+
+int
+drvLan9118E2PWriteEnable(DrvLan9118 plan)
+{
+	return doit(plan, E2P_CMD_EWEN, 0, 0, 0, 1);
+}
+
+int
+drvLan9118E2PWriteDisable(DrvLan9118 plan)
+{
+	return doit(plan, E2P_CMD_EWDS, 0, 0, 0, 1);
+}
+
+int
+drvLan9118E2PErase(DrvLan9118 plan)
+{
+	return doit(plan, E2P_CMD_ERAL, 0, 0, 0, 1);
 }
 
 int
@@ -1377,4 +1642,259 @@ struct in_addr	sa;
 	}
 bail:
 		return len;
+}
+
+#define CACHE_OVERLAP 10
+
+typedef struct ArpEntryRec_ {
+	uint32_t	ipaddr;
+	uint8_t		hwaddr[6];
+	time_t		ctime;
+} ArpEntryRec, *ArpEntry;
+
+static ArpEntry arpcache[256];
+
+int arpLookup(DrvLan9118 plan, uint32_t ipaddr, uint8_t *enaddr)
+{
+ArpEntry rval;
+int      i,n;
+uint8_t  hh;
+uint8_t  h  = ipaddr;
+		 h += ipaddr>>8;
+		 h += ipaddr>>16;
+
+		for ( n = 0; n < CACHE_OVERLAP; n++ ) {
+
+			/* don't bother about MSB; assume we're on a LAN anyways */
+			
+			/* Abuse the TX lock */
+			TXLOCK(plan);
+			for ( i = 0, hh=h; i<CACHE_OVERLAP && (rval = arpcache[hh]); i++, hh++ ) {
+				if ( ipaddr == rval->ipaddr ) {
+					memcpy(enaddr, rval->hwaddr, 6);
+					TXUNLOCK(plan);
+					return 0;
+				}
+			}
+			TXUNLOCK(plan);
+
+			/* must do a new lookup */
+			drvLan9118TxPacket(plan, 0, sizeof(plan->arpreq), 0);
+
+			/* arpreq is locked and may be modified */
+			*(uint32_t*)plan->arpreq.arp.tpa = ipaddr;
+
+			/* send request */
+			memcpy( (void*)(plan->base + FIFO_ALIAS), &plan->arpreq, sizeof(plan->arpreq));
+			drvLan9118TxUnlock(plan);
+
+			/* should synchronize but it's easier to just delay and try again */
+			rtems_task_wake_after(1);
+		}
+		
+		return -1;
+}
+
+void
+arpPutEntry(DrvLan9118 plan, uint8_t *enaddr, uint32_t ipaddr)
+{
+ArpEntry rval;
+ArpEntry newe = malloc(sizeof(*newe));	/* pre-allocate */
+int      i;
+uint8_t  oh;
+uint8_t  h  = ipaddr;
+		 h += ipaddr>>8;
+		 h += ipaddr>>16;
+
+		/* Abuse the TX lock */
+		TXLOCK(plan);
+		for ( i = 0, oh=h; i<CACHE_OVERLAP && (rval = arpcache[h]); i++, h++ ) {
+			if ( ipaddr == rval->ipaddr ) {
+				memcpy(rval->hwaddr, enaddr, 6);
+				rval->ctime = time(0);
+				TXUNLOCK(plan);
+				return;
+			}
+			if ( rval->ctime < arpcache[oh]->ctime )
+				oh = h;
+				
+		}
+
+		if ( rval ) {
+			/* all slots full; must evict oldest entry */
+			h = oh;
+		} else {
+			/* use new entry */
+			arpcache[h] = newe;
+			newe        = 0;
+		}
+		rval = arpcache[h];
+		rval->ipaddr = ipaddr;
+		memcpy(rval->hwaddr, enaddr, 6);
+		rval->ctime  = time(0);
+		TXUNLOCK(plan);
+
+		free(newe);
+}
+
+void
+arpDelEntry(DrvLan9118 plan, uint32_t ipaddr)
+{
+ArpEntry rval, found = 0;
+int      i;
+uint8_t  h  = ipaddr;
+		 h += ipaddr>>8;
+		 h += ipaddr>>16;
+
+
+		/* Abuse the TX lock */
+		TXLOCK(plan);
+		for ( i = 0; i<CACHE_OVERLAP && (rval = arpcache[h]); i++, h++ ) {
+				if ( ipaddr == rval->ipaddr ) {
+					arpcache[h] = 0;
+					found = rval;
+					break;
+				}
+		}
+		TXUNLOCK(plan);
+		free(found);
+}
+ 
+static int
+handleArp(DrvLan9118 plan)
+{
+IpArpRec ipa;
+uint32_t *p    = (uint32_t*)&ipa.sha[0];
+int      isreq = 0;
+
+	 /* 0x0001 == Ethernet, 0x0800 == IP */
+	if ( ntohl(0x00010800) != rd9118RxFifo(plan) )
+		return 4;
+
+
+	switch ( rd9118RxFifo(plan) ) {
+		default:
+			return 8;
+
+		/* 0x06 hw addr len, 0x04 proto len, 0x0001 ARP REQUEST */
+		case ntohl(0x06040001):
+			isreq = 1;
+		/* 0x06 hw addr len, 0x04 proto len, 0x0002 ARP REPLY   */
+		case ntohl(0x06040002):
+			break;
+	}
+
+	*p++ = rd9118RxFifo(plan);
+	*p++ = rd9118RxFifo(plan);
+	*p++ = rd9118RxFifo(plan);
+	*p++ = rd9118RxFifo(plan);
+	*p++ = rd9118RxFifo(plan);
+
+	if ( isreq ) {
+#ifdef DEBUG_IP
+		printf("got ARP request for %d.%d.%d.%d\n",ipa.tpa[0],ipa.tpa[1],ipa.tpa[2],ipa.tpa[3]); 
+#endif
+		if ( *(uint32_t*)ipa.tpa != plan->ipaddr )
+			return sizeof(ipa);
+
+#ifdef DEBUG_IP
+		{
+		extern void md(void*,int);
+		printf("MATCH -> sending\n");
+		md(&plan->arprep, sizeof(plan->arprep));
+		}
+#endif
+		/* they mean us; send reply */
+		memcpy( plan->arprep.ll.dst,  ipa.sha, 6);
+		memcpy( plan->arprep.arp.tha, ipa.sha, 10);
+		drvLan9118TxPacket(plan, &plan->arprep, sizeof(plan->arprep), 0);
+	} else {
+		/* a reply to our request */
+#ifdef DEBUG_IP
+		printf("got ARP reply from "); prether(stdout, ipa.sha);
+		printf("\n");
+#endif
+		arpPutEntry(plan, ipa.sha, *(uint32_t*)ipa.spa);
+	}
+
+	return sizeof(ipa);
+}
+
+static int
+handleIP(EtherHeaderRec *peh, DrvLan9118 plan)
+{
+int         rval = 0, l, nbytes;
+struct {
+	EtherHeaderRec eh;
+	IpHeaderRec    ih;
+	IcmpHeaderRec  icmph;
+	uint8_t        data[DEFLT_STACK - 1000];
+}           p;
+
+
+
+	memcpy( &p.ih, (void*)(plan->base + FIFO_ALIAS), sizeof(p.ih) );
+	rval += sizeof(p.ih);
+
+	if ( p.ih.dst != plan->ipaddr )
+		return rval;
+
+	l = ( (nbytes = ntohs(p.ih.len)) + 3) & ~3;
+	switch ( p.ih.prot ) {
+		case 1 /* ICMP */:
+		if ( sizeof(p) >= l ) {
+			memcpy( &p.icmph, (void*)(plan->base + FIFO_ALIAS), l);
+			rval += l;
+			if ( p.icmph.type == 8 /* ICMP REQUEST */ && p.icmph.code == 0 ) {
+#ifdef DEBUG_IP
+				printf("handling ICMP ECHO request\n");
+#endif
+				p.icmph.type = 0; /* ICMP REPLY */
+				p.icmph.csum = 0;
+				memcpy( p.eh.dst, peh->src, 6 );
+				memcpy( p.eh.src, plan->arprep.ll.src, 6);
+				p.eh.type = htons(0x800); /* IP */
+				p.ih.dst  = p.ih.src;
+				p.ih.src  = plan->ipaddr; 
+				p.ih.csum = 0;
+				p.ih.csum = htons(in_cksum_hdr((void*)&p.ih));
+				drvLan9118TxPacket(plan, &p, sizeof(EtherHeaderRec) + nbytes, 0);
+			}
+		}
+		break;
+	}
+
+	return rval;
+}
+
+/* Handle ARP and ICMP echo (ping) requests */
+int
+drvLan9118IpRxCb(DrvLan9118 plan, uint32_t len, void *arg)
+{
+union {
+EtherHeaderRec	eh;
+uint32_t		raw[4];
+} p;
+
+	p.raw[0] = rd9118RxFifo(plan);	
+	p.raw[1] = rd9118RxFifo(plan);	
+	p.raw[2] = rd9118RxFifo(plan);	
+	p.raw[3] = rd9118RxFifo(plan);	
+	
+	len -= sizeof(p);
+
+	switch ( p.eh.type ) {
+		case htons(0x806) /* ARP */:
+			len -= handleArp(plan);
+			break;
+
+		case htons(0x800) /* IP  */:
+			len -= handleIP(&p.eh, plan);
+			break;
+
+		default:
+			break;
+	}
+
+	return len;
 }
