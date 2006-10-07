@@ -112,18 +112,33 @@
 
 #include "drv5282DMA.h"
 
+#include <drvLanProto.h>
+
+/* Get environment var from the flash; implemented by GeSys/uC5282 */
+extern const char *getbenv(const char *);
+
 /****** COMPILE-TIME CONFIGURATION PARAMETERS ****************/
 
 /****** BOARD-SPECIFIC CONFIGURATION *************************/
 
 /* To which EPORT pin is the lan9118's interrupt wire hooked */
 #define LAN9118_PIN	(4)
+
+/* To which GPIO port TD pin (NOTE: this is arcturus port PTC!!)
+ * is the reset line wired. Leave undefined if no connection exists.
+ */
+#define LAN9118_RESET_TD_PIN	(0)
+
 /* Which vector is the ISR connected to                      */
 #define LAN9118_VECTOR	(64+LAN9118_PIN)
 
 /* Enable debugging messages; this also makes more symbols globally visible */
-#define DEBUG
-#undef  DEBUG_IP
+#define DEBUG_IP	(1<<0)
+#define DEBUG_IRQ	(1<<1)
+#define DEBUG_TXSTS (1<<2)
+
+#define DEBUG 		DEBUG_IP
+
 
 /* Which RTEMS events to use to signal the driver task that service is needed */ 
 #define KILL_EVENT	RTEMS_EVENT_0	/* terminate task */
@@ -151,6 +166,7 @@
 
 #ifdef DEBUG
 #define STATIC
+int drvLan9118Debug = DEBUG_TXSTS;
 #else
 #define STATIC static
 #endif
@@ -390,67 +406,11 @@ struct DrvLan9118Rec_;
 
 typedef int (*DrvLan9118CB)(struct DrvLan9118Rec_ *plan, uint32_t sts, void *closure);
 
-#define REGLOCK(plan)		rtems_semaphore_obtain((plan)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
-#define REGUNLOCK(plan) 	rtems_semaphore_release((plan)->mutx)
+#define REGLOCK(plan)		assert( !rtems_semaphore_obtain((plan)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT))
+#define REGUNLOCK(plan) 	assert( !rtems_semaphore_release((plan)->mutx))
 
-#define TXLOCK(plan)		rtems_semaphore_obtain((plan)->tmutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
-#define TXUNLOCK(plan) 		rtems_semaphore_release((plan)->tmutx)
-
-#define PAD_BYTES 2
-/* uint32_t aligned ethernet header */
-typedef struct EtherHeaderRec_ {
-	uint8_t		pad[PAD_BYTES];
-	uint8_t		dst[6];
-	uint8_t		src[6];
-	uint16_t	type;
-} EtherHeaderRec;
-
-typedef struct IpHeaderRec_ {
-	uint8_t		vhl;
-	uint8_t		tos;
-	uint16_t	len;
-	uint16_t	id;
-	uint16_t	off;
-	uint8_t		ttl;
-	uint8_t		prot;
-	uint16_t	csum;
-	uint32_t	src;
-	uint32_t	dst;
-} IpHeaderRec;
-
-typedef struct UdpHeaderRec_ {
-	uint16_t	sport;
-	uint16_t	dport;
-	uint16_t	len;
-	uint16_t	csum;
-} UdpHeaderRec;
-
-/* sizeof(UdpPacketRec) is 44 */
-typedef struct UdpPacketRec_ {
-	EtherHeaderRec	eh;
-	IpHeaderRec		ih;
-	UdpHeaderRec 	uh;
-} UdpPacketRec;
-
-typedef struct IpArpRec_ {
-	uint16_t	htype;
-	uint16_t	ptype;
-	uint8_t		hlen;
-	uint8_t		plen;
-	uint16_t	oper;
-	uint8_t		sha[6];
-	uint8_t		spa[4];
-	uint8_t		tha[6];
-	uint8_t		tpa[4];
-} IpArpRec;
-
-typedef struct IcmpHeaderRec_ {
-	uint8_t		type;
-	uint8_t		code;
-	uint16_t	csum;
-	uint16_t	ident;
-	uint16_t	seq;
-} IcmpHeaderRec;
+#define TXLOCK(plan)		assert( !rtems_semaphore_obtain((plan)->tmutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT))
+#define TXUNLOCK(plan) 		assert( !rtems_semaphore_release((plan)->tmutx) )
 
 typedef struct DrvLan9118Rec_ {
 	uint32_t	base;
@@ -469,16 +429,7 @@ typedef struct DrvLan9118Rec_ {
 	void			*err_cb_arg;
 	DrvLan9118CB	phy_cb;
 	void			*phy_cb_arg;
-	uint32_t		ipaddr;
 	EtherHeaderRec	ebcst;
-	struct {
-		EtherHeaderRec  ll;
-		IpArpRec		arp;
-	} arpreq;
-	struct {
-		EtherHeaderRec  ll;
-		IpArpRec		arp;
-	} arprep;
 	struct {
 		uint32_t	rxp;
 		uint32_t	txp;
@@ -604,13 +555,8 @@ static inline uint32_t byterev(uint32_t x)
  */
 static inline uint32_t	rd9118Reg(DrvLan9118 plan, DrvLan9118RegOff off)
 {
+	DELAY180ns();
 	return byterev(*(volatile uint32_t *)(plan->base + off));
-}
-
-/* read byte stream from fifo w/o byte-swapping */
-static inline uint32_t rd9118RxFifo(DrvLan9118 plan)
-{
-	return *(volatile uint32_t *) (plan->base + RX_DATA_FIFO);
 }
 
 static inline uint32_t	rd9118RegSlow(DrvLan9118 plan, DrvLan9118RegOff off)
@@ -623,6 +569,18 @@ static inline uint32_t	rd9118RegSlow(DrvLan9118 plan, DrvLan9118RegOff off)
 static inline void	wr9118Reg(DrvLan9118 plan, DrvLan9118RegOff off, uint32_t val)
 {
 	*(volatile uint32_t *)(plan->base + off) = byterev(val);
+}
+
+/* read byte stream from fifo w/o byte-swapping */
+static inline uint32_t rd9118RxFifo(DrvLan9118 plan)
+{
+	return *(volatile uint32_t *) (plan->base + RX_DATA_FIFO);
+}
+
+/* write byte stream to fifo w/o byte-swapping  */
+static inline void wr9118TxFifo(DrvLan9118 plan, uint32_t v)
+{
+	*(volatile uint32_t *) (plan->base + TX_DATA_FIFO) = v;
 }
 
 static void macCsrAccess(DrvLan9118 plan, uint32_t rNw, int addr)
@@ -657,6 +615,81 @@ uint32_t v = wNr | MII_ACC_PHY_SET(0x01) | MII_ACC_MIIRIND_SET(addr) | MII_ACC_M
 }
 
 void
+drvLan9118FifoRd(DrvLan9118 plan, void *buf, int n_bytes)
+{
+uint32_t                   *ibuf = buf;
+register volatile uint32_t *psrc = (void*)(plan->base + FIFO_ALIAS);
+
+	assert( ((uint32_t)buf & 3) == 0 );
+	assert( (n_bytes & 3)       == 0 );
+
+	n_bytes >>= 2; /* convert into words */
+	while (n_bytes >= 8) {
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		*ibuf++ = *psrc;
+		n_bytes -= 8;
+	}
+	while (n_bytes-- > 0) {
+		*ibuf++ = *psrc;
+	}
+}
+
+void
+drvLan9118FifoWr(DrvLan9118 plan, void *buf, int n_bytes);
+#if 0
+{
+uint32_t                   *ibuf = buf;
+register volatile uint32_t *pdst = (void*)(plan->base + FIFO_ALIAS);
+
+	assert( ((uint32_t)buf & 3) == 0 );
+	assert( (n_bytes & 3)       == 0 );
+
+
+#if 1
+	n_bytes >>= 2; /* convert into words */
+	while (n_bytes >= 8) {
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		*pdst = *ibuf++;
+		n_bytes -= 8;
+	}
+	while (n_bytes-- > 0) {
+		*pdst = *ibuf++;
+	}
+#else
+#if 0
+	{ int i;
+	for ( i=0; i<n_bytes/sizeof(uint32_t); i++)
+			*pdst = ibuf[i];
+	}
+#else
+	memcpy( (void*)(plan->base + FIFO_ALIAS), buf, n_bytes);
+#endif
+#endif
+}
+#endif
+
+/* busy wait for the EEPROM controller to be ready */
+static inline uint32_t e2p_busywait(DrvLan9118 plan)
+{
+uint32_t cmd;
+	while ( E2P_CMD_BUSY & (cmd = rd9118Reg(plan, E2P_CMD)) )
+		/* busy wait -- this can take up to 30ms */ ;
+	return cmd;
+}
+
+void
 drvLan9118Lock(DrvLan9118 plan)
 {
 	REGLOCK(plan);
@@ -668,6 +701,7 @@ drvLan9118Unlock(DrvLan9118 plan)
 	REGUNLOCK(plan);
 }
 
+/* MII access functions to support media ioctl */
 STATIC int
 drvLan9118_mdio_w(int phy, void *uarg, unsigned reg, uint32_t val)
 {
@@ -714,10 +748,45 @@ int level;
 	rtems_interrupt_enable(level);	
 }
 
-/* Get environment var from the flash; implemented by GeSys/uC5282 */
-extern const char *getbenv(const char *);
+/* Hard reset via a dedicated wire from the arcturus board
+ *
+ * !!!!!!!
+ * NOTE: clever arcturus designers *renamed* pins in a confusing
+ *       way: what they call PTC is what the coldfire manual calls
+ *       port TD !!
+ * !!!!!!!
+ *
+ * Writing a low level (0) holds the device in reset.
+ */
+int
+drvLan9118HardReset(int level)
+{
+#ifdef LAN9118_RESET_TD_PIN
+static int lazy_init = 0;
+	if ( level )
+		MCF5282_GPIO_SETTD =  MCF5282_GPIO_SETx(LAN9118_RESET_TD_PIN);
+	else
+		MCF5282_GPIO_CLRTD = ~MCF5282_GPIO_CLRx(LAN9118_RESET_TD_PIN);
 
-static int
+	/* Setup DDR and pin assignment after writing the desired
+	 * output value in an attempt to avoid glitches...
+	 */
+	if ( !lazy_init ) {
+		lazy_init = 1;
+		/* Data direction: output */
+		MCF5282_GPIO_DDRTD   = MCF5282_GPIO_DDRx(LAN9118_RESET_TD_PIN);
+		/* Pin assignment: I/O    */
+		MCF5282_GPIO_PTDPAR &= ~(3<<(2*LAN9118_RESET_TD_PIN));
+	}
+
+	/* return current value */
+	return MCF5282_GPIO_PORTTDP & MCF5282_GPIO_PORTx(LAN9118_RESET_TD_PIN);
+#else
+	return -1;
+#endif	
+}
+
+STATIC int
 drvLan9118ResetChip(DrvLan9118 plan)
 {
 uint32_t tmp;
@@ -740,6 +809,10 @@ uint32_t tmp;
 			return -1;
 		}
 	} while (HW_CFG_SRST & tmp);
+
+	/* wait until done loading mac-address from EEPROM */
+	e2p_busywait(plan);
+
 	return 0;
 }
 
@@ -748,8 +821,9 @@ lan9118isr( rtems_vector_number v )
 {
 	drvLan9118IrqDisable();
 	rtems_event_send(theLan9118.tid, IRQ_EVENT);
-#ifdef IRQ_DEBUG
-	printk("LAN ISR\n");
+#ifdef DEBUG
+	if ( drvLan9118Debug & DEBUG_IRQ )
+		printk("LAN ISR\n");
 #endif
 }
 
@@ -772,12 +846,7 @@ uint32_t tmp;
 
 DrvLan9118
 drvLan9118Setup(	unsigned char *enaddr,
-					char *ipaddr,
-					uint32_t flags,
-					DrvLan9118CB rx_cb, 	void *rx_cb_arg,
-					DrvLan9118CB tx_cb, 	void *tx_cb_arg,
-					DrvLan9118CB err_cb, 	void *err_cb_arg,
-					DrvLan9118CB phy_cb,	void *phy_cb_arg
+					uint32_t flags
 			   )
 {
 DrvLan9118		plan;
@@ -881,31 +950,14 @@ rtems_status_code sc;
 			return 0;
 		}
 
-		if ( !tx_cb ) {
-			sc = rtems_message_queue_create(
-								rtems_build_name('9','1','1','8'), 
-								TXQ_DEPTH,
-								sizeof(uint32_t),
-								RTEMS_DEFAULT_ATTRIBUTES,
-								&plan->txq);
-			if ( RTEMS_SUCCESSFUL != sc ) {
-				rtems_error(sc, "drvLan9118: unable to create message queue\n");
-				rtems_semaphore_delete(plan->tmutx);
-				rtems_semaphore_delete(plan->mutx);
-				plan->mutx = 0;
-				return 0;
-			}
-		}
-
-		plan->rx_cb			= rx_cb;
-		plan->rx_cb_arg		= rx_cb_arg;
-		plan->tx_cb			= tx_cb;
-		plan->tx_cb_arg		= tx_cb_arg;
-		plan->err_cb		= err_cb;
-		plan->err_cb_arg	= err_cb_arg;
-		plan->phy_cb		= phy_cb;
-		plan->phy_cb_arg	= phy_cb_arg;
-
+		plan->rx_cb			= 0;
+		plan->rx_cb_arg		= 0;
+		plan->tx_cb			= 0;
+		plan->tx_cb_arg		= 0;
+		plan->err_cb		= 0;
+		plan->err_cb_arg	= 0;
+		plan->phy_cb		= 0;
+		plan->phy_cb_arg	= 0;
 
 		rtems_interrupt_catch( lan9118isr, LAN9118_VECTOR, &plan->oh );
 		MCF5282_INTC0_IMRL &= ~((MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1)) | MCF5282_INTC_IMRL_MASKALL);
@@ -917,39 +969,10 @@ rtems_status_code sc;
 		drvLan9118IrqEnable();
 	}
 
+	/* Setup the convenience header   */
+	memcpy( plan->ebcst.src, enaddr, 6);
+	memset( plan->ebcst.dst, 0xff,   6);
 
-	{
-		plan->ipaddr = inet_addr(ipaddr);
-
-		/* Setup the convenience headers */
-		memcpy( plan->ebcst.src, enaddr, 6);
-		memset( plan->ebcst.dst, 0xff,   6);
-
-		plan->arprep.arp.htype = plan->arpreq.arp.htype = htons(1);     /* Ethernet */
-		plan->arprep.arp.ptype = plan->arpreq.arp.ptype = htons(0x800); /* IP       */
-		plan->arprep.arp.hlen  = plan->arpreq.arp.hlen  = 6; 
-		plan->arprep.arp.plen  = plan->arpreq.arp.plen  = 4; 
-		plan->arprep.arp.oper  = htons(2); /* ARP REPLY   */
-		plan->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
-
-		/* our ether addr into arp reply (source hw addr) */
-		memcpy(plan->arprep.arp.sha, enaddr, 6);
-		/* our IP addr into arp reply (source proto addr) */
-		memcpy(plan->arprep.arp.spa, &plan->ipaddr, 4);
-
-
-		/* bcst addr into arp request hw addr             */
-		memset(plan->arpreq.arp.tha, 0xff,   6);
-		memcpy(&plan->arpreq.arp.sha, enaddr, 6);
-		memcpy(&plan->arpreq.arp.spa, &plan->ipaddr, 4);
-		memcpy(&plan->arpreq.ll, &plan->ebcst, sizeof(plan->ebcst));
-
-		memcpy(&plan->arprep.ll.src, enaddr, 6);
-
-		/* set type after copying broadcast packet */
-		plan->arprep.ll.type = plan->arpreq.ll.type = htons(0x806);
-
-	}
 
 	/* Enable LEDs */
 	wr9118Reg(plan, GPIO_CFG, GPIO_CFG_LED3_EN | GPIO_CFG_LED2_EN | GPIO_CFG_LED1_EN);
@@ -962,6 +985,7 @@ rtems_status_code sc;
 
 	/* Setup the MAC but don't start the receiver */
 	macCsrWrite(plan, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
+
 	tmp = (enaddr[5]<<8) | enaddr[4];
 	macCsrWrite(plan, ADDRH, tmp);
 	for (i=3,tmp=0; i>=0; i--) {
@@ -983,7 +1007,12 @@ rtems_status_code sc;
 
 
 int
-drvLan9118Start(DrvLan9118 plan, uint32_t prio, uint32_t stack) 
+drvLan9118Start(DrvLan9118 plan,
+				uint32_t prio, uint32_t stack,
+				DrvLan9118CB rx_cb, 	void *rx_cb_arg,
+				DrvLan9118CB tx_cb, 	void *tx_cb_arg,
+				DrvLan9118CB err_cb, 	void *err_cb_arg,
+				DrvLan9118CB phy_cb,	void *phy_cb_arg)
 {
 rtems_id			tid;
 rtems_status_code 	sc;
@@ -997,6 +1026,28 @@ rtems_status_code 	sc;
 	if ( RTEMS_SUCCESSFUL != sc ) {
 		rtems_error(sc,"drvLan9118; unable to create task\n");
 		return -1;
+	}
+
+	plan->rx_cb			= rx_cb;
+	plan->rx_cb_arg		= rx_cb_arg;
+	plan->tx_cb			= tx_cb;
+	plan->tx_cb_arg		= tx_cb_arg;
+	plan->err_cb		= err_cb;
+	plan->err_cb_arg	= err_cb_arg;
+	plan->phy_cb		= phy_cb;
+	plan->phy_cb_arg	= phy_cb_arg;
+
+	if ( !tx_cb ) {
+		sc = rtems_message_queue_create(
+								rtems_build_name('9','1','1','8'), 
+								TXQ_DEPTH,
+								sizeof(uint32_t),
+								RTEMS_DEFAULT_ATTRIBUTES,
+								&plan->txq);
+		if ( RTEMS_SUCCESSFUL != sc ) {
+				rtems_error(sc, "drvLan9118: unable to create message queue\n");
+				return -1;
+		}
 	}
 
 	/* lock 'tid' against EEPROM access routines */
@@ -1138,20 +1189,21 @@ drvLan9118TxPacket(DrvLan9118 plan, void *buf, int nbytes, unsigned short tag)
 {
 	TXLOCK(plan);
 	/* push the command words */
-	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes - PAD_BYTES) | TXCMD_A_START_ALIGN_SET(PAD_BYTES));
-	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_B_TAG_SET(tag) | TXCMD_B_PKTLEN_SET(nbytes - PAD_BYTES));
-
-	/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
-	nbytes = (nbytes+3) & ~3;
+	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes - EH_PAD_BYTES) | TXCMD_A_START_ALIGN_SET(EH_PAD_BYTES));
+	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_B_TAG_SET(tag) | TXCMD_B_PKTLEN_SET(nbytes - EH_PAD_BYTES));
 
 	if ( buf ) {
+		/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
+		nbytes = (nbytes+3) & ~3;
+
 #if 0
 		/* DMA the packet */
 		drv5282ioDMA((void*)(plan->base + TX_DATA_FIFO), buf, nbytes, 0, 0, 0);
 #else
 		/* cache flushing is slow; memcpy is faster */
-		memcpy( (void*)(plan->base + FIFO_ALIAS),buf,nbytes);
+		drvLan9118FifoWr(plan, buf, nbytes);
 #endif
+		DELAY180ns();
 		TXUNLOCK(plan);
 	}
 
@@ -1161,6 +1213,7 @@ drvLan9118TxPacket(DrvLan9118 plan, void *buf, int nbytes, unsigned short tag)
 void
 drvLan9118TxUnlock(DrvLan9118 plan)
 {
+	DELAY180ns();
 	TXUNLOCK(plan);
 }
 
@@ -1304,7 +1357,8 @@ drvLan9118Daemon(rtems_task_argument arg)
 DrvLan9118	plan = (DrvLan9118)arg;
 uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 
-	macCsrWrite(plan, MAC_CR, macCsrRead(plan, MAC_CR) | MAC_CR_RXEN);
+	if ( plan->rx_cb || plan->rx_cb_arg )
+		macCsrWrite(plan, MAC_CR, macCsrRead(plan, MAC_CR) | MAC_CR_RXEN);
 
 	while (1) {
 		rtems_event_set evs;
@@ -1312,12 +1366,14 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 		if ( KILL_EVENT & evs )
 			break;
 		int_sts = rd9118Reg(plan, INT_STS) & plan->int_msk;
+
+		if ( RSFL_INT & int_sts ) {
 		/* skip */
 		while ( RX_FIFO_INF_RXSUSED_GET(rd9118Reg(plan, RX_FIFO_INF)) > 0 ) {
 			int left;
 
 			rx_sts = rd9118Reg(plan, RX_STS_FIFO);
-			left   = RXSTS_PKTLEN_GET(rx_sts) + PAD_BYTES;
+			left   = RXSTS_PKTLEN_GET(rx_sts) + EH_PAD_BYTES;
 
 			if ( RXSTS_ERR_ANY & rx_sts ) {
 
@@ -1371,6 +1427,7 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 			DELAY90ns();
 #endif
 		}
+		}
 		if ( ERR_INTS & int_sts ) {
 			if ( plan->err_cb )
 				plan->err_cb(plan, int_sts & ~(1<<31), plan->err_cb_arg);
@@ -1400,16 +1457,20 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 					/* status with tag 0 is dropped */
 					if ( TXSTS_TAG_GET(tx_sts) )
 						rtems_message_queue_send(plan->txq, &tx_sts, sizeof(tx_sts));
+#ifdef DEBUG
+					else
+						if ( (drvLan9118Debug & DEBUG_TXSTS) && (tx_sts & 0xffff) )
+							printf("Discarding TX status 0x%08lx\n", tx_sts);
+#endif
 				}
 
 				/* at least 135ns delay after reading STS_FIFO - this is probably
 				 * burnt by what happened up to here...
 				 */
-#if 0
+#if 1
 				DELAY135ns();
-#else 
-				plan->stats.txp++;
 #endif
+				plan->stats.txp++;
 			}
 		}
 		if ( PHY_INT & int_sts ) {
@@ -1462,14 +1523,6 @@ int i;
 	fprintf(f,"%02X",*ea);
 }
 
-
-static inline uint32_t e2p_busywait(DrvLan9118 plan)
-{
-uint32_t cmd;
-	while ( E2P_CMD_BUSY & (cmd = rd9118Reg(plan, E2P_CMD)) )
-		/* busy wait -- this can take up to 30ms */ ;
-	return cmd;
-}
 
 int e2p_cmd_exec(DrvLan9118 plan, uint32_t cmd)
 {
@@ -1652,9 +1705,26 @@ typedef struct ArpEntryRec_ {
 	time_t		ctime;
 } ArpEntryRec, *ArpEntry;
 
-static ArpEntry arpcache[256];
+static ArpEntry arpcache[256] = {0};
 
-int arpLookup(DrvLan9118 plan, uint32_t ipaddr, uint8_t *enaddr)
+typedef struct IpCbDataRec_ {
+	DrvLan9118		plan;
+	rtems_id		mutx;
+	uint32_t		ipaddr;
+	struct {
+		EtherHeaderRec  ll;
+		IpArpRec		arp;
+	} arpreq;
+	struct {
+		EtherHeaderRec  ll;
+		IpArpRec		arp;
+	} arprep;
+} IpCbDataRec, *IpCbData;
+
+#define ARPLOCK(pd)		rtems_semaphore_obtain((pd)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
+#define ARPUNLOCK(pd) 	rtems_semaphore_release((pd)->mutx)
+
+int arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr)
 {
 ArpEntry rval;
 int      i,n;
@@ -1668,25 +1738,26 @@ uint8_t  h  = ipaddr;
 			/* don't bother about MSB; assume we're on a LAN anyways */
 			
 			/* Abuse the TX lock */
-			TXLOCK(plan);
+			ARPLOCK(pd);
 			for ( i = 0, hh=h; i<CACHE_OVERLAP && (rval = arpcache[hh]); i++, hh++ ) {
 				if ( ipaddr == rval->ipaddr ) {
 					memcpy(enaddr, rval->hwaddr, 6);
-					TXUNLOCK(plan);
+					ARPUNLOCK(pd);
 					return 0;
 				}
 			}
-			TXUNLOCK(plan);
+			ARPUNLOCK(pd);
 
 			/* must do a new lookup */
-			drvLan9118TxPacket(plan, 0, sizeof(plan->arpreq), 0);
+			drvLan9118TxPacket(pd->plan, 0, sizeof(pd->arpreq), 0);
 
 			/* arpreq is locked and may be modified */
-			*(uint32_t*)plan->arpreq.arp.tpa = ipaddr;
+			*(uint32_t*)pd->arpreq.arp.tpa = ipaddr;
 
 			/* send request */
-			memcpy( (void*)(plan->base + FIFO_ALIAS), &plan->arpreq, sizeof(plan->arpreq));
-			drvLan9118TxUnlock(plan);
+			drvLan9118FifoWr(pd->plan, &pd->arpreq, sizeof(pd->arpreq));
+
+			drvLan9118TxUnlock(pd->plan);
 
 			/* should synchronize but it's easier to just delay and try again */
 			rtems_task_wake_after(1);
@@ -1696,7 +1767,7 @@ uint8_t  h  = ipaddr;
 }
 
 void
-arpPutEntry(DrvLan9118 plan, uint8_t *enaddr, uint32_t ipaddr)
+arpPutEntry(IpCbData pd, uint8_t *enaddr, uint32_t ipaddr)
 {
 ArpEntry rval;
 ArpEntry newe = malloc(sizeof(*newe));	/* pre-allocate */
@@ -1707,12 +1778,12 @@ uint8_t  h  = ipaddr;
 		 h += ipaddr>>16;
 
 		/* Abuse the TX lock */
-		TXLOCK(plan);
+		ARPLOCK(pd);
 		for ( i = 0, oh=h; i<CACHE_OVERLAP && (rval = arpcache[h]); i++, h++ ) {
 			if ( ipaddr == rval->ipaddr ) {
 				memcpy(rval->hwaddr, enaddr, 6);
 				rval->ctime = time(0);
-				TXUNLOCK(plan);
+				ARPUNLOCK(pd);
 				return;
 			}
 			if ( rval->ctime < arpcache[oh]->ctime )
@@ -1732,13 +1803,13 @@ uint8_t  h  = ipaddr;
 		rval->ipaddr = ipaddr;
 		memcpy(rval->hwaddr, enaddr, 6);
 		rval->ctime  = time(0);
-		TXUNLOCK(plan);
+		ARPUNLOCK(pd);
 
 		free(newe);
 }
 
 void
-arpDelEntry(DrvLan9118 plan, uint32_t ipaddr)
+arpDelEntry(IpCbData pd, uint32_t ipaddr)
 {
 ArpEntry rval, found = 0;
 int      i;
@@ -1748,7 +1819,7 @@ uint8_t  h  = ipaddr;
 
 
 		/* Abuse the TX lock */
-		TXLOCK(plan);
+		ARPLOCK(pd);
 		for ( i = 0; i<CACHE_OVERLAP && (rval = arpcache[h]); i++, h++ ) {
 				if ( ipaddr == rval->ipaddr ) {
 					arpcache[h] = 0;
@@ -1756,23 +1827,24 @@ uint8_t  h  = ipaddr;
 					break;
 				}
 		}
-		TXUNLOCK(plan);
+		ARPUNLOCK(pd);
 		free(found);
 }
  
 static int
-handleArp(DrvLan9118 plan)
+handleArp(IpCbData pd)
 {
 IpArpRec ipa;
 uint32_t *p    = (uint32_t*)&ipa.sha[0];
 int      isreq = 0;
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
-	if ( ntohl(0x00010800) != rd9118RxFifo(plan) )
-		return 4;
+	drvLan9118FifoRd(pd->plan, &ipa, 8);
+	if ( ntohl(0x00010800) != *(uint32_t*)&ipa )
+		return 8;
 
 
-	switch ( rd9118RxFifo(plan) ) {
+	switch ( *(((uint32_t*)&ipa) + 1) ) {
 		default:
 			return 8;
 
@@ -1784,44 +1856,45 @@ int      isreq = 0;
 			break;
 	}
 
-	*p++ = rd9118RxFifo(plan);
-	*p++ = rd9118RxFifo(plan);
-	*p++ = rd9118RxFifo(plan);
-	*p++ = rd9118RxFifo(plan);
-	*p++ = rd9118RxFifo(plan);
+	drvLan9118FifoRd(pd->plan, p, 5*4);
 
 	if ( isreq ) {
-#ifdef DEBUG_IP
-		printf("got ARP request for %d.%d.%d.%d\n",ipa.tpa[0],ipa.tpa[1],ipa.tpa[2],ipa.tpa[3]); 
+#ifdef DEBUG
+		if ( drvLan9118Debug & DEBUG_IP )
+			printf("got ARP request for %d.%d.%d.%d\n",ipa.tpa[0],ipa.tpa[1],ipa.tpa[2],ipa.tpa[3]); 
 #endif
-		if ( *(uint32_t*)ipa.tpa != plan->ipaddr )
+		if ( *(uint32_t*)ipa.tpa != pd->ipaddr )
 			return sizeof(ipa);
 
-#ifdef DEBUG_IP
-		{
-		extern void md(void*,int);
-		printf("MATCH -> sending\n");
-		md(&plan->arprep, sizeof(plan->arprep));
+		/* they mean us; send reply */
+		memcpy( pd->arprep.ll.dst,  ipa.sha, 6);
+		memcpy( pd->arprep.arp.tha, ipa.sha, 10);
+
+#ifdef DEBUG
+		if ( drvLan9118Debug & DEBUG_IP ) {
+			extern void md(void*,int);
+			printf("MATCH -> sending\n");
+			md(&pd->arprep, sizeof(pd->arprep));
 		}
 #endif
-		/* they mean us; send reply */
-		memcpy( plan->arprep.ll.dst,  ipa.sha, 6);
-		memcpy( plan->arprep.arp.tha, ipa.sha, 10);
-		drvLan9118TxPacket(plan, &plan->arprep, sizeof(plan->arprep), 0);
+
+		drvLan9118TxPacket(pd->plan, &pd->arprep, sizeof(pd->arprep), 0);
 	} else {
 		/* a reply to our request */
-#ifdef DEBUG_IP
-		printf("got ARP reply from "); prether(stdout, ipa.sha);
-		printf("\n");
+#ifdef DEBUG
+		if ( drvLan9118Debug & DEBUG_IP ) {
+			printf("got ARP reply from "); prether(stdout, ipa.sha);
+			printf("\n");
+		}
 #endif
-		arpPutEntry(plan, ipa.sha, *(uint32_t*)ipa.spa);
+		arpPutEntry(pd, ipa.sha, *(uint32_t*)ipa.spa);
 	}
 
 	return sizeof(ipa);
 }
 
 static int
-handleIP(EtherHeaderRec *peh, DrvLan9118 plan)
+handleIP(EtherHeaderRec *peh, IpCbData pd)
 {
 int         rval = 0, l, nbytes;
 struct {
@@ -1833,32 +1906,40 @@ struct {
 
 
 
-	memcpy( &p.ih, (void*)(plan->base + FIFO_ALIAS), sizeof(p.ih) );
+	drvLan9118FifoRd(pd->plan, &p.ih, sizeof(p.ih));
 	rval += sizeof(p.ih);
 
-	if ( p.ih.dst != plan->ipaddr )
+	if ( p.ih.dst != pd->ipaddr )
 		return rval;
 
-	l = ( (nbytes = ntohs(p.ih.len)) + 3) & ~3;
+	/* reject non-trivial headers (version != 4, header length > 5, fragmented,
+     * i.e., MF (more fragments) or the offset are set
+	 */
+	if ( p.ih.vhl != 0x45 || ntohs(p.ih.off) & 0x9fff )
+		return rval;
+
+	nbytes = ntohs(p.ih.len);
+	l = ((nbytes - sizeof(p.ih)) + 3) & ~3;
 	switch ( p.ih.prot ) {
 		case 1 /* ICMP */:
-		if ( sizeof(p) >= l ) {
-			memcpy( &p.icmph, (void*)(plan->base + FIFO_ALIAS), l);
+		if ( sizeof(p)-sizeof(p.ih) - sizeof(p.eh) >= l ) {
+			drvLan9118FifoRd(pd->plan, &p.icmph, l);
 			rval += l;
 			if ( p.icmph.type == 8 /* ICMP REQUEST */ && p.icmph.code == 0 ) {
-#ifdef DEBUG_IP
-				printf("handling ICMP ECHO request\n");
+#ifdef DEBUG
+				if ( drvLan9118Debug & DEBUG_IP )
+					printf("handling ICMP ECHO request\n");
 #endif
 				p.icmph.type = 0; /* ICMP REPLY */
 				p.icmph.csum = 0;
 				memcpy( p.eh.dst, peh->src, 6 );
-				memcpy( p.eh.src, plan->arprep.ll.src, 6);
+				memcpy( p.eh.src, pd->arprep.ll.src, 6);
 				p.eh.type = htons(0x800); /* IP */
 				p.ih.dst  = p.ih.src;
-				p.ih.src  = plan->ipaddr; 
+				p.ih.src  = pd->ipaddr; 
 				p.ih.csum = 0;
 				p.ih.csum = htons(in_cksum_hdr((void*)&p.ih));
-				drvLan9118TxPacket(plan, &p, sizeof(EtherHeaderRec) + nbytes, 0);
+				drvLan9118TxPacket(pd->plan, &p, sizeof(EtherHeaderRec) + nbytes, 0);
 			}
 		}
 		break;
@@ -1871,25 +1952,19 @@ struct {
 int
 drvLan9118IpRxCb(DrvLan9118 plan, uint32_t len, void *arg)
 {
-union {
+IpCbData        pd = arg;
 EtherHeaderRec	eh;
-uint32_t		raw[4];
-} p;
 
-	p.raw[0] = rd9118RxFifo(plan);	
-	p.raw[1] = rd9118RxFifo(plan);	
-	p.raw[2] = rd9118RxFifo(plan);	
-	p.raw[3] = rd9118RxFifo(plan);	
-	
-	len -= sizeof(p);
+	drvLan9118FifoRd(plan, &eh, sizeof(eh));
+	len -= sizeof(eh);
 
-	switch ( p.eh.type ) {
+	switch ( eh.type ) {
 		case htons(0x806) /* ARP */:
-			len -= handleArp(plan);
+			len -= handleArp(pd);
 			break;
 
 		case htons(0x800) /* IP  */:
-			len -= handleIP(&p.eh, plan);
+			len -= handleIP(&eh, pd);
 			break;
 
 		default:
@@ -1897,4 +1972,122 @@ uint32_t		raw[4];
 	}
 
 	return len;
+}
+
+
+IpCbData
+lanIpCbDataCreate(DrvLan9118 plan, char *ipaddr)
+{
+IpCbData          rval = malloc(sizeof(*rval));
+uint8_t		      (*enaddr)[6];
+rtems_status_code sc;
+
+	if ( !rval )
+		return 0;
+
+	rval->plan   = plan;
+
+	rval->ipaddr = inet_addr(ipaddr);
+
+	sc = rtems_semaphore_create(
+			rtems_build_name('i','p','m','x'), 
+			1,
+			RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+			0,
+			&rval->mutx);
+
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "lanIpCb: unable to create mutex\n");
+		free(rval);
+		return 0;
+	}
+
+
+	/* convenience variable */
+	enaddr = &rval->arpreq.ll.src;
+	
+	/* Setup ARP templates for request and reply */
+
+	/* LL HEADERS FIRST */
+
+	/* REQUEST */
+		/* DST: bcast address            */
+		memset(&rval->arpreq.ll.dst, 0xff, sizeof(*enaddr));
+		/* SRC: plan's ethernet address  */
+		drvLan9118ReadEnaddr(plan, (uint8_t*)enaddr);
+		/* TYPE/LEN is ARP (0x806)       */
+		rval->arpreq.ll.type = htons(0x806);
+	/* REPLY   */
+		/* DST: ??? filled by daemon     */
+
+		/* SRC: plan's ethernet address  */
+		memcpy(rval->arprep.ll.src, enaddr, sizeof(*enaddr));
+		/* TYPE/LEN is ARP (0x806)       */
+		rval->arprep.ll.type = htons(0x806);
+
+	/* ARP PORTION */
+	/* HW and PROTO type for both */
+	rval->arprep.arp.htype = rval->arpreq.arp.htype = htons(1);     /* Ethernet */
+	rval->arprep.arp.ptype = rval->arpreq.arp.ptype = htons(0x800); /* IP       */
+	rval->arprep.arp.hlen  = rval->arpreq.arp.hlen  = 6; 
+	rval->arprep.arp.plen  = rval->arpreq.arp.plen  = 4; 
+
+	rval->arprep.arp.oper  = htons(2); /* ARP REPLY   */
+	rval->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
+
+	/* REQUEST */
+		/* TARGET HW ADDR: bcst                       */ 
+		memset(rval->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
+		/* TARGET IP ADDR: ??? (filled by requestor)  */
+
+		/* SOURCE HW ADDR: plan's ethernet address    */
+		memcpy(&rval->arpreq.arp.sha, enaddr, sizeof(*enaddr));
+		/* SOURCE IP ADDR: our IP                     */
+		memcpy(&rval->arpreq.arp.spa, &rval->ipaddr, 4);
+
+	/* REPLY */
+		/* TARGET HW ADDR: ??? (filled by daemon)     */ 
+
+		/* TARGET IP ADDR: ??? (filled by daemon)     */
+
+		/* SOURCE HW ADDR: plan's ethernet address    */
+		memcpy(rval->arprep.arp.sha, enaddr, sizeof(*enaddr));
+		/* SOURCE IP ADDR: our IP                     */
+		memcpy(rval->arprep.arp.spa, &rval->ipaddr, 4);
+	return rval;
+}
+
+void
+lanIpCbDataDestroy(IpCbData pd)
+{
+	if ( pd ) {
+		rtems_semaphore_delete(pd->mutx);
+		free(pd);
+	}
+}
+
+
+IpCbData    pda = 0;
+DrvLan9118 plan = 0;
+
+void
+_cexpModuleInitialize(void *unused)
+{
+	plan = drvLan9118Setup(&srcenaddr, 0);
+	pda  = lanIpCbDataCreate(plan, "134.79.219.36");
+	drvLan9118Start(plan,
+					0, 0,
+					drvLan9118IpRxCb, pda,
+					0, 0,
+					0, 0,
+					0, 0);
+}
+
+int
+_cexpModuleFinalize(void *unused)
+{
+	drvLan9118Shutdown(&theLan9118);
+	lanIpCbDataDestroy(pda);
+	
+	return 0;	
 }
