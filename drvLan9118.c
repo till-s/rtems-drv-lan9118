@@ -12,6 +12,8 @@
  * include file section...
  */
 
+/* #define BYTES_NOT_SWAPPED */
+
 /* ENDIANNESS NOTES
  * ----------------
  *
@@ -517,7 +519,9 @@ extern uint32_t Read_timer();
 
 static inline uint32_t byterev(uint32_t x)
 {
+#ifndef BYTES_NOT_SWAPPED
 	asm volatile("byterev %0":"+r"(x));
+#endif
 	return x;
 }
 
@@ -553,57 +557,39 @@ static inline uint32_t byterev(uint32_t x)
  *          AFTER A WRITE OPERATION AND READING SOME REGISTERS AFTER CERTAIN
  *          READ OPERATIONS REQUIRES APPROPRIATE DELAYS
  */
-static inline uint32_t	rd9118Reg(DrvLan9118 plan, DrvLan9118RegOff off)
-{
-	DELAY180ns();
-	return byterev(*(volatile uint32_t *)(plan->base + off));
-}
+#define rd9118Reg(base, off)		byterev(*(volatile uint32_t *)((uint32_t)(base) + off))
+#define wr9118Reg(base, off, val)	do { *(volatile uint32_t*)((uint32_t)(base) + off) = byterev(val); } while (0)
 
-static inline uint32_t	rd9118RegSlow(DrvLan9118 plan, DrvLan9118RegOff off)
+static inline uint32_t	rd9118RegSlow(uint32_t base, DrvLan9118RegOff off)
 {
 	/* always do a worst case delay for now; the read cycle itself takes another ~160ns */
 	DELAY180ns();
-	return rd9118Reg(plan, off);
+	return rd9118Reg(base, off);
 }
 
-static inline void	wr9118Reg(DrvLan9118 plan, DrvLan9118RegOff off, uint32_t val)
-{
-	*(volatile uint32_t *)(plan->base + off) = byterev(val);
-}
-
-/* read byte stream from fifo w/o byte-swapping */
-static inline uint32_t rd9118RxFifo(DrvLan9118 plan)
-{
-	return *(volatile uint32_t *) (plan->base + RX_DATA_FIFO);
-}
-
-/* write byte stream to fifo w/o byte-swapping  */
-static inline void wr9118TxFifo(DrvLan9118 plan, uint32_t v)
-{
-	*(volatile uint32_t *) (plan->base + TX_DATA_FIFO) = v;
-}
-
-static void macCsrAccess(DrvLan9118 plan, uint32_t rNw, int addr)
+static void macCsrAccess(uint32_t base, uint32_t rNw, int addr)
 {
 uint32_t v = MAC_CSR_CMD_BUSY | MAC_CSR_CMD_ADDR_SET(addr) | rNw;
-	wr9118Reg(plan, MAC_CSR_CMD, v);
+	wr9118Reg(base, MAC_CSR_CMD, v);
 	DELAY45ns();
-	while ( MAC_CSR_CMD_BUSY & rd9118Reg(plan, MAC_CSR_CMD) )
+	while ( MAC_CSR_CMD_BUSY & rd9118Reg(base, MAC_CSR_CMD) )
 		/* poll */;
 }
 
 STATIC uint32_t
 macCsrRead(DrvLan9118 plan, uint32_t reg)
 {
-	macCsrAccess(plan, MAC_CSR_CMD_RnW, reg);
-	return rd9118Reg(plan, MAC_CSR_DATA);
+uint32_t base = plan->base;
+	macCsrAccess(base, MAC_CSR_CMD_RnW, reg);
+	return rd9118Reg(base, MAC_CSR_DATA);
 }
 
 STATIC void
 macCsrWrite(DrvLan9118 plan, uint32_t reg, uint32_t v)
 {
-	wr9118Reg(plan, MAC_CSR_DATA, v);
-	macCsrAccess(plan, 0, reg);
+uint32_t base = plan->base;
+	wr9118Reg(base, MAC_CSR_DATA, v);
+	macCsrAccess(base, 0, reg);
 }
 
 static void miiAccess(DrvLan9118 plan, uint32_t wNr, uint32_t addr)
@@ -641,10 +627,9 @@ register volatile uint32_t *psrc = (void*)(plan->base + FIFO_ALIAS);
 }
 
 void
-drvLan9118FifoWr(DrvLan9118 plan, void *buf, int n_bytes);
-#if 0
+drvLan9118FifoWr(DrvLan9118 plan, void *buf, int n_bytes)
 {
-uint32_t                   *ibuf = buf;
+register uint32_t          *ibuf = buf;
 register volatile uint32_t *pdst = (void*)(plan->base + FIFO_ALIAS);
 
 	assert( ((uint32_t)buf & 3) == 0 );
@@ -678,13 +663,12 @@ register volatile uint32_t *pdst = (void*)(plan->base + FIFO_ALIAS);
 #endif
 #endif
 }
-#endif
 
 /* busy wait for the EEPROM controller to be ready */
 static inline uint32_t e2p_busywait(DrvLan9118 plan)
 {
 uint32_t cmd;
-	while ( E2P_CMD_BUSY & (cmd = rd9118Reg(plan, E2P_CMD)) )
+	while ( E2P_CMD_BUSY & (cmd = rd9118Reg(plan->base, E2P_CMD)) )
 		/* busy wait -- this can take up to 30ms */ ;
 	return cmd;
 }
@@ -790,6 +774,7 @@ STATIC int
 drvLan9118ResetChip(DrvLan9118 plan)
 {
 uint32_t tmp;
+uint32_t base = plan->base;
 	/* make sure interrupts are masked */
 	drvLan9118IrqDisable();
 
@@ -800,10 +785,10 @@ uint32_t tmp;
 	} while ( BMCR_RESET & tmp );
 
 	/* chip soft reset; endianness is unaffected */
-	wr9118Reg(plan, HW_CFG, HW_CFG_SRST);
+	wr9118Reg(base, HW_CFG, HW_CFG_SRST);
 	DELAY45ns();
 	do { 
-		tmp = rd9118Reg(plan, HW_CFG);
+		tmp = rd9118Reg(base, HW_CFG);
 		if ( HW_CFG_SRST_TO & tmp ) {
 			fprintf(stderr,"ERROR: Soft Reset Timeout\n");
 			return -1;
@@ -844,29 +829,10 @@ uint32_t tmp;
 	*buf++ = (tmp>>8) & 0xff;
 }
 
-DrvLan9118
-drvLan9118Setup(	unsigned char *enaddr,
-					uint32_t flags
-			   )
+STATIC void
+drvLan9118_setup_uc5282()
 {
-DrvLan9118		plan;
-uint32_t		tmp;
-int				i;
-unsigned char	buf[6];
-unsigned short	sbuf[6];
-rtems_status_code sc;
-
-	if ( !enaddr ) {
-		const char *p = getbenv("HWADDR1");
-		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf,sbuf+1,sbuf+2,sbuf+3,sbuf+4,sbuf+5) ) {
-			fprintf(stderr,"Need ethernet address (6 bytes) argument\n");
-			return 0;
-		} else {
-			for ( i=0; i<6; i++ )
-				buf[i]=sbuf[i];
-			enaddr = buf;
-		}
-	}
+unsigned long key;
 	/* CHIP SELECT setup */
 
 	/* No need to change CSAR, we use the BSP setup */
@@ -892,14 +858,62 @@ rtems_status_code sc;
 
 	/* EPORT & GPIO setup */
 
-	/* make sure interrupts are masked */
-	drvLan9118IrqDisable();
-
 	/* make pin LAN9118_PIN active low, level triggered */
 	MCF5282_EPORT_EPPAR &= ~(MCF5282_EPORT_EPPAR_EPPA1_BOTHEDGE<<(2*(LAN9118_PIN-1)));
 	MCF5282_EPORT_EPPAR |=  (MCF5282_EPORT_EPPAR_EPPA1_LEVEL<<(2*(LAN9118_PIN-1)));
 
 	MCF5282_EPORT_EPDDR &= ~MCF5282_EPORT_EPDDR_EPDD(LAN9118_PIN);
+
+	/* Unmask associated interrupt */
+	MCF5282_INTC0_IMRL &= ~((MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1)) | MCF5282_INTC_IMRL_MASKALL);
+
+	/* !!! DISABLE BUFFERED WRITES !!!
+	 *
+	 * I found that (depending on the exact sequence of assembly instructions) the
+	 * external bus interface repeats write-cycles. This doesn't seem to occur if BWE is off.
+	 * ==> We change the BSP's default setting (affects all accesses not matched in an ACR).
+	 * since all external accesses are affected this is what we want anyways (DRAM access is
+	 * through ACR0 as per the BSP settings).
+	 */
+	{
+	/* CACR is write-only [broken design]; BSP caches it though */
+	extern uint32_t mcf5282_cacr_mode;
+	rtems_interrupt_disable(key);
+		mcf5282_cacr_mode &= ~ MCF5XXX_CACR_DBWE;
+		asm volatile("	movec %0, %%cacr"::"d"(mcf5282_cacr_mode));
+	rtems_interrupt_enable(key);
+	}
+}
+
+DrvLan9118
+drvLan9118Setup(	unsigned char *enaddr,
+					uint32_t flags
+			   )
+{
+DrvLan9118		plan;
+uint32_t		tmp;
+int				i;
+unsigned char	buf[6];
+unsigned short	sbuf[6];
+rtems_status_code sc;
+
+	if ( !enaddr ) {
+		const char *p = getbenv("HWADDR1");
+		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf,sbuf+1,sbuf+2,sbuf+3,sbuf+4,sbuf+5) ) {
+			fprintf(stderr,"Need ethernet address (6 bytes) argument\n");
+			return 0;
+		} else {
+			for ( i=0; i<6; i++ )
+				buf[i]=sbuf[i];
+			enaddr = buf;
+		}
+	}
+
+	/* make sure interrupts are masked */
+	drvLan9118IrqDisable();
+
+	/* setup BSP specific glue stuff   */
+	drvLan9118_setup_uc5282();
 
 	/* Initialize the 9118 */
 	theLan9118.base = LAN_9118_BASE;
@@ -908,12 +922,12 @@ rtems_status_code sc;
 	memset(&plan->stats, 0, sizeof(plan->stats));
 
 	/* First, we must perform a read access to the BYTE TEST register */
-	tmp = rd9118Reg(&theLan9118,BYTE_TEST);
+	tmp = rd9118Reg(plan->base, BYTE_TEST);
 	
-#if 0
+#ifdef BYTES_NOT_SWAPPED
 	/* Setup for big endian mode */
 	if ( 0x87654321 != tmp )
-		wr9118Reg(plan, ENDIAN, 0xffffffff);
+		wr9118Reg(plan->base, ENDIAN, 0xffffffff);
 #endif
 
 	if ( drvLan9118ResetChip(plan) )
@@ -960,11 +974,10 @@ rtems_status_code sc;
 		plan->phy_cb_arg	= 0;
 
 		rtems_interrupt_catch( lan9118isr, LAN9118_VECTOR, &plan->oh );
-		MCF5282_INTC0_IMRL &= ~((MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1)) | MCF5282_INTC_IMRL_MASKALL);
 
 		/* configure IRQ output as push-pull, enable interrupts */
-		wr9118Reg(plan, IRQ_CFG, IRQ_CFG_BITS | IRQ_CFG_IRQ_EN);
-		wr9118Reg(plan, INT_EN,  plan->int_msk);
+		wr9118Reg(plan->base, IRQ_CFG, IRQ_CFG_BITS | IRQ_CFG_IRQ_EN);
+		wr9118Reg(plan->base, INT_EN,  plan->int_msk);
 
 		drvLan9118IrqEnable();
 	}
@@ -975,13 +988,13 @@ rtems_status_code sc;
 
 
 	/* Enable LEDs */
-	wr9118Reg(plan, GPIO_CFG, GPIO_CFG_LED3_EN | GPIO_CFG_LED2_EN | GPIO_CFG_LED1_EN);
+	wr9118Reg(plan->base, GPIO_CFG, GPIO_CFG_LED3_EN | GPIO_CFG_LED2_EN | GPIO_CFG_LED1_EN);
 
 	/* start transmitter and configure to allow status overruns */	
-	wr9118Reg(plan, TX_CFG, TX_CFG_TXSAO | TX_CFG_TX_ON);
+	wr9118Reg(plan->base, TX_CFG, TX_CFG_TXSAO | TX_CFG_TX_ON);
 
 	/* set 2-byte offset in RX so that ethernet headers are word aligned */
-	wr9118Reg(plan, RX_CFG, rd9118Reg(plan, RX_CFG) | RX_CFG_RXDOFF_SET(2));
+	wr9118Reg(plan->base, RX_CFG, rd9118Reg(plan->base, RX_CFG) | RX_CFG_RXDOFF_SET(2));
 
 	/* Setup the MAC but don't start the receiver */
 	macCsrWrite(plan, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
@@ -1071,7 +1084,7 @@ rtems_status_code 	sc;
 void
 drvLan9118Shutdown(DrvLan9118 plan)
 {
-	MCF5282_INTC0_IMRL |= (MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1));
+	drvLan9118IrqDisable();
 
 	if ( plan->tid )
 		rtems_event_send(plan->tid, KILL_EVENT);
@@ -1187,10 +1200,11 @@ register int i;
 uint32_t
 drvLan9118TxPacket(DrvLan9118 plan, void *buf, int nbytes, unsigned short tag)
 {
+uint32_t base = plan->base;
 	TXLOCK(plan);
 	/* push the command words */
-	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes - EH_PAD_BYTES) | TXCMD_A_START_ALIGN_SET(EH_PAD_BYTES));
-	wr9118Reg(plan, TX_DATA_FIFO, TXCMD_B_TAG_SET(tag) | TXCMD_B_PKTLEN_SET(nbytes - EH_PAD_BYTES));
+	wr9118Reg(base, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes - EH_PAD_BYTES) | TXCMD_A_START_ALIGN_SET(EH_PAD_BYTES));
+	wr9118Reg(base, 32, TXCMD_B_TAG_SET(tag) | TXCMD_B_PKTLEN_SET(nbytes - EH_PAD_BYTES));
 
 	if ( buf ) {
 		/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
@@ -1243,14 +1257,15 @@ uint32_t
 drvLan9118TxFlush(DrvLan9118 plan, int which)
 {
 uint32_t then;
+uint32_t base = plan->base;
 
 	which &= TX_CFG_TXS_DUMP | TX_CFG_TXD_DUMP;
 	if ( !which )
 		return -1;
 	then = Read_timer();
-	wr9118Reg(plan, TX_CFG, which | rd9118Reg(plan, TX_CFG));
+	wr9118Reg(base, TX_CFG, which | rd9118Reg(base, TX_CFG));
 	DELAY45ns();
-	while ( which & rd9118Reg(plan, TX_CFG) )
+	while ( which & rd9118Reg(base, TX_CFG) )
 		/* poll */;
 	return Read_timer() - then;	
 }
@@ -1259,9 +1274,10 @@ uint32_t
 drvLan9118RxFlush(DrvLan9118 plan)
 {
 uint32_t then = Read_timer();
-	wr9118Reg(plan, RX_CFG, rd9118Reg(plan, RX_CFG) | RX_CFG_RX_DUMP);
+uint32_t base = plan->base;
+	wr9118Reg(base, RX_CFG, rd9118Reg(base, RX_CFG) | RX_CFG_RX_DUMP);
 	DELAY45ns();
-	while ( RX_CFG_RX_DUMP & rd9118Reg(plan, RX_CFG) )
+	while ( RX_CFG_RX_DUMP & rd9118Reg(base, RX_CFG) )
 		/* poll */;
 	return Read_timer() - then;	
 }
@@ -1323,10 +1339,11 @@ register unsigned a,b;
 static uint32_t skipPacket(DrvLan9118 plan)
 {
 uint32_t then;
+uint32_t base = plan->base;
 	then = Read_timer();
-	wr9118Reg(plan, RX_DP_CTL, RX_DP_CTL_FFWD);
+	wr9118Reg(base, RX_DP_CTL, RX_DP_CTL_FFWD);
 	DELAY45ns();
-	while ( RX_DP_CTL_FFWD & rd9118Reg(plan, RX_DP_CTL) )
+	while ( RX_DP_CTL_FFWD & rd9118Reg(base, RX_DP_CTL) )
 		/* wait */;
 	return Read_timer() - then;
 }
@@ -1344,7 +1361,7 @@ void *p = malloc(2000);
 
 		drvLan9118SendPacket(plan, p, PAYLOAD_LEN+sizeof(UdpPacketRec), 1);
 	/* enable receiver; disable TX interrupts */
-	wr9118Reg(plan, INT_EN,  RSFL_INT);
+	wr9118Reg(plan->base, INT_EN,  RSFL_INT);
 	macCsrWrite(plan, MAC_CR, macCsrRead(plan, MAC_CR) | MAC_CR_RXEN);
 
 	free(p);
@@ -1356,6 +1373,7 @@ drvLan9118Daemon(rtems_task_argument arg)
 {
 DrvLan9118	plan = (DrvLan9118)arg;
 uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
+uint32_t	base = plan->base;
 
 	if ( plan->rx_cb || plan->rx_cb_arg )
 		macCsrWrite(plan, MAC_CR, macCsrRead(plan, MAC_CR) | MAC_CR_RXEN);
@@ -1365,14 +1383,14 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 		rtems_event_receive(IRQ_EVENT | KILL_EVENT, RTEMS_EVENT_ANY | RTEMS_WAIT, RTEMS_NO_TIMEOUT, &evs);
 		if ( KILL_EVENT & evs )
 			break;
-		int_sts = rd9118Reg(plan, INT_STS) & plan->int_msk;
+		int_sts = rd9118Reg(base, INT_STS) & plan->int_msk;
 
 		if ( RSFL_INT & int_sts ) {
 		/* skip */
-		while ( RX_FIFO_INF_RXSUSED_GET(rd9118Reg(plan, RX_FIFO_INF)) > 0 ) {
+		while ( RX_FIFO_INF_RXSUSED_GET(rd9118Reg(base, RX_FIFO_INF)) > 0 ) {
 			int left;
 
-			rx_sts = rd9118Reg(plan, RX_STS_FIFO);
+			rx_sts = rd9118Reg(base, RX_STS_FIFO);
 			left   = RXSTS_PKTLEN_GET(rx_sts) + EH_PAD_BYTES;
 
 			if ( RXSTS_ERR_ANY & rx_sts ) {
@@ -1406,7 +1424,7 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 						/* must do it manually */
 						dly = Read_timer();
 						while ( left > 0 ) {
-							rd9118Reg(plan, RX_DATA_FIFO);
+							rd9118Reg(base, RX_DATA_FIFO);
 							left-=4;
 						}
 						dly = Read_timer() - dly;
@@ -1442,15 +1460,15 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 			if ( TDFO_INT & int_sts )
 				plan->stats.tdfo++;
 			if ( RXDF_INT & int_sts )
-				plan->stats.rxdf+=rd9118Reg(plan, RX_DROP);
+				plan->stats.rxdf+=rd9118Reg(base, RX_DROP);
 			if ( RSFF_INT & int_sts )
 				plan->stats.rsff++;
 			if ( TSFF_INT & int_sts )
 				plan->stats.tsff++;
 		}
 		if ( TSFL_INT & int_sts ) {
-			while ( TX_FIFO_INF_TXSUSED_GET(rd9118Reg(plan, TX_FIFO_INF)) > 0 ) {
-				tx_sts = rd9118Reg(plan, TX_STS_FIFO);
+			while ( TX_FIFO_INF_TXSUSED_GET(rd9118Reg(base, TX_FIFO_INF)) > 0 ) {
+				tx_sts = rd9118Reg(base, TX_STS_FIFO);
 				if ( plan->tx_cb )
 					plan->tx_cb(plan, tx_sts, plan->tx_cb_arg);
 				else {
@@ -1484,7 +1502,7 @@ uint32_t	int_sts, rx_sts, tx_sts, phy_sts;
 			REGUNLOCK(plan);
 		}
 		/* clear and re-enable IRQ */
-		wr9118Reg(plan, INT_STS, int_sts);
+		wr9118Reg(base, INT_STS, int_sts);
 		drvLan9118IrqEnable();
 	}
 	rtems_task_delete(RTEMS_SELF);
@@ -1530,7 +1548,7 @@ int e2p_cmd_exec(DrvLan9118 plan, uint32_t cmd)
 	/* timeout bit is clear-on-write; make sure we reset any old
 	 * timeout condition...
 	 */
-	wr9118Reg(plan, E2P_CMD, cmd | E2P_CMD_BUSY | E2P_CMD_EPC_TIMEOUT);
+	wr9118Reg(plan->base, E2P_CMD, cmd | E2P_CMD_BUSY | E2P_CMD_EPC_TIMEOUT);
 
 	cmd = e2p_busywait(plan);
 
@@ -1556,7 +1574,7 @@ int rval = -1;
 		goto bail;
 	}
 
-	if ( E2P_CMD_BUSY & rd9118Reg(plan, E2P_CMD) ) {
+	if ( E2P_CMD_BUSY & rd9118Reg(plan->base, E2P_CMD) ) {
 		rval = -EBUSY;
 		goto bail;
 	}
@@ -1571,7 +1589,7 @@ int rval = -1;
 				goto bail;
 
 			/* write data */
-			wr9118Reg(plan, E2P_DATA, *s);
+			wr9118Reg(plan->base, E2P_DATA, *s);
 			s++;
 		}
 
@@ -1580,7 +1598,7 @@ int rval = -1;
 
 		if ( d ) {
 			/* READ operation */
-			*d = rd9118Reg(plan, E2P_DATA);
+			*d = rd9118Reg(plan->base, E2P_DATA);
 			d++;
 		}
 
@@ -2073,6 +2091,7 @@ DrvLan9118 plan = 0;
 void
 _cexpModuleInitialize(void *unused)
 {
+#if 0
 	plan = drvLan9118Setup(&srcenaddr, 0);
 	pda  = lanIpCbDataCreate(plan, "134.79.219.36");
 	drvLan9118Start(plan,
@@ -2081,6 +2100,7 @@ _cexpModuleInitialize(void *unused)
 					0, 0,
 					0, 0,
 					0, 0);
+#endif
 }
 
 int
