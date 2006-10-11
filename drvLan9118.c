@@ -897,17 +897,8 @@ unsigned char	buf[6];
 unsigned short	sbuf[6];
 rtems_status_code sc;
 
-	if ( !enaddr ) {
-		const char *p = getbenv("HWADDR1");
-		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf,sbuf+1,sbuf+2,sbuf+3,sbuf+4,sbuf+5) ) {
-			fprintf(stderr,"Need ethernet address (6 bytes) argument\n");
-			return 0;
-		} else {
-			for ( i=0; i<6; i++ )
-				buf[i]=sbuf[i];
-			enaddr = buf;
-		}
-	}
+	theLan9118.base = LAN_9118_BASE;
+	plan            = &theLan9118;
 
 	/* make sure interrupts are masked */
 	drvLan9118IrqDisable();
@@ -916,9 +907,6 @@ rtems_status_code sc;
 	drvLan9118_setup_uc5282();
 
 	/* Initialize the 9118 */
-	theLan9118.base = LAN_9118_BASE;
-	plan = &theLan9118;
-
 	memset(&plan->stats, 0, sizeof(plan->stats));
 
 	/* First, we must perform a read access to the BYTE TEST register */
@@ -933,6 +921,19 @@ rtems_status_code sc;
 	if ( drvLan9118ResetChip(plan) )
 		return 0;
 
+	if ( !enaddr ) {
+		const char *p = getbenv("HWADDR1");
+		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf,sbuf+1,sbuf+2,sbuf+3,sbuf+4,sbuf+5) ) {
+			if ( ! (rd9118Reg(plan->base, E2P_CMD) & E2P_CMD_MAC_LOADED) ) {
+				fprintf(stderr,"Need ethernet address (6 bytes) argument\n");
+				return 0;
+			}
+		} else {
+			for ( i=0; i<6; i++ )
+				buf[i]=sbuf[i];
+			enaddr = buf;
+		}
+	}
 
 	if ( !plan->mutx ) {
 #define ERR_INTS ( RWT_INT | RXE_INT | TXE_INT | TDFU_INT | TDFO_INT | RXDF_INT | RSFF_INT)
@@ -982,8 +983,13 @@ rtems_status_code sc;
 		drvLan9118IrqEnable();
 	}
 
+
 	/* Setup the convenience header   */
-	memcpy( plan->ebcst.src, enaddr, 6);
+	if ( !enaddr ) {
+		drvLan9118ReadEnaddr(plan, plan->ebcst.src);
+	} else {
+		memcpy( plan->ebcst.src, enaddr, 6);
+	}
 	memset( plan->ebcst.dst, 0xff,   6);
 
 
@@ -999,12 +1005,14 @@ rtems_status_code sc;
 	/* Setup the MAC but don't start the receiver */
 	macCsrWrite(plan, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
 
-	tmp = (enaddr[5]<<8) | enaddr[4];
-	macCsrWrite(plan, ADDRH, tmp);
-	for (i=3,tmp=0; i>=0; i--) {
-		tmp = (tmp<<8) | enaddr[i];
+	if ( enaddr ) {
+		tmp = (enaddr[5]<<8) | enaddr[4];
+		macCsrWrite(plan, ADDRH, tmp);
+		for (i=3,tmp=0; i>=0; i--) {
+			tmp = (tmp<<8) | enaddr[i];
+		}
+		macCsrWrite(plan, ADDRL, tmp);
 	}
-	macCsrWrite(plan, ADDRL, tmp);
 
 	/* Setup the PHY */
 
@@ -1632,8 +1640,22 @@ drvLan9118E2PRead(DrvLan9118 plan, void *dst, unsigned src, unsigned len)
 int
 drvLan9118E2PWrite(DrvLan9118 plan, void *src, unsigned dst, unsigned len)
 {
+	/* prevent inadvertent overwrite of MAC address */
+	if ( dst < 7 )
+		return -EINVAL;
 	return doit(plan, E2P_CMD_WRITE, 0, src, dst, len);
 }
+
+int
+drvLan9118E2PWriteEnaddr(DrvLan9118 plan, uint8_t *enaddr)
+{
+uint8_t header = 0xa5;
+int     rval = doit(plan, E2P_CMD_WRITE, 0, &header, 0, 1);
+	if ( rval )
+		return rval;
+	return doit(plan, E2P_CMD_WRITE, 0, enaddr, 1, 6);
+}
+
 
 int
 drvLan9118E2PWriteEnable(DrvLan9118 plan)
