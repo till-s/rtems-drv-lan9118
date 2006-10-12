@@ -14,123 +14,9 @@
  * include file section in the '.c' file...
  */
 
-/* #define BYTES_NOT_SWAPPED */
-
-/* ENDIANNESS NOTES
- * ----------------
- *
- * The lan9118 is internally (always, i.e., regardless of the ENDIAN register)
- * **little-endian**. There is a 'ENDIAN' register but it does not really swap
- * endianness. All it does is helping adjust the A1 line if a 16-bit data port
- * is used.
- * Note that all transfers are always 32-bit.
- * a) If a 32-bit data port exists and if the byte lanes between a big-endian
- *    CPU and the 9118 are wired straight through:
- *      lan9118
- *      (MSB)  B3 B2 B1 B0 (LSB)
- *      BE CPU
- *    then both chips will interpret a number 0x10000000 written to the 32-bit
- *    port as being 256M.
- * b) If a 16-bit data port exists then a 32-bit write has to be broken into
- *    two 16-bit writes. Here's where the difference in endianness comes into
- *    play: The BE associates the most-significant half-word with the lower
- *    address (A1 == 0), the 9118 with the higher (A1==1) one. Hence if a
- *    BE CPU writes 0x10000000 this would be broken into 
- *        1st write cycle  (A1 = 0)  0x1000
- *        2nd write cycle  (A1 = 1)  0x0000
- *    and the 9118 reading from the 16-bit port reassembles the 32-bit word to
- *        1st read cycle   (A1 = 0) goes into least significant half-word
- *        2nd read cycle   (A1 = 1) goes into most significant half-word
- *    ==> 0x00001000 is what the 9118 gets.
- *    
- *    All the 'ENDIAN' register does (when set to 0xffffffff) is inverting
- *    the A1 line (unused in 32-bit data port mode) so that the 1st read cycle
- *    of the example is associated with /A1 == 1, i.e., the most-significant
- *    half-word and vice versa, i.e., the 9118 correctly reads 0x10000000 as
- *    it would if a 32-bit port was used.
- *
- * This would indicate that the BE CPU and the 9118 work together seamlessly
- * regardless of endianness and data port width (provided that a BE CPU using
- * a 16-bit data port sets ENDIAN=0xffffffff).
- *
- * CAVEAT CAVEAT CAVEAT:
- * Even though register values now look fine, the 9118 IS STILL A LE CHIP.
- * In particular, the first byte it sends on the wire during transmission
- * is the one a LE system associates with the lowest address, i.e., the
- * LSB of the first 32-bit word in the FIFO.
- *
- * However, a BE CPU writing a block of memory to the FIFO sticks the byte
- * at the lowest address of the TX buffer into the MSB of the first word
- * which is the 4th byte send by the 9118!
- * 
- * ===> On a BE system THE ENTIRE TX/RX BUFFERS NEED TO BE BYTE SWAPPED
- *      (in 32-bit chunks).
- *      Since this is a potentially expensive operation, it seems better
- *      to swap byte lanes in hardware (interconnection of the lan9118 with
- *      the bus). This means that the register contents are now swapped also
- *      and need to be swapped again (in software) when the driver accesses
- *      registers.
- *
- * THIS DRIVER ASSUMES THAT BYTE LANES CONNECTING THE 9118 TO A BIG-ENDIAN
- * SYSTEM ARE SWAPPED IN HARDWARE.
- *
- * The 'ENDIAN' register is unused in this scenario and the port-width doesn't
- * matter.
- */
-
 #include <rtems.h>
-
-/* I'm not a fan of those macros...
- * Note that e.g., MCF5282_EPDR_EPD(bit) doesn't protect 'bit' in the
- * expansion -- this tells me that whoever wrote those was maybe a novice...
- */
-#include <mcf5282/mcf5282.h>
-
-#include <rtems/rtems/cache.h>
-#include <rtems/bspIo.h>
-#include <rtems/error.h>
-
-#include <sys/socket.h>
-#include <sys/sockio.h>
-#include <sys/sockio.h>
-#include <net/if.h>
-
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-#include <errno.h>
-#include <time.h>
-
-#include <dev/mii/mii.h>
-#include <machine/in_cksum.h>
-
-#define __KERNEL__
-#include <rtems/rtems_mii_ioctl.h>
-#undef __KERNEL__
-
 #include <stdio.h>
-#include <assert.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
-
-#include "drv5282DMA.h"
-
-#include <drvLanProto.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-struct DrvLan9118Rec_;
-typedef struct DrvLan9118Rec_ *DrvLan9118;
-
-
-#define REGLOCK(plan)		assert( !rtems_semaphore_obtain((plan)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT))
-#define REGUNLOCK(plan) 	assert( !rtems_semaphore_release((plan)->mutx))
-
-#define TXLOCK(plan)		assert( !rtems_semaphore_obtain((plan)->tmutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT))
-#define TXUNLOCK(plan) 		assert( !rtems_semaphore_release((plan)->tmutx) )
+#include <stdint.h>
 
 /* TX status word          */
 #define TXSTS_TAG_GET(x)		__GET_BITS(x,16,0xffff)
@@ -165,17 +51,14 @@ typedef struct DrvLan9118Rec_ *DrvLan9118;
 
 #define RXSTS_ERR_ANY	(RXSTS_FILT_FAIL | RXSTS_ERROR | RXSTS_LEN_ERR | RXSTS_RX_WDOG_TO | RXSTS_MII_ERROR)
 
-#include <stdint.h>
-
-
-/* enable/disable interrupt at the lan9118 device (actually at the arcturus EPORT module
- * which is more efficient)
+/* enable/disable interrupt at the lan9118 device
+ * (actually at the arcturus EPORT module which is more efficient)
  */
 inline void
-drvLan9118IrqEnable();
+drvLan9118IrqEnable(void);
 
 inline void
-drvLan9118IrqDisable();
+drvLan9118IrqDisable(void);
 
 /* Hard reset via a dedicated wire from the arcturus board
  *
@@ -195,6 +78,13 @@ drvLan9118IrqDisable();
 int
 drvLan9118HardReset(int level);
 
+/* The above routines don't take a driver handle because they
+ * all operate on the MCF5282 (and are thus BSP specific).
+ */
+
+/* Type of a driver handle */
+typedef struct DrvLan9118Rec_ *DrvLan9118;
+
 /* Setup the driver (not completely functional yet, it must be started):
  *
  * 'enaddr': 6-byte HW address. If NULL the 'HWADDR1' environment ('benv') variable
@@ -207,15 +97,55 @@ drvLan9118HardReset(int level);
 
 #define LAN9118_FLAG_BCDIS	1	/* disable reception of broadcast packets */
 DrvLan9118
-drvLan9118Setup(	unsigned char *enaddr,
-					uint32_t flags
-			   );
+drvLan9118Setup(unsigned char *enaddr, uint32_t flags);
 
 /* Read HW address; buf must provide space for 6 bytes */
 void
 drvLan9118ReadEnaddr(DrvLan9118 plan, uint8_t *buf);
 
-typedef int (*DrvLan9118CB)(struct DrvLan9118Rec_ *plan, uint32_t sts, void *closure);
+/* The 'sts' word passed to and the return value of the various callbacks
+ * have the following meaning:
+ *
+ *     tx_cb: The TX status word as read from the TX status fifo.
+ *            RETURN VALUE: The return value of the tx_cb is ignored.
+ *
+ *     rx_cb: The number of characters still left in the data fifo.
+ *            RETURN VALUE: the remaining bytes in the data fifo
+ *                          ('sts' minus the number of characters read by
+ *                          the callback). This may be negative since
+ *                          if the last byte is not aligned to a uint32_t
+ *                          boundary since the fifo must always be read in
+ *                          multiples of 4 bytes.
+ *            NOTES: The rx_cb is only executed if no RX errors occurred.
+ *
+ *     err_cb: The 'err_cb' is executed under two circumstances:
+ *              1) packet received but has nonzero error status:
+ *                 --> 'sts' is the RX status word as read from the RX status
+ *                     fifo.
+ *              2) One of the 'error' interrupt bits is set (no status word
+ *                 or data in fifos).
+ *                 --> 'sts' is the int_sts word read from the device.
+ *             To distinguish the two cases (1<<31) is set (1) or cleared (2),
+ *             respectively.
+ *
+ *             RETURN VALUE: The return value of the err_cb is ignored.
+ *
+ *     phy_cb: Executed to report a 'phy interrupt/event'. 'sts' reflects
+ *             the contents of the MII_INT_SRC register (current mask applied).
+ *             Can be used e.g., to track link status change events.
+ *
+ *             RETURN VALUE: The return value of the phy_cb is ignored.
+ */
+
+
+typedef int (*DrvLan9118CB)(DrvLan9118 plan, uint32_t sts, void *closure);
+
+/* Demo RX callback for debugging; info about received frames is printed to 
+ * (FILE*) closure [stdout if NULL].
+ */
+int
+drvLan9118DumpHeaderRxCb(DrvLan9118 plan, uint32_t len, void *closure);
+
 
 /* Start driver (prio/stacksz may be 0 to select a default)
  *
@@ -387,12 +317,6 @@ drvLan9118E2PWriteDisable(DrvLan9118 plan);
  */
 int
 drvLan9118E2PErase(DrvLan9118 plan);
-
-/* RX callback for debugging; info about received frames is printed to 
- * (FILE*)closure [stdout if NULL].
- */
-int
-drvLan9118DumpHeaderRxCb(DrvLan9118 plan, uint32_t len, void *closure);
 
 #ifdef __cplusplus
 }
