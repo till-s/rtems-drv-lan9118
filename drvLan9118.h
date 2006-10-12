@@ -1,14 +1,32 @@
+
+/*=============================================================================
+
+	$Id$
+  Name: drvlan9118.h
+
+  Abs:  Public Interface of Driver for the SMSC LAN9118
+        Ethernet Adapter. This driver is specially designed
+        for low-level packet handling. It is not a general-
+        purpose rtems/bsd networking driver.
+
+        Some dependency on the uc5282 RTEMS BSP exists.
+
+  Auth: 12-oct-2006, Till Straumann (tss)
+  Rev:  
+
+-----------------------------------------------------------------------------*/
+
+#include <copyright_SLAC.h>	/* SLAC copyright comments */
+ 
+/*-----------------------------------------------------------------------------
+ 
+  Mod:  (newest to oldest)  
+        [ consult CVS log ]
+ 
+=============================================================================*/
+
 #ifndef DRV_LAN9118_H
 #define DRV_LAN9118_H
-/* $Id$ */
-
-/* Raw packet driver for the lan9118 10/100 ethernet chip */
-
-/* This driver was written for the uC5282 BSP and BSP-specifica
- * have not been separated out [yet].
- */
-
-/* Author: Till Straumann <strauman@slac.stanford.edu>, 2006 */
 
 /* Look for compile-time configurable parameters after the 
  * include file section in the '.c' file...
@@ -19,23 +37,20 @@
 #include <stdint.h>
 
 /* TX status word          */
-#define TXSTS_TAG_GET(x)		__GET_BITS(x,16,0xffff)
-#define TXSTS_TAG_SET(x)		__SET_BITS(x,16,0xffff)
+#define TXSTS_TAG_GET(x)	(((x)>>16)&0xffff)
 #define TXSTS_ERROR		(1<<15)
 #define TXSTS_CARRIER_LOSS	(1<<11)
 #define TXSTS_NO_CARRIER	(1<<10)
 #define TXSTS_LATE_COLL		(1<< 9)
 #define TXSTS_EXCESS_COLL	(1<< 8)
-#define TXSTS_COLL_CNT_GET(x)		__GET_BITS(x,3,0xf)
-#define TXSTS_COLL_CNT_SET(x)		__SET_BITS(x,3,0xf)
+#define TXSTS_COLL_CNT_GET(x)	(((x)>>3)&0xf)
 #define TXSTS_EXCESS_DEFER	(1<< 2)
 #define TXSTS_FIFO_UNDERRUN	(1<< 1)
 #define TXSTS_DEFERRED		(1<< 0)
 
 /* RX status word           */
 #define RXSTS_FILT_FAIL		(1<<30)
-#define RXSTS_PKTLEN_GET(x)		__GET_BITS(x,16,0x3fff)
-#define RXSTS_PKTLEN_SET(x)		__SET_BITS(x,16,0x3fff)
+#define RXSTS_PKTLEN_GET(x)	(((x)>>16)&0x3fff)
 #define RXSTS_ERROR		(1<<15) /* or of 11,7,6,1 */
 #define RXSTS_BCST		(1<<13)
 #define RXSTS_LEN_ERR		(1<<12)
@@ -49,7 +64,7 @@
 #define RXSTS_DRIBBLING		(1<< 2)
 #define RXSTS_FCS_ERROR		(1<< 1)
 
-#define RXSTS_ERR_ANY	(RXSTS_FILT_FAIL | RXSTS_ERROR | RXSTS_LEN_ERR | RXSTS_RX_WDOG_TO | RXSTS_MII_ERROR)
+#define RXSTS_ERR_ANY		(RXSTS_FILT_FAIL | RXSTS_ERROR | RXSTS_LEN_ERR | RXSTS_RX_WDOG_TO | RXSTS_MII_ERROR)
 
 /* enable/disable interrupt at the lan9118 device
  * (actually at the arcturus EPORT module which is more efficient)
@@ -83,7 +98,7 @@ drvLan9118HardReset(int level);
  */
 
 /* Type of a driver handle */
-typedef struct DrvLan9118Rec_ *DrvLan9118;
+typedef struct DrvLan9118_ts_ *DrvLan9118_tps;
 
 /* Setup the driver (not completely functional yet, it must be started):
  *
@@ -96,12 +111,12 @@ typedef struct DrvLan9118Rec_ *DrvLan9118;
  */
 
 #define LAN9118_FLAG_BCDIS	1	/* disable reception of broadcast packets */
-DrvLan9118
-drvLan9118Setup(unsigned char *enaddr, uint32_t flags);
+DrvLan9118_tps
+drvLan9118Setup(const uint8_t *enaddr_pa, uint32_t flags);
 
 /* Read HW address; buf must provide space for 6 bytes */
 void
-drvLan9118ReadEnaddr(DrvLan9118 plan, uint8_t *buf);
+drvLan9118ReadEnaddr(DrvLan9118_tps plan_ps, uint8_t *buf_pa);
 
 /* The 'sts' word passed to and the return value of the various callbacks
  * have the following meaning:
@@ -138,13 +153,13 @@ drvLan9118ReadEnaddr(DrvLan9118 plan, uint8_t *buf);
  */
 
 
-typedef int (*DrvLan9118CB)(DrvLan9118 plan, uint32_t sts, void *closure);
+typedef int (*DrvLan9118CB_tpf)(DrvLan9118_tps plan_ps, uint32_t sts, void *closure);
 
 /* Demo RX callback for debugging; info about received frames is printed to 
  * (FILE*) closure [stdout if NULL].
  */
 int
-drvLan9118DumpHeaderRxCb(DrvLan9118 plan, uint32_t len, void *closure);
+drvLan9118DumpHeaderRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *closure);
 
 
 /* Start driver (prio/stacksz may be 0 to select a default)
@@ -163,38 +178,38 @@ drvLan9118DumpHeaderRxCb(DrvLan9118 plan, uint32_t len, void *closure);
  *
  */
 int
-drvLan9118Start(DrvLan9118 plan,
+drvLan9118Start(DrvLan9118_tps plan_ps,
 				uint32_t prio, uint32_t stacksz,
-				DrvLan9118CB rx_cb, 	void *rx_cb_arg,
-				DrvLan9118CB tx_cb, 	void *tx_cb_arg,
-				DrvLan9118CB err_cb, 	void *err_cb_arg,
-				DrvLan9118CB phy_cb,	void *phy_cb_arg);
+				DrvLan9118CB_tpf rx_cb_pf, 	void *rx_cb_arg_p,
+				DrvLan9118CB_tpf tx_cb_pf, 	void *tx_cb_arg_p,
+				DrvLan9118CB_tpf err_cb_pf,	void *err_cb_arg_p,
+				DrvLan9118CB_tpf phy_cb_pf,	void *phy_cb_arg_p);
 		
 /* Shutdown driver and release all resources.
  * NOTE: It is illegal to call any other driver entry point the shutdown.
  *       To start the driver again, you must call 'Setup' followed by 'Start'.
  */
 void
-drvLan9118Shutdown(DrvLan9118 plan);
+drvLan9118Shutdown(DrvLan9118_tps plan_ps);
 
 /* read from the RX fifo (to be executed from RX callback) */
 void
-drvLan9118FifoRd(DrvLan9118 plan, void *buf, int n_bytes);
+drvLan9118FifoRd(DrvLan9118_tps plan_ps, void *buf_p, int n_bytes);
 
 /* Dump driver statistics to a file (stdout if NULL) */
 int
-drvLan9118DumpStats(DrvLan9118 plan, FILE *f);
+drvLan9118DumpStats(DrvLan9118_tps plan_ps, FILE *f_ps);
 
 /* just the SIOCSIFMEDIA/SIOCGIFMEDIA ioctls */
 int
-drvLan9118ioctl(DrvLan9118 plan, int cmd, int *p_media);
+drvLan9118ioctl(DrvLan9118_tps plan_ps, int cmd, int *media_p);
 
 /* Byte-reverse a buffer. This is only needed on a big-endian board
  * where the byte-lanes have *not* been swapped in hardware.
  * [old test-board design].
  */
 void
-drvLan9118BufRev(uint32_t *buf, int nwords);
+drvLan9118BufRev(uint32_t *buf_p, int nwords);
  
 /* NOTE: The head of the packet must be padded with 2 bytes, i.e.,
  *       the destination ethernet address starts at buf[2]
@@ -221,13 +236,13 @@ drvLan9118BufRev(uint32_t *buf, int nwords);
  * but discarded if no tx callback is registered.
  */
 uint32_t
-drvLan9118TxPacket(DrvLan9118 plan, void *buf, int nbytes, unsigned short tag);
+drvLan9118TxPacket(DrvLan9118_tps plan_ps, const void *buf_p, int nbytes, unsigned short tag);
 
 /* Write n_bytes to TX fifo;
  * NOTE: TX lock must be held (call TxPacket routine first)
  */
 void
-drvLan9118FifoWr(DrvLan9118 plan, void *buf, int n_bytes);
+drvLan9118FifoWr(DrvLan9118_tps plan_ps, const void *buf_p, int n_bytes);
 
 /* Unlock the Transmitter; Intended use:
  * 
@@ -236,7 +251,7 @@ drvLan9118FifoWr(DrvLan9118 plan, void *buf, int n_bytes);
  *  3) unlock transmitter calling drvLan9118TxUnlock()
  */
 void
-drvLan9118TxUnlock(DrvLan9118 plan);
+drvLan9118TxUnlock(DrvLan9118_tps plan_ps);
 
 /* Wait for the status of a pending transmission to be reported
  * 
@@ -245,7 +260,7 @@ drvLan9118TxUnlock(DrvLan9118 plan);
  *          is then responsible for handling the status].
  */
 rtems_status_code
-drvLan9118TxStatus(DrvLan9118 plan, uint32_t *pval, uint32_t timeout);
+drvLan9118TxStatus(DrvLan9118_tps plan_ps, uint32_t *pval_p, uint32_t timeout);
 
 /* Flush TX status and DATA fifos 
  * To be called from TX thread ONLY
@@ -256,19 +271,19 @@ drvLan9118TxStatus(DrvLan9118 plan, uint32_t *pval, uint32_t timeout);
 #define DATA_FIFO	(1<<14)
 
 uint32_t
-drvLan9118TxFlush(DrvLan9118 plan, int which);
+drvLan9118TxFlush(DrvLan9118_tps plan_ps, int which);
 
 /* Flush RX fifo; 
  * RETURNS: time it took (5282 timer ticks), see source code; the
  *          return value is for evaluation/debugging purposes only.
  */
 uint32_t
-drvLan9118RxFlush(DrvLan9118 plan);
+drvLan9118RxFlush(DrvLan9118_tps plan_ps);
 
 /* Dump RX buffer statistics to a file (stdout if NULL)
  * This routine is intended to be called from a RX callback
  */
-void drvLan9118DumpRxSts(uint32_t rx_sts, FILE *f);
+void drvLan9118DumpRxSts(uint32_t rx_sts, FILE *f_ps);
 
 /* EEPROM ACCESS ROUTINES */
 
@@ -283,7 +298,7 @@ void drvLan9118DumpRxSts(uint32_t rx_sts, FILE *f);
 
 /* Read from EEPROM; return 0 (success) or (-ERRNO) on error */
 int
-drvLan9118E2PRead(DrvLan9118 plan, void *dst, unsigned src, unsigned len);
+drvLan9118E2PRead(DrvLan9118_tps plan_ps, void *dst_pa, unsigned src, unsigned len);
 
 /* Write to EEPROM (erasing target locations first);
  * Returns 0 (success) or (-ERRNO) on error.
@@ -292,31 +307,31 @@ drvLan9118E2PRead(DrvLan9118 plan, void *dst, unsigned src, unsigned len);
  *         - you must call WriteEnable prior to writing.
  */
 int
-drvLan9118E2PWrite(DrvLan9118 plan, void *src, unsigned dst, unsigned len);
+drvLan9118E2PWrite(DrvLan9118_tps plan_ps, const void *src_pa, unsigned dst, unsigned len);
 
 /* Write the first 7 bytes of the EEPROM (a '0xa5' prefix is added by this routine)
  * Returns 0 (success) or (-ERRNO) on error.
  */
 int
-drvLan9118E2PWriteEnaddr(DrvLan9118 plan, uint8_t *enaddr);
+drvLan9118E2PWriteEnaddr(DrvLan9118_tps plan_ps, const uint8_t *enaddr_pa);
 
 /* Enable write operations
  * Returns 0 (success) or (-ERRNO) on error.
  */
 int
-drvLan9118E2PWriteEnable(DrvLan9118 plan);
+drvLan9118E2PWriteEnable(DrvLan9118_tps plan_ps);
 
 /* Disable write operations
  * Returns 0 (success) or (-ERRNO) on error.
  */
 int
-drvLan9118E2PWriteDisable(DrvLan9118 plan);
+drvLan9118E2PWriteDisable(DrvLan9118_tps plan_ps);
 
 /* Erase entire device
  * Returns 0 (success) or (-ERRNO) on error.
  */
 int
-drvLan9118E2PErase(DrvLan9118 plan);
+drvLan9118E2PErase(DrvLan9118_tps plan_ps);
 
 #ifdef __cplusplus
 }

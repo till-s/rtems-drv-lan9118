@@ -44,7 +44,7 @@ typedef struct ArpEntryRec_ {
 static ArpEntry arpcache[256] = {0};
 
 typedef struct IpCbDataRec_ {
-	DrvLan9118		plan;
+	DrvLan9118_tps		plan_ps;
 	rtems_id		mutx;
 	uint32_t		ipaddr;
 	struct {
@@ -85,15 +85,15 @@ uint8_t  h  = ipaddr;
 			ARPUNLOCK(pd);
 
 			/* must do a new lookup */
-			drvLan9118TxPacket(pd->plan, 0, sizeof(pd->arpreq), 0);
+			drvLan9118TxPacket(pd->plan_ps, 0, sizeof(pd->arpreq), 0);
 
 			/* arpreq is locked and may be modified */
 			*(uint32_t*)pd->arpreq.arp.tpa = ipaddr;
 
 			/* send request */
-			drvLan9118FifoWr(pd->plan, &pd->arpreq, sizeof(pd->arpreq));
+			drvLan9118FifoWr(pd->plan_ps, &pd->arpreq, sizeof(pd->arpreq));
 
-			drvLan9118TxUnlock(pd->plan);
+			drvLan9118TxUnlock(pd->plan_ps);
 
 			/* should synchronize but it's easier to just delay and try again */
 			rtems_task_wake_after(1);
@@ -186,7 +186,7 @@ uint32_t *p    = (uint32_t*)&ipa.sha[0];
 int      isreq = 0;
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
-	drvLan9118FifoRd(pd->plan, &ipa, 8);
+	drvLan9118FifoRd(pd->plan_ps, &ipa, 8);
 	if ( ntohl(0x00010800) != *(uint32_t*)&ipa )
 		return 8;
 
@@ -203,7 +203,7 @@ int      isreq = 0;
 			break;
 	}
 
-	drvLan9118FifoRd(pd->plan, p, 5*4);
+	drvLan9118FifoRd(pd->plan_ps, p, 5*4);
 
 	if ( isreq ) {
 #ifdef DEBUG
@@ -225,7 +225,7 @@ int      isreq = 0;
 		}
 #endif
 
-		drvLan9118TxPacket(pd->plan, &pd->arprep, sizeof(pd->arprep), 0);
+		drvLan9118TxPacket(pd->plan_ps, &pd->arprep, sizeof(pd->arprep), 0);
 	} else {
 		/* a reply to our request */
 #ifdef DEBUG
@@ -253,7 +253,7 @@ struct {
 
 
 
-	drvLan9118FifoRd(pd->plan, &p.ih, sizeof(p.ih));
+	drvLan9118FifoRd(pd->plan_ps, &p.ih, sizeof(p.ih));
 	rval += sizeof(p.ih);
 
 	if ( p.ih.dst != pd->ipaddr )
@@ -270,7 +270,7 @@ struct {
 	switch ( p.ih.prot ) {
 		case 1 /* ICMP */:
 		if ( sizeof(p)-sizeof(p.ih) - sizeof(p.eh) >= l ) {
-			drvLan9118FifoRd(pd->plan, &p.icmph, l);
+			drvLan9118FifoRd(pd->plan_ps, &p.icmph, l);
 			rval += l;
 			if ( p.icmph.type == 8 /* ICMP REQUEST */ && p.icmph.code == 0 ) {
 #ifdef DEBUG
@@ -286,7 +286,7 @@ struct {
 				p.ih.src  = pd->ipaddr; 
 				p.ih.csum = 0;
 				p.ih.csum = htons(in_cksum_hdr((void*)&p.ih));
-				drvLan9118TxPacket(pd->plan, &p, sizeof(EtherHeaderRec) + nbytes, 0);
+				drvLan9118TxPacket(pd->plan_ps, &p, sizeof(EtherHeaderRec) + nbytes, 0);
 			}
 		}
 		break;
@@ -297,12 +297,12 @@ struct {
 
 /* Handle ARP and ICMP echo (ping) requests */
 int
-drvLan9118IpRxCb(DrvLan9118 plan, uint32_t len, void *arg)
+drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg)
 {
 IpCbData        pd = arg;
 EtherHeaderRec	eh;
 
-	drvLan9118FifoRd(plan, &eh, sizeof(eh));
+	drvLan9118FifoRd(plan_ps, &eh, sizeof(eh));
 	len -= sizeof(eh);
 
 	switch ( eh.type ) {
@@ -323,7 +323,7 @@ EtherHeaderRec	eh;
 
 
 IpCbData
-lanIpCbDataCreate(DrvLan9118 plan, char *ipaddr)
+lanIpCbDataCreate(DrvLan9118_tps plan_ps, char *ipaddr)
 {
 IpCbData          rval = malloc(sizeof(*rval));
 uint8_t		      (*enaddr)[6];
@@ -332,7 +332,7 @@ rtems_status_code sc;
 	if ( !rval )
 		return 0;
 
-	rval->plan   = plan;
+	rval->plan_ps   = plan_ps;
 
 	rval->ipaddr = inet_addr(ipaddr);
 
@@ -360,14 +360,14 @@ rtems_status_code sc;
 	/* REQUEST */
 		/* DST: bcast address            */
 		memset(&rval->arpreq.ll.dst, 0xff, sizeof(*enaddr));
-		/* SRC: plan's ethernet address  */
-		drvLan9118ReadEnaddr(plan, (uint8_t*)enaddr);
+		/* SRC: plan_ps's ethernet address  */
+		drvLan9118ReadEnaddr(plan_ps, (uint8_t*)enaddr);
 		/* TYPE/LEN is ARP (0x806)       */
 		rval->arpreq.ll.type = htons(0x806);
 	/* REPLY   */
 		/* DST: ??? filled by daemon     */
 
-		/* SRC: plan's ethernet address  */
+		/* SRC: plan_ps's ethernet address  */
 		memcpy(rval->arprep.ll.src, enaddr, sizeof(*enaddr));
 		/* TYPE/LEN is ARP (0x806)       */
 		rval->arprep.ll.type = htons(0x806);
@@ -387,7 +387,7 @@ rtems_status_code sc;
 		memset(rval->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
 		/* TARGET IP ADDR: ??? (filled by requestor)  */
 
-		/* SOURCE HW ADDR: plan's ethernet address    */
+		/* SOURCE HW ADDR: plan_ps's ethernet address    */
 		memcpy(&rval->arpreq.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
 		memcpy(&rval->arpreq.arp.spa, &rval->ipaddr, 4);
@@ -397,7 +397,7 @@ rtems_status_code sc;
 
 		/* TARGET IP ADDR: ??? (filled by daemon)     */
 
-		/* SOURCE HW ADDR: plan's ethernet address    */
+		/* SOURCE HW ADDR: plan_ps's ethernet address    */
 		memcpy(rval->arprep.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
 		memcpy(rval->arprep.arp.spa, &rval->ipaddr, 4);
