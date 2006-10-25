@@ -66,4 +66,26 @@ typedef struct IcmpHeaderRec_ {
 	uint16_t	seq;
 } IcmpHeaderRec;
 
+#define LANPKTMAX			1500
+
+#define IPPAYLOADSIZE		(LANPKTMAX - sizeof(EtherHeaderRec) - sizeof(IpHeaderRec))
+#define UDPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(UdpHeaderRec))
+#define ICMPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(IcmpHeaderRec))
+
+typedef struct LanIpPacketRec_ {
+	EtherHeaderRec	ll;
+	IpHeaderRec		ip;
+	union {
+		struct {
+			IcmpHeaderRec	hdr;
+			unsigned char	pld[ICMPPAYLOADSIZE];
+		}					icmp_s;
+		struct {
+			UdpHeaderRec	hdr;
+			unsigned char	pld[UDPPAYLOADSIZE];
+		}					udp_s;
+		unsigned char raw[IPPAYLOADSIZE];
+	}				p_u;
+} LanIpPacketRec, *LanIpPacket;
+
 #endif

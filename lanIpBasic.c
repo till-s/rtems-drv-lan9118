@@ -13,6 +13,7 @@
  */
 
 /* T. Straumann <strauman@slac.stanford.edu> */
+#define __RTEMS_VIOLATE_KERNEL_VISIBILITY__
 #include <rtems.h>
 #include <rtems/error.h>
 #include <stdint.h>
@@ -24,6 +25,7 @@
 #include <machine/in_cksum.h>
 
 #include <lanIpProto.h>
+#include <lanIpBasic.h>
 #include <drvLan9118.h>
 
 #define DEBUG_IP	1
@@ -34,6 +36,170 @@ int	lanIpDebug = DEBUG;
 #endif
 
 #define CACHE_OVERLAP 10
+
+/* Trivial RX buffers */
+#define RBUFSZ		1500
+#define NRBUFS		50	/* Total number of RX buffers */
+#define NSOCKS		5
+#define QDEPTH		10	/* RX socket queue depth      */
+
+typedef LanIpPacketRec rbuf_t;
+
+static rbuf_t		rbufs[NRBUFS] = {{{{0}}}};
+
+/* lazy init of tbuf facility */
+static int    ravail = NRBUFS;
+
+static rbuf_t *frb = 0; /* free list */
+
+static rbuf_t *getrbuf()
+{
+rbuf_t                *rval;
+rtems_interrupt_level key;
+
+	rtems_interrupt_disable(key);
+	if ( (rval = frb) ) {
+		frb = *(rbuf_t **)rval;
+	} else {
+		/* get from pool */
+		if ( ravail ) {
+			rval = &rbufs[--ravail];
+		}
+	}
+	rtems_interrupt_enable(key);
+	return rval;
+}
+
+static void relrbuf(rbuf_t *b)
+{
+rtems_interrupt_level key;
+
+	if ( b ) {
+		rtems_interrupt_disable(key);
+			*(rbuf_t**)b = frb;
+			frb = b;
+		rtems_interrupt_enable(key);
+	}
+}
+
+typedef struct UdpSockRec_ {
+	volatile int	port;
+	rtems_id		msgq;
+} UdpSockRec, *UdpSock;
+
+static UdpSockRec	socks[NSOCKS] = {{0}};
+
+/* socks array is protected by disabling thread dispatching */
+
+/* Find socket for 'port' and return (dispatching disabled on success) */
+static int
+sockget(int port)
+{
+int i;
+	_Thread_Disable_dispatch();
+	for (i=0; i<NSOCKS; i++) {
+		if ( socks[i].port == port )
+			return i;
+	}
+	_Thread_Enable_dispatch();
+	return -1;
+}
+
+
+int
+udpSockCreate(uint16_t port)
+{
+int       rval, i;
+rtems_id  q = 0;
+
+	/* 0 is invalid (we use it as a marker) */
+	if ( 0 == port )
+		return -1;
+
+	if ( (rval = sockget(0)) < 0 ) {
+		/* no free slot */
+		goto egress;
+	}
+
+	if ( RTEMS_SUCCESSFUL != rtems_message_queue_create(
+			rtems_build_name('u','d','p','q'),
+			QDEPTH,
+			sizeof(rbuf_t*),
+			RTEMS_FIFO | RTEMS_LOCAL,
+			&q) ) {
+		return -2;
+	}
+
+	/* found free slot, array is locked */
+	for ( i=0; i<NSOCKS; i++ ) {
+		if ( socks[i].port == port ) {
+			/* duplicate port */
+			_Thread_Enable_dispatch();
+			rval = -3;
+			goto egress;
+		}
+	}
+
+	/* everything OK */
+	socks[rval].port = port;
+	socks[rval].msgq = q;
+
+	_Thread_Enable_dispatch();
+
+	q             = 0;
+
+egress:
+	if ( q )
+		rtems_message_queue_delete(q);
+	return rval;
+}
+
+/* destroying a sock somebody is blocking on is BAD */
+int
+udpSockDestroy(int sd)
+{
+rtems_id q = 0;
+	if ( sd < 0 || sd >= NSOCKS )
+		return -1;
+
+	_Thread_Disable_dispatch();
+		if (socks[sd].port) {
+			socks[sd].port = 0;
+			q = socks[sd].msgq;
+			socks[sd].msgq = 0;
+		}
+	_Thread_Enable_dispatch();
+	if (q) {
+		rtems_message_queue_delete(q);
+		return 0;
+	}
+	return -2;
+}
+
+LanIpPacketRec *
+udpSockRcv(int sd, int timeout_ticks)
+{
+LanIpPacketRec *rval = 0;
+uint32_t		sz = sizeof(rval);
+	if ( sd < 0 || sd >= NSOCKS ) {
+		return 0;
+	}
+	if ( RTEMS_SUCCESSFUL != rtems_message_queue_receive(
+								socks[sd].msgq,
+								&rval,
+								&sz,
+								timeout_ticks ? RTEMS_WAIT : RTEMS_NO_WAIT,
+								timeout_ticks < 0 ? RTEMS_NO_TIMEOUT : timeout_ticks) )
+		return 0;
+
+	return rval;
+}
+
+void
+udpSockFreeBuf(LanIpPacketRec *b)
+{
+	relrbuf(b);
+}
 
 typedef struct ArpEntryRec_ {
 	uint32_t			ipaddr;
@@ -47,6 +213,7 @@ typedef struct IpCbDataRec_ {
 	DrvLan9118_tps		plan_ps;
 	rtems_id		mutx;
 	uint32_t		ipaddr;
+	uint32_t		nmask;
 	struct {
 		EtherHeaderRec  ll;
 		IpArpRec		arp;
@@ -55,7 +222,7 @@ typedef struct IpCbDataRec_ {
 		EtherHeaderRec  ll;
 		IpArpRec		arp;
 	} arprep;
-} IpCbDataRec, *IpCbData;
+} IpCbDataRec;
 
 #define ARPLOCK(pd)		rtems_semaphore_obtain((pd)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
 #define ARPUNLOCK(pd) 	rtems_semaphore_release((pd)->mutx)
@@ -179,19 +346,20 @@ int i;
 #endif
 
 static int
-handleArp(IpCbData pd)
+handleArp(rbuf_t **ppbuf, IpCbData pd)
 {
-IpArpRec ipa;
-uint32_t *p    = (uint32_t*)&ipa.sha[0];
-int      isreq = 0;
+int			isreq = 0;
+rbuf_t		*p    = *ppbuf;
+IpArpRec	*pipa = (IpArpRec*)&p->ip;
+
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
-	drvLan9118FifoRd(pd->plan_ps, &ipa, 8);
-	if ( ntohl(0x00010800) != *(uint32_t*)&ipa )
+	drvLan9118FifoRd(pd->plan_ps, pipa, 8);
+	if ( ntohl(0x00010800) != *(uint32_t*)pipa )
 		return 8;
 
 
-	switch ( *(((uint32_t*)&ipa) + 1) ) {
+	switch ( *(((uint32_t*)pipa) + 1) ) {
 		default:
 			return 8;
 
@@ -203,19 +371,20 @@ int      isreq = 0;
 			break;
 	}
 
-	drvLan9118FifoRd(pd->plan_ps, p, 5*4);
+	/* Fill rest of ARP packet            */
+	drvLan9118FifoRd(pd->plan_ps, pipa->sha, 5*4);
 
 	if ( isreq ) {
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_IP )
-			printf("got ARP request for %d.%d.%d.%d\n",ipa.tpa[0],ipa.tpa[1],ipa.tpa[2],ipa.tpa[3]); 
+			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
 #endif
-		if ( *(uint32_t*)ipa.tpa != pd->ipaddr )
-			return sizeof(ipa);
+		if ( *(uint32_t*)pipa->tpa != pd->ipaddr )
+			return sizeof(*pipa);
 
 		/* they mean us; send reply */
-		memcpy( pd->arprep.ll.dst,  ipa.sha, 6);
-		memcpy( pd->arprep.arp.tha, ipa.sha, 10);
+		memcpy( pd->arprep.ll.dst,  pipa->sha, 6);
+		memcpy( pd->arprep.arp.tha, pipa->sha, 10);
 
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_IP ) {
@@ -230,65 +399,106 @@ int      isreq = 0;
 		/* a reply to our request */
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_IP ) {
-			printf("got ARP reply from "); prether(stdout, ipa.sha);
+			printf("got ARP reply from "); prether(stdout, pipa->sha);
 			printf("\n");
 		}
 #endif
-		arpPutEntry(pd, ipa.sha, *(uint32_t*)ipa.spa);
+		arpPutEntry(pd, pipa->sha, *(uint32_t*)pipa->spa);
 	}
 
-	return sizeof(ipa);
+	return sizeof(*pipa);
 }
 
 static int
-handleIP(EtherHeaderRec *peh, IpCbData pd)
+handleIP(rbuf_t **ppbuf, IpCbData pd)
 {
-int         rval = 0, l, nbytes;
-struct {
-	EtherHeaderRec eh;
-	IpHeaderRec    ih;
-	IcmpHeaderRec  icmph;
-	uint8_t        data[1500];
-}           p;
+int         rval = 0, l, nbytes, i;
+rbuf_t		*p = *ppbuf;
+uint16_t	dport;
+int			isbcst = 0;
 
+	drvLan9118FifoRd(pd->plan_ps, &p->ip, sizeof(p->ip));
+	rval += sizeof(p->ip);
 
-
-	drvLan9118FifoRd(pd->plan_ps, &p.ih, sizeof(p.ih));
-	rval += sizeof(p.ih);
-
-	if ( p.ih.dst != pd->ipaddr )
+	/* accept IP unicast and broadcast */
+	if ( p->ip.dst != pd->ipaddr && ! (isbcst = ((p->ip.dst & ~pd->nmask) == ~pd->nmask)) )
 		return rval;
+
+#ifdef DEBUG
+	if ( (lanIpDebug & DEBUG_IP) && p->ip.dst == pd->ipaddr ) {
+		printf("accepting IP unicast, proto %i\n", p->ip.prot);
+	}
+#endif
 
 	/* reject non-trivial headers (version != 4, header length > 5, fragmented,
      * i.e., MF (more fragments) or the offset are set
 	 */
-	if ( p.ih.vhl != 0x45 || ntohs(p.ih.off) & 0x9fff )
+	if ( p->ip.vhl != 0x45 || ntohs(p->ip.off) & 0x9fff ) {
+#ifdef DEBUG
+		if ( (lanIpDebug & DEBUG_IP) )
+			printf("dropping IP packet, vhl %i, off %i\n", p->ip.vhl, ntohs(p->ip.off));
+#endif
 		return rval;
+	}
 
-	nbytes = ntohs(p.ih.len);
-	l = ((nbytes - sizeof(p.ih)) + 3) & ~3;
-	switch ( p.ih.prot ) {
+	nbytes = ntohs(p->ip.len);
+	l = ((nbytes - sizeof(p->ip)) + 3) & ~3;
+	switch ( p->ip.prot ) {
 		case 1 /* ICMP */:
-		if ( sizeof(p)-sizeof(p.ih) - sizeof(p.eh) >= l ) {
-			drvLan9118FifoRd(pd->plan_ps, &p.icmph, l);
+		if ( sizeof(p)-sizeof(p->ip) - sizeof(p->ll) >= l ) {
+			drvLan9118FifoRd(pd->plan_ps, &p->p_u.icmp_s, l);
 			rval += l;
-			if ( p.icmph.type == 8 /* ICMP REQUEST */ && p.icmph.code == 0 ) {
+			if ( p->p_u.icmp_s.hdr.type == 8 /* ICMP REQUEST */ && p->p_u.icmp_s.hdr.code == 0 ) {
 #ifdef DEBUG
 				if ( lanIpDebug & DEBUG_IP )
 					printf("handling ICMP ECHO request\n");
 #endif
-				p.icmph.type = 0; /* ICMP REPLY */
-				p.icmph.csum = 0;
-				memcpy( p.eh.dst, peh->src, 6 );
-				memcpy( p.eh.src, pd->arprep.ll.src, 6);
-				p.eh.type = htons(0x800); /* IP */
-				p.ih.dst  = p.ih.src;
-				p.ih.src  = pd->ipaddr; 
-				p.ih.csum = 0;
-				p.ih.csum = htons(in_cksum_hdr((void*)&p.ih));
-				drvLan9118TxPacket(pd->plan_ps, &p, sizeof(EtherHeaderRec) + nbytes, 0);
+				p->p_u.icmp_s.hdr.type = 0; /* ICMP REPLY */
+				p->p_u.icmp_s.hdr.csum = 0;
+				memcpy( p->ll.dst, p->ll.src, 6 );
+				memcpy( p->ll.src, pd->arprep.ll.src, 6);
+				p->ll.type = htons(0x800); /* IP */
+				p->ip.dst  = p->ip.src;
+				p->ip.src  = pd->ipaddr; 
+				p->ip.csum = 0;
+				p->ip.csum = htons(in_cksum_hdr((void*)&p->ip));
+				drvLan9118TxPacket(pd->plan_ps, p, sizeof(EtherHeaderRec) + nbytes, 0);
 			}
 		}
+		break;
+
+		case 17 /* UDP */:
+			/* UDP header is word aligned -> OK */
+			drvLan9118FifoRd(pd->plan_ps, &p->p_u.udp_s, sizeof(p->p_u.udp_s.hdr));
+			rval += sizeof(p->p_u.udp_s.hdr);
+			l    -= sizeof(p->p_u.udp_s.hdr);
+			dport = ntohs(p->p_u.udp_s.hdr.dport);
+#ifdef DEBUG
+			if ( lanIpDebug & DEBUG_IP )
+				printf("handling UDP packet (dport %i%s)\n", dport, isbcst ? ", BCST":"");
+#endif
+			_Thread_Disable_dispatch();
+			for ( i=0; i<NSOCKS; i++ ) {
+				if ( socks[i].port == dport ) {
+					_Thread_Enable_dispatch();
+					/* slurp data */
+					drvLan9118FifoRd(pd->plan_ps, p->p_u.udp_s.pld, l);
+					rval += l;
+					_Thread_Disable_dispatch();
+					/* see if socket is still alive */
+					if ( socks[i].port == dport ) {
+						if ( RTEMS_SUCCESSFUL == rtems_message_queue_send(socks[i].msgq, &p, sizeof(p)) ) {
+							/* they now own the buffer */
+							*ppbuf = 0;
+						}
+					}
+					break;
+				}
+			}
+			_Thread_Enable_dispatch();
+		break;
+
+		default:
 		break;
 	}
 
@@ -300,30 +510,36 @@ int
 drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg)
 {
 IpCbData        pd = arg;
-EtherHeaderRec	eh;
+rbuf_t			*prb;
 
-	drvLan9118FifoRd(plan_ps, &eh, sizeof(eh));
-	len -= sizeof(eh);
+	if ( ! (prb = getrbuf()) ) {
+		return len;
+	}
 
-	switch ( eh.type ) {
+	drvLan9118FifoRd(plan_ps, prb, sizeof(prb->ll));
+	len -= sizeof(prb->ll);
+
+	switch ( prb->ll.type ) {
 		case htons(0x806) /* ARP */:
-			len -= handleArp(pd);
+			len -= handleArp(&prb, pd);
 			break;
 
 		case htons(0x800) /* IP  */:
-			len -= handleIP(&eh, pd);
+			len -= handleIP(&prb, pd);
 			break;
 
 		default:
 			break;
 	}
 
+	relrbuf(prb);	
+
 	return len;
 }
 
 
 IpCbData
-lanIpCbDataCreate(DrvLan9118_tps plan_ps, char *ipaddr)
+lanIpCbDataCreate(DrvLan9118_tps plan_ps, char *ipaddr, char *netmask)
 {
 IpCbData          rval = malloc(sizeof(*rval));
 uint8_t		      (*enaddr)[6];
@@ -335,6 +551,7 @@ rtems_status_code sc;
 	rval->plan_ps   = plan_ps;
 
 	rval->ipaddr = inet_addr(ipaddr);
+	rval->nmask  = inet_addr(ipaddr);
 
 	sc = rtems_semaphore_create(
 			rtems_build_name('i','p','m','x'), 
