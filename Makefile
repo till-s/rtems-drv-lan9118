@@ -6,7 +6,7 @@
 #
 
 # C source names, if any, go here -- minus the .c
-C_PIECES=drvLan9118 fecmii lanIpBasic
+C_PIECES=drvLan9118 fecmii drvLan9118IpBasic
 C_FILES=$(C_PIECES:%=%.c)
 C_O_FILES=$(C_PIECES:%=${ARCH}/%.o)
 

@@ -52,7 +52,7 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
 typedef struct IpCbDataRec_ *IpCbData;
 
 IpCbData
-lanIpCbDataCreate(DrvLan9118_tps plan_ps, char *ipaddr, char *netmask);
+lanIpCbDataCreate(void *drv_hdl, char *ipaddr, char *netmask);
 
 void
 lanIpCbDataDestroy(IpCbData);

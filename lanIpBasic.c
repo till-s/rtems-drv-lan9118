@@ -8,7 +8,7 @@
  *
  *  - LAN only (no IP routing)
  *
- * NOTE: daemon using the 'drvLan9118IpRxCb()' must have enough stack
+ * NOTE: daemon using the 'lanIpProcessBuffer()' must have enough stack
  *       allocated. The Callback uses ~2k itself.
  */
 
@@ -26,22 +26,34 @@
 
 #include <lanIpProto.h>
 #include <lanIpBasic.h>
-#include <drvLan9118.h>
+/* include netdriver AFTER defining VIOLATE_KERNEL_VISIBILITY (in case it uses rtems.h already) */
+#include NETDRV_INCLUDE
 
 #define DEBUG_IP	1
+
 #define DEBUG		0
 
 #ifdef DEBUG
 int	lanIpDebug = DEBUG;
 #endif
 
+#ifndef CACHE_OVERLAP
 #define CACHE_OVERLAP 10
+#endif
 
 /* Trivial RX buffers */
+#ifndef RBUFSZ
 #define RBUFSZ		1500
+#endif
+#ifndef NRBUFS
 #define NRBUFS		50	/* Total number of RX buffers */
+#endif
+#ifndef NSOCKS
 #define NSOCKS		5
+#endif
+#ifndef QDEPTH
 #define QDEPTH		10	/* RX socket queue depth      */
+#endif
 
 typedef LanIpPacketRec rbuf_t;
 
@@ -207,10 +219,26 @@ typedef struct ArpEntryRec_ {
 	Watchdog_Interval	ctime;
 } ArpEntryRec, *ArpEntry;
 
+/* NOTES: On class C networks (or equivalent A/B subnets)
+ *        there will never be collisions in the cache.
+ *
+ *        Dont change size (256) w/o adapting hashing
+ *        algorithm
+ *
+ */
 static ArpEntry arpcache[256] = {0};
 
+/* don't bother about MSBs; assume we're on a LAN anyways */
+#define ARPHASH(h,ipaddr)			\
+	do {							\
+		uint32_t ipaddr_h_;			\
+		ipaddr_h_ = ntohl(ipaddr);	\
+		h  = ipaddr_h_;				\
+		h += ipaddr_h_>>8;			\
+	} while (0)
+
 typedef struct IpCbDataRec_ {
-	DrvLan9118_tps		plan_ps;
+	void			*drv_p;
 	rtems_id		mutx;
 	uint32_t		ipaddr;
 	uint32_t		nmask;
@@ -232,13 +260,12 @@ int arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr)
 ArpEntry rval;
 int      i,n;
 uint8_t  hh;
-uint8_t  h  = ipaddr;
-		 h += ipaddr>>8;
-		 h += ipaddr>>16;
+uint8_t  h;
+
+		ARPHASH(h, ipaddr);
 
 		for ( n = 0; n < CACHE_OVERLAP; n++ ) {
 
-			/* don't bother about MSB; assume we're on a LAN anyways */
 			
 			/* Abuse the TX lock */
 			ARPLOCK(pd);
@@ -252,15 +279,7 @@ uint8_t  h  = ipaddr;
 			ARPUNLOCK(pd);
 
 			/* must do a new lookup */
-			drvLan9118TxPacket(pd->plan_ps, 0, sizeof(pd->arpreq), 0);
-
-			/* arpreq is locked and may be modified */
-			*(uint32_t*)pd->arpreq.arp.tpa = ipaddr;
-
-			/* send request */
-			drvLan9118FifoWr(pd->plan_ps, &pd->arpreq, sizeof(pd->arpreq));
-
-			drvLan9118TxUnlock(pd->plan_ps);
+			NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr);
 
 			/* should synchronize but it's easier to just delay and try again */
 			rtems_task_wake_after(1);
@@ -276,9 +295,9 @@ ArpEntry rval;
 ArpEntry newe = malloc(sizeof(*newe));	/* pre-allocate */
 int      i;
 uint8_t  oh;
-uint8_t  h  = ipaddr;
-		 h += ipaddr>>8;
-		 h += ipaddr>>16;
+uint8_t  h;
+
+		ARPHASH(h, ipaddr);
 
 		/* Abuse the TX lock */
 		ARPLOCK(pd);
@@ -316,10 +335,9 @@ arpDelEntry(IpCbData pd, uint32_t ipaddr)
 {
 ArpEntry rval, found = 0;
 int      i;
-uint8_t  h  = ipaddr;
-		 h += ipaddr>>8;
-		 h += ipaddr>>16;
+uint8_t  h;
 
+		ARPHASH(h, ipaddr);
 
 		/* Abuse the TX lock */
 		ARPLOCK(pd);
@@ -354,7 +372,7 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
-	drvLan9118FifoRd(pd->plan_ps, pipa, 8);
+	NETDRV_READ_INCREMENTAL(pd, pipa, 8);
 	if ( ntohl(0x00010800) != *(uint32_t*)pipa )
 		return 8;
 
@@ -372,7 +390,7 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 	}
 
 	/* Fill rest of ARP packet            */
-	drvLan9118FifoRd(pd->plan_ps, pipa->sha, 5*4);
+	NETDRV_READ_INCREMENTAL(pd, pipa->sha, 5*4);
 
 	if ( isreq ) {
 #ifdef DEBUG
@@ -394,7 +412,7 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 		}
 #endif
 
-		drvLan9118TxPacket(pd->plan_ps, &pd->arprep, sizeof(pd->arprep), 0);
+		NETDRV_ENQ_PACKET(pd, &pd->arprep, sizeof(pd->arprep));
 	} else {
 		/* a reply to our request */
 #ifdef DEBUG
@@ -417,7 +435,7 @@ rbuf_t		*p = *ppbuf;
 uint16_t	dport;
 int			isbcst = 0;
 
-	drvLan9118FifoRd(pd->plan_ps, &p->ip, sizeof(p->ip));
+	NETDRV_READ_INCREMENTAL(pd, &p->ip, sizeof(p->ip));
 	rval += sizeof(p->ip);
 
 	/* accept IP unicast and broadcast */
@@ -446,7 +464,7 @@ int			isbcst = 0;
 	switch ( p->ip.prot ) {
 		case 1 /* ICMP */:
 		if ( sizeof(p)-sizeof(p->ip) - sizeof(p->ll) >= l ) {
-			drvLan9118FifoRd(pd->plan_ps, &p->p_u.icmp_s, l);
+			NETDRV_READ_INCREMENTAL(pd, &p->p_u.icmp_s, l);
 			rval += l;
 			if ( p->p_u.icmp_s.hdr.type == 8 /* ICMP REQUEST */ && p->p_u.icmp_s.hdr.code == 0 ) {
 #ifdef DEBUG
@@ -462,14 +480,14 @@ int			isbcst = 0;
 				p->ip.src  = pd->ipaddr; 
 				p->ip.csum = 0;
 				p->ip.csum = htons(in_cksum_hdr((void*)&p->ip));
-				drvLan9118TxPacket(pd->plan_ps, p, sizeof(EtherHeaderRec) + nbytes, 0);
+				NETDRV_ENQ_PACKET(pd, p, sizeof(EtherHeaderRec) + nbytes);
 			}
 		}
 		break;
 
 		case 17 /* UDP */:
 			/* UDP header is word aligned -> OK */
-			drvLan9118FifoRd(pd->plan_ps, &p->p_u.udp_s, sizeof(p->p_u.udp_s.hdr));
+			NETDRV_READ_INCREMENTAL(pd, &p->p_u.udp_s, sizeof(p->p_u.udp_s.hdr));
 			rval += sizeof(p->p_u.udp_s.hdr);
 			l    -= sizeof(p->p_u.udp_s.hdr);
 			dport = ntohs(p->p_u.udp_s.hdr.dport);
@@ -482,7 +500,7 @@ int			isbcst = 0;
 				if ( socks[i].port == dport ) {
 					_Thread_Enable_dispatch();
 					/* slurp data */
-					drvLan9118FifoRd(pd->plan_ps, p->p_u.udp_s.pld, l);
+					NETDRV_READ_INCREMENTAL(pd, p->p_u.udp_s.pld, l);
 					rval += l;
 					_Thread_Disable_dispatch();
 					/* see if socket is still alive */
@@ -505,41 +523,41 @@ int			isbcst = 0;
 	return rval;
 }
 
-/* Handle ARP and ICMP echo (ping) requests */
+/* Handle ARP and ICMP echo (ping) requests
+ * Dispatch UDP packets to trivial 'sockets'
+ *
+ * Need to pass a pointer to the buffer pointer;
+ * (*pprb) is set to NULL if the buffer was handed
+ * on to a 'socket'.
+ */
+
 int
-drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg)
+lanIpProcessBuffer(IpCbData pd, rbuf_t **pprb, int len)
 {
-IpCbData        pd = arg;
-rbuf_t			*prb;
+rbuf_t *prb = *pprb;
 
-	if ( ! (prb = getrbuf()) ) {
-		return len;
-	}
-
-	drvLan9118FifoRd(plan_ps, prb, sizeof(prb->ll));
-	len -= sizeof(prb->ll);
+	NETDRV_READ_INCREMENTAL(pd, prb, sizeof((prb)->ll));
+	len -= sizeof((prb)->ll);
 
 	switch ( prb->ll.type ) {
 		case htons(0x806) /* ARP */:
-			len -= handleArp(&prb, pd);
+			len -= handleArp(pprb, pd);
 			break;
 
 		case htons(0x800) /* IP  */:
-			len -= handleIP(&prb, pd);
+			len -= handleIP(pprb, pd);
 			break;
 
 		default:
 			break;
 	}
 
-	relrbuf(prb);	
-
 	return len;
 }
 
 
 IpCbData
-lanIpCbDataCreate(DrvLan9118_tps plan_ps, char *ipaddr, char *netmask)
+lanIpCbDataCreate(void *drv_p, char *ipaddr, char *netmask)
 {
 IpCbData          rval = malloc(sizeof(*rval));
 uint8_t		      (*enaddr)[6];
@@ -548,7 +566,7 @@ rtems_status_code sc;
 	if ( !rval )
 		return 0;
 
-	rval->plan_ps   = plan_ps;
+	rval->drv_p  = drv_p;
 
 	rval->ipaddr = inet_addr(ipaddr);
 	rval->nmask  = inet_addr(ipaddr);
@@ -577,14 +595,14 @@ rtems_status_code sc;
 	/* REQUEST */
 		/* DST: bcast address            */
 		memset(&rval->arpreq.ll.dst, 0xff, sizeof(*enaddr));
-		/* SRC: plan_ps's ethernet address  */
-		drvLan9118ReadEnaddr(plan_ps, (uint8_t*)enaddr);
+		/* SRC: drv_p's ethernet address  */
+		NETDRV_READ_ENADDR(drv_p, (uint8_t*)enaddr);
 		/* TYPE/LEN is ARP (0x806)       */
 		rval->arpreq.ll.type = htons(0x806);
 	/* REPLY   */
 		/* DST: ??? filled by daemon     */
 
-		/* SRC: plan_ps's ethernet address  */
+		/* SRC: drv_p's ethernet address  */
 		memcpy(rval->arprep.ll.src, enaddr, sizeof(*enaddr));
 		/* TYPE/LEN is ARP (0x806)       */
 		rval->arprep.ll.type = htons(0x806);
@@ -604,7 +622,7 @@ rtems_status_code sc;
 		memset(rval->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
 		/* TARGET IP ADDR: ??? (filled by requestor)  */
 
-		/* SOURCE HW ADDR: plan_ps's ethernet address    */
+		/* SOURCE HW ADDR: drv_p's ethernet address    */
 		memcpy(&rval->arpreq.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
 		memcpy(&rval->arpreq.arp.spa, &rval->ipaddr, 4);
@@ -614,7 +632,7 @@ rtems_status_code sc;
 
 		/* TARGET IP ADDR: ??? (filled by daemon)     */
 
-		/* SOURCE HW ADDR: plan_ps's ethernet address    */
+		/* SOURCE HW ADDR: drv_p's ethernet address    */
 		memcpy(rval->arprep.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
 		memcpy(rval->arprep.arp.spa, &rval->ipaddr, 4);
