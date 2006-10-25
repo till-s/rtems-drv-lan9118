@@ -16,6 +16,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.10  2006/10/12 03:14:19  strauman
+		 - adopted some of the coding standards.
+		
  
 =============================================================================*/
 
@@ -128,7 +131,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#if 0
 #include "drv5282DMA.h"
+#endif
 
 #include "drvLan9118.h"
 
