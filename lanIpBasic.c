@@ -20,7 +20,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <netinet/in_systm.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <arpa/inet.h>
 #include <machine/in_cksum.h>
 
@@ -182,6 +184,17 @@ rtems_id q = 0;
 		}
 	_Thread_Enable_dispatch();
 	if (q) {
+		/* drain queue */
+		void     *p;
+		uint32_t sz;
+		while ( RTEMS_SUCCESSFUL == rtems_message_queue_receive(
+										q,
+										&p,
+										&sz,
+										RTEMS_NO_WAIT,
+										0) ) {
+			relrbuf(p);
+		}
 		rtems_message_queue_delete(q);
 		return 0;
 	}
@@ -557,19 +570,15 @@ rbuf_t *prb = *pprb;
 
 
 IpCbData
-lanIpCbDataCreate(void *drv_p, char *ipaddr, char *netmask)
+lanIpCbDataCreate()
 {
 IpCbData          rval = malloc(sizeof(*rval));
-uint8_t		      (*enaddr)[6];
 rtems_status_code sc;
 
 	if ( !rval )
 		return 0;
 
-	rval->drv_p  = drv_p;
-
-	rval->ipaddr = inet_addr(ipaddr);
-	rval->nmask  = inet_addr(ipaddr);
+	memset( rval, 0, sizeof(*rval) );
 
 	sc = rtems_semaphore_create(
 			rtems_build_name('i','p','m','x'), 
@@ -583,10 +592,22 @@ rtems_status_code sc;
 		free(rval);
 		return 0;
 	}
+	return rval;
+}
+
+void
+lanIpCbDataInit(IpCbData cbd_p, void *drv_p, char *ipaddr, char *netmask)
+{
+uint8_t		      (*enaddr)[6];
+
+	cbd_p->drv_p  = drv_p;
+
+	cbd_p->ipaddr = inet_addr(ipaddr);
+	cbd_p->nmask  = inet_addr(ipaddr);
 
 
 	/* convenience variable */
-	enaddr = &rval->arpreq.ll.src;
+	enaddr = &cbd_p->arpreq.ll.src;
 	
 	/* Setup ARP templates for request and reply */
 
@@ -594,38 +615,38 @@ rtems_status_code sc;
 
 	/* REQUEST */
 		/* DST: bcast address            */
-		memset(&rval->arpreq.ll.dst, 0xff, sizeof(*enaddr));
+		memset(&cbd_p->arpreq.ll.dst, 0xff, sizeof(*enaddr));
 		/* SRC: drv_p's ethernet address  */
 		NETDRV_READ_ENADDR(drv_p, (uint8_t*)enaddr);
 		/* TYPE/LEN is ARP (0x806)       */
-		rval->arpreq.ll.type = htons(0x806);
+		cbd_p->arpreq.ll.type = htons(0x806);
 	/* REPLY   */
 		/* DST: ??? filled by daemon     */
 
 		/* SRC: drv_p's ethernet address  */
-		memcpy(rval->arprep.ll.src, enaddr, sizeof(*enaddr));
+		memcpy(cbd_p->arprep.ll.src, enaddr, sizeof(*enaddr));
 		/* TYPE/LEN is ARP (0x806)       */
-		rval->arprep.ll.type = htons(0x806);
+		cbd_p->arprep.ll.type = htons(0x806);
 
 	/* ARP PORTION */
 	/* HW and PROTO type for both */
-	rval->arprep.arp.htype = rval->arpreq.arp.htype = htons(1);     /* Ethernet */
-	rval->arprep.arp.ptype = rval->arpreq.arp.ptype = htons(0x800); /* IP       */
-	rval->arprep.arp.hlen  = rval->arpreq.arp.hlen  = 6; 
-	rval->arprep.arp.plen  = rval->arpreq.arp.plen  = 4; 
+	cbd_p->arprep.arp.htype = cbd_p->arpreq.arp.htype = htons(1);     /* Ethernet */
+	cbd_p->arprep.arp.ptype = cbd_p->arpreq.arp.ptype = htons(0x800); /* IP       */
+	cbd_p->arprep.arp.hlen  = cbd_p->arpreq.arp.hlen  = 6; 
+	cbd_p->arprep.arp.plen  = cbd_p->arpreq.arp.plen  = 4; 
 
-	rval->arprep.arp.oper  = htons(2); /* ARP REPLY   */
-	rval->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
+	cbd_p->arprep.arp.oper  = htons(2); /* ARP REPLY   */
+	cbd_p->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
 
 	/* REQUEST */
 		/* TARGET HW ADDR: bcst                       */ 
-		memset(rval->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
+		memset(cbd_p->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
 		/* TARGET IP ADDR: ??? (filled by requestor)  */
 
 		/* SOURCE HW ADDR: drv_p's ethernet address    */
-		memcpy(&rval->arpreq.arp.sha, enaddr, sizeof(*enaddr));
+		memcpy(&cbd_p->arpreq.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
-		memcpy(&rval->arpreq.arp.spa, &rval->ipaddr, 4);
+		memcpy(&cbd_p->arpreq.arp.spa, &cbd_p->ipaddr, 4);
 
 	/* REPLY */
 		/* TARGET HW ADDR: ??? (filled by daemon)     */ 
@@ -633,10 +654,15 @@ rtems_status_code sc;
 		/* TARGET IP ADDR: ??? (filled by daemon)     */
 
 		/* SOURCE HW ADDR: drv_p's ethernet address    */
-		memcpy(rval->arprep.arp.sha, enaddr, sizeof(*enaddr));
+		memcpy(cbd_p->arprep.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
-		memcpy(rval->arprep.arp.spa, &rval->ipaddr, 4);
-	return rval;
+		memcpy(cbd_p->arprep.arp.spa, &cbd_p->ipaddr, 4);
+}
+
+void *
+lanIpCbDataGetDrv(IpCbData cbd_p)
+{
+	return cbd_p->drv_p;
 }
 
 void

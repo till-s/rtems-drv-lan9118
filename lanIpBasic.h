@@ -51,11 +51,19 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
 
 typedef struct IpCbDataRec_ *IpCbData;
 
+/* Create private data */
 IpCbData
-lanIpCbDataCreate(void *drv_hdl, char *ipaddr, char *netmask);
+lanIpCbDataCreate(void);
+
+/* Setup private data structure */
+void
+lanIpCbDataInit(IpCbData cbd_p, void *drv_p, char *ipaddr, char *netmask);
+
+/* Retrieve the driver handle   */
+void *
+lanIpCbDataGetDrv(IpCbData cbd_p);
 
 void
 lanIpCbDataDestroy(IpCbData);
 
 #endif
-
