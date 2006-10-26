@@ -66,7 +66,10 @@ typedef struct IcmpHeaderRec_ {
 	uint16_t	seq;
 } IcmpHeaderRec;
 
-#define LANPKTMAX			1500
+/* Provide sufficient alignment 512*3;
+ * some ethernet chips require aligned buffers...
+ */
+#define LANPKTMAX			1536
 
 #define IPPAYLOADSIZE		(LANPKTMAX - sizeof(EtherHeaderRec) - sizeof(IpHeaderRec))
 #define UDPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(UdpHeaderRec))

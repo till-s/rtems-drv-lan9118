@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -31,7 +32,11 @@
 /* include netdriver AFTER defining VIOLATE_KERNEL_VISIBILITY (in case it uses rtems.h already) */
 #include NETDRV_INCLUDE
 
-#define DEBUG_IP	1
+#define DEBUG_ARP	1
+#define DEBUG_IP	2
+#define DEBUG_ICMP	4
+#define DEBUG_UDP	8
+#define DEBUG_TASK	16
 
 #define DEBUG		0
 
@@ -44,9 +49,10 @@ int	lanIpDebug = DEBUG;
 #endif
 
 /* Trivial RX buffers */
-#ifndef RBUFSZ
-#define RBUFSZ		1500
+#if defined(RBUF_ALIGNMENT) && ((RBUF_ALIGNMENT-1) & LANPKTMAX)
+#error "LANPKTMAX has insufficient alignment for this chip driver"
 #endif
+
 #ifndef NRBUFS
 #define NRBUFS		50	/* Total number of RX buffers */
 #endif
@@ -59,7 +65,11 @@ int	lanIpDebug = DEBUG;
 
 typedef LanIpPacketRec rbuf_t;
 
-static rbuf_t		rbufs[NRBUFS] = {{{{0}}}};
+static rbuf_t		rbufs[NRBUFS]
+#ifdef RBUF_ALIGNMENT
+__attribute__ ((aligned(RBUF_ALIGNMENT)))
+#endif
+                    = {{{{0}}}};
 
 /* lazy init of tbuf facility */
 static int    ravail = NRBUFS;
@@ -96,12 +106,28 @@ rtems_interrupt_level key;
 	}
 }
 
+typedef struct IpCbDataRec_ {
+	void			*drv_p;
+	rtems_id		mutx;
+	uint32_t		ipaddr;
+	uint32_t		nmask;
+	struct {
+		EtherHeaderRec  ll;
+		IpArpRec		arp;
+	} arpreq;
+	struct {
+		EtherHeaderRec  ll;
+		IpArpRec		arp;
+	} arprep;
+} IpCbDataRec;
+
 typedef struct UdpSockRec_ {
 	volatile int	port;
 	rtems_id		msgq;
 } UdpSockRec, *UdpSock;
 
 static UdpSockRec	socks[NSOCKS] = {{0}};
+static IpCbData		intrf         = 0;
 
 /* socks array is protected by disabling thread dispatching */
 
@@ -118,7 +144,6 @@ int i;
 	_Thread_Enable_dispatch();
 	return -1;
 }
-
 
 int
 udpSockCreate(uint16_t port)
@@ -202,7 +227,7 @@ rtems_id q = 0;
 }
 
 LanIpPacketRec *
-udpSockRcv(int sd, int timeout_ticks)
+udpSockRecv(int sd, int timeout_ticks)
 {
 LanIpPacketRec *rval = 0;
 uint32_t		sz = sizeof(rval);
@@ -224,6 +249,46 @@ void
 udpSockFreeBuf(LanIpPacketRec *b)
 {
 	relrbuf(b);
+}
+
+LanIpPacketRec *
+udpSockGetBuf()
+{
+	return getrbuf();
+}
+
+int
+udpSockSendBufRaw(LanIpPacket buf_p, int len)
+{
+	NETDRV_ENQ_BUFFER(intrf, buf_p,  len);
+	return len;
+}
+
+int
+udpSockSendBuf(int sd, LanIpPacket buf_p)
+{
+int         port, len;
+
+	if ( sd < 0 || sd >= NSOCKS ) {
+		return -1;
+	}
+
+	if ( !(port = socks[sd].port) )
+		return -1;
+	
+	/* fill source ll address, IP address and UDP port */
+	memcpy(buf_p->ll.src, &intrf->arpreq.ll.src, sizeof(buf_p->ll.src));
+	buf_p->ip.src              = intrf->ipaddr;
+	buf_p->p_u.udp_s.hdr.sport = port;
+
+	buf_p->ip.csum             = 0;
+	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
+
+	buf_p->p_u.udp_s.hdr.csum = 0;
+
+	len = ntohs(buf_p->p_u.udp_s.hdr.len) + sizeof(IpHeaderRec) + sizeof(EtherHeaderRec);
+
+	return udpSockSendBufRaw(buf_p, len);
 }
 
 typedef struct ArpEntryRec_ {
@@ -249,21 +314,6 @@ static ArpEntry arpcache[256] = {0};
 		h  = ipaddr_h_;				\
 		h += ipaddr_h_>>8;			\
 	} while (0)
-
-typedef struct IpCbDataRec_ {
-	void			*drv_p;
-	rtems_id		mutx;
-	uint32_t		ipaddr;
-	uint32_t		nmask;
-	struct {
-		EtherHeaderRec  ll;
-		IpArpRec		arp;
-	} arpreq;
-	struct {
-		EtherHeaderRec  ll;
-		IpArpRec		arp;
-	} arprep;
-} IpCbDataRec;
 
 #define ARPLOCK(pd)		rtems_semaphore_obtain((pd)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
 #define ARPUNLOCK(pd) 	rtems_semaphore_release((pd)->mutx)
@@ -407,7 +457,7 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 
 	if ( isreq ) {
 #ifdef DEBUG
-		if ( lanIpDebug & DEBUG_IP )
+		if ( lanIpDebug & DEBUG_ARP )
 			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
 #endif
 		if ( *(uint32_t*)pipa->tpa != pd->ipaddr )
@@ -418,18 +468,18 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 		memcpy( pd->arprep.arp.tha, pipa->sha, 10);
 
 #ifdef DEBUG
-		if ( lanIpDebug & DEBUG_IP ) {
+		if ( lanIpDebug & DEBUG_ARP ) {
 			extern void md(void*,int);
 			printf("MATCH -> sending\n");
 			md(&pd->arprep, sizeof(pd->arprep));
 		}
 #endif
 
-		NETDRV_ENQ_PACKET(pd, &pd->arprep, sizeof(pd->arprep));
+		NETDRV_SND_PACKET(pd, &pd->arprep, sizeof(pd->arprep));
 	} else {
 		/* a reply to our request */
 #ifdef DEBUG
-		if ( lanIpDebug & DEBUG_IP ) {
+		if ( lanIpDebug & DEBUG_ARP ) {
 			printf("got ARP reply from "); prether(stdout, pipa->sha);
 			printf("\n");
 		}
@@ -481,7 +531,7 @@ int			isbcst = 0;
 			rval += l;
 			if ( p->p_u.icmp_s.hdr.type == 8 /* ICMP REQUEST */ && p->p_u.icmp_s.hdr.code == 0 ) {
 #ifdef DEBUG
-				if ( lanIpDebug & DEBUG_IP )
+				if ( lanIpDebug & DEBUG_ICMP )
 					printf("handling ICMP ECHO request\n");
 #endif
 				p->p_u.icmp_s.hdr.type = 0; /* ICMP REPLY */
@@ -493,7 +543,7 @@ int			isbcst = 0;
 				p->ip.src  = pd->ipaddr; 
 				p->ip.csum = 0;
 				p->ip.csum = htons(in_cksum_hdr((void*)&p->ip));
-				NETDRV_ENQ_PACKET(pd, p, sizeof(EtherHeaderRec) + nbytes);
+				NETDRV_SND_PACKET(pd, p, sizeof(EtherHeaderRec) + nbytes);
 			}
 		}
 		break;
@@ -505,7 +555,7 @@ int			isbcst = 0;
 			l    -= sizeof(p->p_u.udp_s.hdr);
 			dport = ntohs(p->p_u.udp_s.hdr.dport);
 #ifdef DEBUG
-			if ( lanIpDebug & DEBUG_IP )
+			if ( lanIpDebug & DEBUG_UDP )
 				printf("handling UDP packet (dport %i%s)\n", dport, isbcst ? ", BCST":"");
 #endif
 			_Thread_Disable_dispatch();
@@ -562,6 +612,10 @@ rbuf_t *prb = *pprb;
 			break;
 
 		default:
+#ifdef DEBUG
+			if (lanIpDebug & DEBUG_IP)
+				printf("Ethernet: dropping 0x%04x\n", ntohs(prb->ll.type));
+#endif
 			break;
 	}
 
@@ -572,11 +626,23 @@ rbuf_t *prb = *pprb;
 IpCbData
 lanIpCbDataCreate()
 {
-IpCbData          rval = malloc(sizeof(*rval));
-rtems_status_code sc;
+IpCbData          		rval = malloc(sizeof(*rval));
+rtems_status_code		sc;
+rtems_interrupt_level	key;
 
 	if ( !rval )
 		return 0;
+
+	rtems_interrupt_disable(key);
+	if ( intrf ) {
+		rtems_interrupt_enable(key);
+		fprintf(stderr,"Only support one interface for now\n");
+		free(rval);
+		return 0;
+	}
+
+	intrf = rval;
+	rtems_interrupt_enable(key);
 
 	memset( rval, 0, sizeof(*rval) );
 
@@ -589,6 +655,9 @@ rtems_status_code sc;
 
 	if ( RTEMS_SUCCESSFUL != sc ) {
 		rtems_error(sc, "lanIpCb: unable to create mutex\n");
+
+		intrf = 0;
+
 		free(rval);
 		return 0;
 	}
@@ -669,6 +738,8 @@ void
 lanIpCbDataDestroy(IpCbData pd)
 {
 	if ( pd ) {
+		assert( intrf == pd );
+		intrf = 0;
 		rtems_semaphore_delete(pd->mutx);
 		free(pd);
 	}
@@ -687,30 +758,39 @@ uint32_t s = 0;
 		s = (s & 0xffff) + (s >> 16);
 	return ~s & 0xffff;
 }
+#endif
 
 void
-drvLan9118InitUdpPacket(UdpPacketRec *p, int payload_len)
+lanIpUdpHdrSetlen(LanIpPacket p, int payload_len)
 {
-	memcpy(p->eh.dst, dstenaddr, 6);
-	memcpy(p->eh.src, srcenaddr, 6);
-	p->eh.type  = htons(0x0800);	/* IP */
-
-	p->ih.vhl   = 0x45;	/* version 4, 5words length */
-	p->ih.tos   = 0x30; 	/* priority, minimize delay */
-	p->ih.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
-	p->ih.id    = htons(0);	/* ? */
-	p->ih.off   = htons(0);
-	p->ih.ttl   = 4;
-	p->ih.prot  = 17;	/* UDP */
-	p->ih.src   = inet_addr("134.79.219.35"); 
-	p->ih.dst   = inet_addr("134.79.216.68"); 
-	p->ih.csum  = 0;
+	p->ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
+	p->ip.csum  = 0;
 	
-	p->ih.csum  = htons(in_cksum_hdr((void*)&p->ih));
+	p->ip.csum  = htons(in_cksum_hdr((void*)&p->ip));
 
-	p->uh.sport = 0xabcd; 
-	p->uh.dport = 0xabcd; 
-	p->uh.len   = htons(payload_len + sizeof(UdpHeaderRec));
-	p->uh.csum  = 0; /* csum disabled */
+	p->p_u.udp_s.hdr.len   = htons(payload_len + sizeof(UdpHeaderRec));
 }
-#endif
+
+void
+udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
+{
+	arpLookup(intrf, dipaddr, p->ll.dst);
+	memcpy(p->ll.src, intrf->arpreq.ll.src, 6);
+	p->ll.type  = htons(0x0800);	/* IP */
+
+	p->ip.vhl   = 0x45;	/* version 4, 5words length */
+	p->ip.tos   = 0x30; 	/* priority, minimize delay */
+	p->ip.len   = 0;
+	p->ip.id    = htons(ip_id);/* ? */
+	p->ip.off   = htons(0);
+	p->ip.ttl   = 4;
+	p->ip.prot  = 17;	/* UDP */
+	p->ip.src   = intrf->ipaddr;
+	p->ip.dst   = dipaddr;
+	p->ip.csum  = 0;
+	
+	p->p_u.udp_s.hdr.sport = socks[sd].port;
+	p->p_u.udp_s.hdr.dport = htons(dport);
+	p->p_u.udp_s.hdr.len   = 0;
+	p->p_u.udp_s.hdr.csum  = 0; /* csum disabled */
+}

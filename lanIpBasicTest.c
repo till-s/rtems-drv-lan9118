@@ -1,5 +1,8 @@
 #include <rtems.h>
 #include <lanIpBasic.h>
+#include <string.h>
+
+#include <netinet/in.h>
 
 #define DRVMVE
 #ifdef DRVLAN9118
@@ -137,6 +140,47 @@ lanIpSetup(char *ip, char *nmsk, int port)
 egress:
 	lanIpTakedown();
 	return -1;
+}
+
+/* bounce a UDP packet back to the caller */
+int
+udpSocketEcho(int sd, int timeout)
+{
+LanIpPacket p = udpSockRecv(sd, timeout);
+uint16_t    tmp;
+int         len = -1;
+
+static LanIpPacketRec dummy = {{{0}}};
+
+	if ( !dummy.ip.src ) {
+		udpSockInitHdrs(sd, &dummy, 0, 0, 0);
+	}
+
+	if ( p ) {
+		memcpy(p->ll.dst, p->ll.src, sizeof(p->ll.dst));
+		p->ip.dst              = p->ip.src;	
+		p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
+		{
+			/* fill source ll address, IP address and UDP port */
+			memcpy(p->ll.src, &dummy.ll.src, sizeof(dummy.ll.src));
+			p->ip.src              = dummy.ip.src;
+
+			tmp                    = p->p_u.udp_s.hdr.dport;
+			p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
+			p->p_u.udp_s.hdr.sport = tmp;
+
+			p->ip.csum             = 0;
+/*
+			p->ip.csum             = htons(in_cksum_hdr((void*)&p->ip));
+*/
+
+			p->p_u.udp_s.hdr.csum = 0;
+
+			len = ntohs(p->p_u.udp_s.hdr.len) + sizeof(IpHeaderRec) + sizeof(EtherHeaderRec);
+		}
+		udpSockSendBufRaw(p, len);
+	}
+	return len;
 }
 
 int

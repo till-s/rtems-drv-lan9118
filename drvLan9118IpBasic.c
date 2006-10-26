@@ -20,8 +20,14 @@
 #define NETDRV_READ_INCREMENTAL(pd, ptr, nbytes)						\
 	drvLan9118FifoRd((DrvLan9118_tps)(pd)->drv_p, (ptr), (nbytes))
 
-#define NETDRV_ENQ_PACKET(pd, pbuf, nbytes)								\
+#define NETDRV_SND_PACKET(pd, pbuf, nbytes)								\
 	drvLan9118TxPacket((DrvLan9118_tps)(pd)->drv_p, (pbuf), (nbytes), 0)
+
+#define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)								\
+	do {																\
+		NETDRV_SND_PACKET(pd, pbuf, nbytes);							\
+		relrbuf(pbuf);													\
+	} while (0)
 
 #define NETDRV_READ_ENADDR(drvhdl, buf)									\
 	drvLan9118ReadEnaddr((DrvLan9118_tps)(drvhdl), (buf))

@@ -22,6 +22,13 @@ udpSockCreate(uint16_t port);
 int
 udpSockDestroy(int sd);
 
+/* Alloc and free buffers */
+LanIpPacketRec *
+udpSockGetBuf();
+
+void
+udpSockFreeBuf(LanIpPacketRec *ppacket);
+
 /* Read packet from a socket
  *
  * 'timeout_ticks': how long to block
@@ -35,14 +42,34 @@ udpSockDestroy(int sd);
 LanIpPacketRec *
 udpSockRecv(int sd, int timeout_ticks);
 
-void
-udpSockFreeBuf(LanIpPacketRec *ppacket);
+/* Send a buffer; EVERYTHING (all headers + payload must have been filled in)
+ * len: total length (including all headers and initial 2-byte padding).
+ * The buffer is taken over by the stack and released eventually.
+ *
+ * RETURNS: len
+ */
+int
+udpSockSendBufRaw(LanIpPacket buf_p, int len);
 
 /*
  * RX callback for drvLan9118
  */
 int
 drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
+
+/* Operations on packet headers: */
+
+/* Setup Ethernet, IP and UDP headers in a packet.
+ * An ARP lookup for 'dipaddr' is done.
+ */
+void
+udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
+
+/* Set length and IP checksum
+ * Note: other fields must have been initialized already
+ */
+void
+lanIpUdpHdrSetlen(LanIpPacket p, int payload_len);
 
 /* Create private data (pass as rx callback closure pointer to drvLan9118Start)
  *

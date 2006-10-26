@@ -22,15 +22,25 @@
 #define NETDRV_READ_INCREMENTAL(pd, ptr, nbytes)							\
 	do {} while (0)
 
-#define NETDRV_ENQ_PACKET(pd, pbuf, nbytes)									\
+#define NETDRV_SND_PACKET(pd, pbuf, nbytes)									\
 	do {																	\
-		char *b = (char*)getrbuf();											\
-		if ( b ) {															\
+		char *b_ = (char*)getrbuf();										\
+																			\
+		if ( b_ ) {															\
 			int l_ = (nbytes) - ETHERPADSZ;									\
-			memcpy(b, ((char*)(pbuf)) + ETHERPADSZ, l_);					\
-			if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b, l_) <= 0 )	\
-				relrbuf((rbuf_t*)b);										\
+			memcpy(b_, ((char*)(pbuf)) + ETHERPADSZ, l_);					\
+			if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b_, l_) <= 0 )	\
+				relrbuf((rbuf_t*)b_);										\
 		}																	\
+	} while (0)
+
+#define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)									\
+	do {																	\
+		char *b_ = (char*)pbuf + ETHERPADSZ;								\
+		int   l_ = (nbytes) - ETHERPADSZ;									\
+																			\
+		if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b_, l_) <= 0 )	\
+			relrbuf((rbuf_t*)pbuf);											\
 	} while (0)
 
 #define NETDRV_READ_ENADDR(drvhdl, buf)										\
@@ -38,18 +48,24 @@
 
 #define NETDRV_INCLUDE	<bsp/if_mve_pub.h>
 
+/* RX buffers must be 64-bit aligned (8 byte)
+ * However: SW cache flushing probably needs 32-bytes
+ */
+#define RBUF_ALIGNMENT	32
+
 #include "lanIpBasic.c"
 
 static void
 cleanup_txbuf(void *buf, void *closure, int error_on_tx_occurred)
 {
-	relrbuf(buf);
+	/* tx starts at offset 2 -- align back to get buffer address */
+	relrbuf((void*)((uint32_t)buf & ~3));
 }
 
 static void *
 alloc_rxbuf(int *p_size, unsigned long *p_data_addr)
 {
-	*p_size = (*p_data_addr = (unsigned long)getrbuf()) ? RBUFSZ : 0;
+	*p_size = (*p_data_addr = (unsigned long)getrbuf()) ? LANPKTMAX : 0;
 	return (void*) *p_data_addr;
 }
 
@@ -77,6 +93,12 @@ struct mveth_private	*mp = lanIpCbDataGetDrv(cbd);
 rtems_event_set			evs;
 uint32_t				irqs;
 
+#ifdef DEBUG
+	if ( lanIpDebug & DEBUG_TASK ) {
+		printf("IP task starting up\n");
+	}
+#endif
+
 	BSP_mve_init_hw( mp, 0, 0 );
 
 	do {
@@ -89,8 +111,13 @@ uint32_t				irqs;
 			BSP_mve_swipe_rx(mp); /* alloc_rxbuf, consume_rxbuf */
 		}
 		BSP_mve_enable_irqs(mp);
-	} while ( ! (evs & 8) );
+	} while ( ! (evs & KILL_EVENT) );
 
+#ifdef DEBUG
+	if ( lanIpDebug & DEBUG_TASK ) {
+		printf("IP task received shutting down\n");
+	}
+#endif
 	BSP_mve_detach( mp );
 
 	rtems_task_delete(RTEMS_SELF);
