@@ -16,6 +16,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.11  2006/10/25 18:43:56  strauman
+		 - don't include DMA header for now
+		
 		Revision 1.10  2006/10/12 03:14:19  strauman
 		 - adopted some of the coding standards.
 		
@@ -987,6 +990,11 @@ rtems_status_code sc;
 	/* set 2-byte offset in RX so that ethernet headers are word aligned */
 	wr9118Reg(plan_ps->base, RX_CFG, rd9118Reg(plan_ps->base, RX_CFG) | RX_CFG_RXDOFF_SET(2));
 
+	/* for now, we are conservative and use 'store and forward' mode
+	 * to avoid TX underflow.
+	 */
+	wr9118Reg(plan_ps->base, HW_CFG, rd9118Reg(plan_ps->base, HW_CFG) | HW_CFG_SF);
+
 	/* Setup the MAC but don't start the receiver */
 	macCsrWrite(plan_ps, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
 
@@ -1200,22 +1208,31 @@ uint32_t
 drvLan9118TxPacket(DrvLan9118_tps plan_ps, const void *buf_pa, int nbytes, unsigned short tag)
 {
 uint32_t base = plan_ps->base;
+uint32_t ltot =
+
+	/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
+	ltot = (nbytes+3) & ~3;
 
 	TXLOCK(plan_ps);
+
+	/* Verify space in the fifo */
+	if ( TX_FIFO_INF_TXDFREE_GET(rd9118Reg(base, TX_FIFO_INF)) < ltot ) {
+		/* not enough space */
+		TXUNLOCK(plan_ps);
+		return -1;
+	}
+	
 	/* push the command words */
 	wr9118Reg(base, TX_DATA_FIFO, TXCMD_A_FIRST | TXCMD_A_LAST | TXCMD_A_BUFSIZ_SET(nbytes - EH_PAD_BYTES) | TXCMD_A_START_ALIGN_SET(EH_PAD_BYTES));
 	wr9118Reg(base, 32, TXCMD_B_TAG_SET(tag) | TXCMD_B_PKTLEN_SET(nbytes - EH_PAD_BYTES));
 
 	if ( buf_pa ) {
-		/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
-		nbytes = (nbytes+3) & ~3;
-
 #if 0
 		/* DMA the packet */
-		drv5282ioDMA((void*)(plan_ps->base + TX_DATA_FIFO), buf, nbytes, 0, 0, 0);
+		drv5282ioDMA((void*)(plan_ps->base + TX_DATA_FIFO), buf, ltot, 0, 0, 0);
 #else
 		/* cache flushing is slow; memcpy is faster */
-		drvLan9118FifoWr(plan_ps, buf_pa, nbytes);
+		drvLan9118FifoWr(plan_ps, buf_pa, ltot);
 #endif
 		DELAY180ns();
 		TXUNLOCK(plan_ps);
