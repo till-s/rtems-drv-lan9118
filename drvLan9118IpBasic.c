@@ -46,7 +46,7 @@ rbuf_t			*prb;
 		return len;
 	}
 
-	len -= lanIpProcessBuffer(pd, &prb, len);
+	len = lanIpProcessBuffer(pd, &prb, len);
 
 	relrbuf(prb);
 
