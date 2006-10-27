@@ -69,11 +69,21 @@ alloc_rxbuf(int *p_size, unsigned long *p_data_addr)
 	return (void*) *p_data_addr;
 }
 
+int drvMveIpBasicRxErrs = 0;
+int drvMveIpBasicRxDrop = 0;
+
 static void
 consume_rxbuf(void *buf, void *closure, int len)
 {
 rbuf_t   *b = buf;
 IpCbData pd = closure;
+
+	if ( !buf ) {
+		drvMveIpBasicRxDrop++;
+		if ( len < 0 )
+			drvMveIpBasicRxErrs++;
+		return;
+	}
 
 	lanIpProcessBuffer(pd, &b, len);
 
