@@ -91,4 +91,8 @@ typedef struct LanIpPacketRec_ {
 	}				p_u;
 } LanIpPacketRec, *LanIpPacket;
 
+#define ETHPKTSZ(eth_payload_sz)	((eth_payload_sz) + sizeof(EtherHeaderRec))
+#define IPPKTSZ(ip_payload_sz)      ETHPKTSZ((ip_payload_sz) + sizeof(IpHeaderRec))
+#define	UDPPKTSZ(udp_payload_sz)	IPPKTSZ((udp_payload_sz) + sizeof(UdpHeaderRec))
+
 #endif
