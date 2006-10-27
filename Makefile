@@ -6,8 +6,14 @@
 #
 
 # C source names, if any, go here -- minus the .c
-#C_PIECES=drvLan9118 fecmii drvLan9118IpBasic
-C_PIECES+=drvMveIpBasic lanIpBasicTest
+C_PIECES_uC5282=drvLan9118 fecmii drvLan9118IpBasic
+DEFINES_uC5282 = -DDRVLAN9118
+
+C_PIECES_beatnik=drvMveIpBasic
+DEFINES_beatnik= -DDRVMVE
+
+C_PIECES=$(C_PIECES_$(RTEMS_BSP)) lanIpBasicTest
+
 C_FILES=$(C_PIECES:%=%.c)
 C_O_FILES=$(C_PIECES:%=${ARCH}/%.o)
 
@@ -30,7 +36,7 @@ OBJS=$(C_O_FILES) $(CC_O_FILES) $(S_O_FILES)
 # linked application is generated.
 # If it has a '.obj' extension, a loadable module is built.
 
-PGMS=${ARCH}/drvLan9118.obj
+PGMS=${ARCH}/lanIpBasic.obj
 
 #  List of RTEMS Classic API Managers to be included in the application
 #  goes here. Use:
@@ -55,7 +61,7 @@ include $(RTEMS_ROOT)/make/leaf.cfg
 # (OPTIONAL) Add local stuff here using +=
 #
 
-DEFINES  +=
+DEFINES  += $(DEFINES_$(RTEMS_BSP))
 CPPFLAGS += -I.
 CFLAGS   +=
 
