@@ -4,7 +4,8 @@
 
 #include <netinet/in.h>
 
-#define DRVMVE
+#define PAYLDLEN 1024
+
 #ifdef DRVLAN9118
 
 #include <drvLan9118.h>
@@ -30,6 +31,12 @@ start(void *drv, IpCbData cbd, int pri)
 				0, 0,
 				0, 0);
 }
+
+/* Must be initialized! */
+extern uint32_t Read_timer();
+
+#define READ_TIMER()	Read_timer()
+
 #elif defined(DRVMVE)
 
 #include <bsp/if_mve_pub.h>
@@ -73,6 +80,13 @@ shutdown(void *drv)
 {
 	drvMveIpBasicShutdown(mve_tid);
 	mve_tid = 0;
+}
+
+static inline uint32_t READ_TIMER()
+{
+uint32_t t;
+	asm volatile("mftb %0":"=r"(t));
+	return t;
 }
 
 #else
@@ -142,13 +156,21 @@ egress:
 	return -1;
 }
 
+uint32_t mintrip         = -1;
+uint32_t maxtrip         =  0;
+uint32_t avgtrip128      =  0;
+uint32_t pktlost         =  0;
+uint32_t pktsent         =  0;
+volatile int keeprunning =  1;
+
 /* bounce a UDP packet back to the caller */
 int
-udpSocketEcho(int sd, int timeout)
+udpSocketEcho(int sd, int idx, int timeout)
 {
 LanIpPacket p = udpSockRecv(sd, timeout);
 uint16_t    tmp;
 int         len = -1;
+uint32_t	now, then;
 
 static LanIpPacketRec dummy = {{{0}}};
 
@@ -176,12 +198,76 @@ static LanIpPacketRec dummy = {{{0}}};
 
 			p->p_u.udp_s.hdr.csum = 0;
 
-			len = ntohs(p->p_u.udp_s.hdr.len) + sizeof(IpHeaderRec) + sizeof(EtherHeaderRec);
+			len = IPPKTSZ(ntohs(p->p_u.udp_s.hdr.len));
 		}
+		now  = READ_TIMER();
+		then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
+		((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
 		udpSockSendBufRaw(p, len);
+
+		pktsent++;
+
+		/* If this was not the first packet then measure roundtrip */
+		if ( then != 0 ) {
+			now-=then;	
+			if ( now < mintrip )
+				mintrip = now;
+			if ( now > maxtrip )
+				maxtrip = now;
+			/* avgtrip = (127*avgtrip + now)/128;
+             * 128 * a = 127 * a + n = 127/128 * (128*a) + n
+             */
+            avgtrip128 = (avgtrip128 * 127)/128 + now;
+			/* When reading avgtrip it must be divided by 128 */
+		}
 	}
 	return len;
 }
+
+int
+udpBouncer(int master, uint32_t dipaddr, uint16_t dport)
+{
+LanIpPacket p;
+	if ( master ) {
+		do {
+			/* create a packet */
+			if ( !(p=udpSockGetBuf()) ) {
+				fprintf(stderr,"bouncer: Unable to allocate buffer\n");
+				return -1;
+			}
+			/* fillin headers */
+			udpSockInitHdrs(udpsd, p, dipaddr, dport, 0);
+			lanIpUdpHdrSetlen(p, PAYLDLEN);
+
+			/* initialize timestamps */
+			((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
+			((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
+			udpSockSendBufRaw(p, UDPPKTSZ(PAYLDLEN) );	
+
+			while ( udpSocketEcho(udpsd, 1, 20) > 0 ) {
+				if ( !keeprunning ) {
+					pktlost--;
+					break;
+				}
+			}
+
+			pktlost++;
+
+		} while ( keeprunning );
+			fprintf(stderr,"Master terminated.\n");
+			/* in case they want to start again */
+			keeprunning=1;
+	} else {
+			/* make sure socket is flushed */
+			while ( (p = udpSockRecv(udpsd,0)) )		
+				udpSockFreeBuf(p);
+			while (udpSocketEcho(udpsd, 0, 100) > 0)
+					;
+			fprintf(stderr,"Slave timed out; terminating\n");
+	}
+	return 0;
+}
+
 
 int
 _cexpModuleFinalize(void* unused)
