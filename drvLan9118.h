@@ -236,6 +236,7 @@ drvLan9118BufRev(uint32_t *buf_p, int nwords);
  * but discarded if no tx callback is registered.
  *
  * RETURNS: 0 on success, nonzero if there was not enough space in the FIFO
+ *          if this call fails then the TX is left unlocked.
  */
 uint32_t
 drvLan9118TxPacket(DrvLan9118_tps plan_ps, const void *buf_p, int nbytes, unsigned short tag);
@@ -249,8 +250,9 @@ drvLan9118FifoWr(DrvLan9118_tps plan_ps, const void *buf_p, int n_bytes);
 /* Unlock the Transmitter; Intended use:
  * 
  *  1) prepare packet with drvLan9118TxPacket() passing a NULL buffer (length must still be known)
- *  2) write payload with (repeated) calls to drvLan9118FifoWr()
- *  3) unlock transmitter calling drvLan9118TxUnlock()
+ *  2) *CHECK RETURN CODE* abort here if nonzero
+ *  3) write payload with (repeated) calls to drvLan9118FifoWr()
+ *  4) unlock transmitter calling drvLan9118TxUnlock()
  */
 void
 drvLan9118TxUnlock(DrvLan9118_tps plan_ps);
