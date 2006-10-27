@@ -234,6 +234,8 @@ drvLan9118BufRev(uint32_t *buf_p, int nwords);
  * The 'tag' value is passed back to the callback or tx status message queue.
  * A 0 tag is special, however: it's status is never reported to a message queue
  * but discarded if no tx callback is registered.
+ *
+ * RETURNS: 0 on success, nonzero if there was not enough space in the FIFO
  */
 uint32_t
 drvLan9118TxPacket(DrvLan9118_tps plan_ps, const void *buf_p, int nbytes, unsigned short tag);

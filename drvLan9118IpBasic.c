@@ -3,18 +3,20 @@
  * Either lock, fillin-IP addr, send, unlock
  * or copy, fillin send copy...
  */
-#define NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr)							\
-	do {																\
-		DrvLan9118_tps	plan = (pd)->drv_p;								\
-		drvLan9118TxPacket(plan, 0, sizeof((pd)->arpreq), 0);			\
-																		\
-		/* arpreq is locked and may be modified */						\
-		 *(uint32_t*)(pd)->arpreq.arp.tpa = ipaddr;						\
-																		\
-		/* send request */												\
-		drvLan9118FifoWr(plan, &(pd)->arpreq, sizeof((pd)->arpreq));	\
-																		\
-		drvLan9118TxUnlock(plan);										\
+#define NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr)								\
+	do {																	\
+		DrvLan9118_tps	plan = (pd)->drv_p;									\
+																			\
+		if ( 0 == drvLan9118TxPacket(plan, 0, sizeof((pd)->arpreq), 0) ) {	\
+																			\
+			/* arpreq is locked and may be modified */						\
+			 *(uint32_t*)(pd)->arpreq.arp.tpa = ipaddr;						\
+																			\
+			/* send request */												\
+			drvLan9118FifoWr(plan, &(pd)->arpreq, sizeof((pd)->arpreq));	\
+																			\
+			drvLan9118TxUnlock(plan);										\
+		}																	\
 	} while (0)
 
 #define NETDRV_READ_INCREMENTAL(pd, ptr, nbytes)						\
