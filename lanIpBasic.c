@@ -592,6 +592,8 @@ int			isbcst = 0;
  * Need to pass a pointer to the buffer pointer;
  * (*pprb) is set to NULL if the buffer was handed
  * on to a 'socket'.
+ * 
+ * RETURNS: number of remaining elements.
  */
 
 int
@@ -774,7 +776,12 @@ lanIpUdpHdrSetlen(LanIpPacket p, int payload_len)
 void
 udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
 {
-	arpLookup(intrf, dipaddr, p->ll.dst);
+	if ( (dipaddr & ~intrf->nmask) == ~intrf->nmask ) {
+		/* broadcast */
+		memset(p->ll.dst, 0xff, 6);
+	} else {
+		arpLookup(intrf, dipaddr, p->ll.dst);
+	}
 	memcpy(p->ll.src, intrf->arpreq.ll.src, 6);
 	p->ll.type  = htons(0x0800);	/* IP */
 
