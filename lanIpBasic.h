@@ -60,7 +60,7 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
 /* Operations on packet headers: */
 
 /* Setup Ethernet, IP and UDP headers in a packet.
- * An ARP lookup for 'dipaddr' is done.
+ * An ARP lookup for 'dipaddr' is done if necessary.
  */
 void
 udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
