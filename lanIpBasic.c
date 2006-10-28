@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <errno.h>
 
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
@@ -121,175 +122,24 @@ typedef struct IpCbDataRec_ {
 	} arprep;
 } IpCbDataRec;
 
+typedef struct UdpSockPeerRec_ {
+	IpCbData	intrf;
+	struct {
+		EtherHeaderRec	 ll;
+		IpHeaderRec		 ip;
+		UdpHeaderRec	udp;
+	}			hdr;
+} UdpSockPeerRec, *UdpSockPeer;
+
 typedef struct UdpSockRec_ {
-	volatile int	port;
+	volatile int	port;	/* host byte order */
 	rtems_id		msgq;
+	UdpSockPeer		peer;
 } UdpSockRec, *UdpSock;
 
 static UdpSockRec	socks[NSOCKS] = {{0}};
 static IpCbData		intrf         = 0;
 
-/* socks array is protected by disabling thread dispatching */
-
-/* Find socket for 'port' and return (dispatching disabled on success) */
-static int
-sockget(int port)
-{
-int i;
-	_Thread_Disable_dispatch();
-	for (i=0; i<NSOCKS; i++) {
-		if ( socks[i].port == port )
-			return i;
-	}
-	_Thread_Enable_dispatch();
-	return -1;
-}
-
-int
-udpSockCreate(uint16_t port)
-{
-int       rval, i;
-rtems_id  q = 0;
-
-	/* 0 is invalid (we use it as a marker) */
-	if ( 0 == port )
-		return -1;
-
-	if ( (rval = sockget(0)) < 0 ) {
-		/* no free slot */
-		goto egress;
-	}
-
-	if ( RTEMS_SUCCESSFUL != rtems_message_queue_create(
-			rtems_build_name('u','d','p','q'),
-			QDEPTH,
-			sizeof(rbuf_t*),
-			RTEMS_FIFO | RTEMS_LOCAL,
-			&q) ) {
-		return -2;
-	}
-
-	/* found free slot, array is locked */
-	for ( i=0; i<NSOCKS; i++ ) {
-		if ( socks[i].port == port ) {
-			/* duplicate port */
-			_Thread_Enable_dispatch();
-			rval = -3;
-			goto egress;
-		}
-	}
-
-	/* everything OK */
-	socks[rval].port = port;
-	socks[rval].msgq = q;
-
-	_Thread_Enable_dispatch();
-
-	q             = 0;
-
-egress:
-	if ( q )
-		rtems_message_queue_delete(q);
-	return rval;
-}
-
-/* destroying a sock somebody is blocking on is BAD */
-int
-udpSockDestroy(int sd)
-{
-rtems_id q = 0;
-	if ( sd < 0 || sd >= NSOCKS )
-		return -1;
-
-	_Thread_Disable_dispatch();
-		if (socks[sd].port) {
-			socks[sd].port = 0;
-			q = socks[sd].msgq;
-			socks[sd].msgq = 0;
-		}
-	_Thread_Enable_dispatch();
-	if (q) {
-		/* drain queue */
-		void     *p;
-		uint32_t sz;
-		while ( RTEMS_SUCCESSFUL == rtems_message_queue_receive(
-										q,
-										&p,
-										&sz,
-										RTEMS_NO_WAIT,
-										0) ) {
-			relrbuf(p);
-		}
-		rtems_message_queue_delete(q);
-		return 0;
-	}
-	return -2;
-}
-
-LanIpPacketRec *
-udpSockRecv(int sd, int timeout_ticks)
-{
-LanIpPacketRec *rval = 0;
-uint32_t		sz = sizeof(rval);
-	if ( sd < 0 || sd >= NSOCKS ) {
-		return 0;
-	}
-	if ( RTEMS_SUCCESSFUL != rtems_message_queue_receive(
-								socks[sd].msgq,
-								&rval,
-								&sz,
-								timeout_ticks ? RTEMS_WAIT : RTEMS_NO_WAIT,
-								timeout_ticks < 0 ? RTEMS_NO_TIMEOUT : timeout_ticks) )
-		return 0;
-
-	return rval;
-}
-
-void
-udpSockFreeBuf(LanIpPacketRec *b)
-{
-	relrbuf(b);
-}
-
-LanIpPacketRec *
-udpSockGetBuf()
-{
-	return getrbuf();
-}
-
-int
-udpSockSendBufRaw(LanIpPacket buf_p, int len)
-{
-	NETDRV_ENQ_BUFFER(intrf, buf_p,  len);
-	return len;
-}
-
-int
-udpSockSendBuf(int sd, LanIpPacket buf_p)
-{
-int         port, len;
-
-	if ( sd < 0 || sd >= NSOCKS ) {
-		return -1;
-	}
-
-	if ( !(port = socks[sd].port) )
-		return -1;
-	
-	/* fill source ll address, IP address and UDP port */
-	memcpy(buf_p->ll.src, &intrf->arpreq.ll.src, sizeof(buf_p->ll.src));
-	buf_p->ip.src              = intrf->ipaddr;
-	buf_p->p_u.udp_s.hdr.sport = port;
-
-	buf_p->ip.csum             = 0;
-	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
-
-	buf_p->p_u.udp_s.hdr.csum = 0;
-
-	len = ntohs(buf_p->p_u.udp_s.hdr.len) + sizeof(IpHeaderRec) + sizeof(EtherHeaderRec);
-
-	return udpSockSendBufRaw(buf_p, len);
-}
 
 typedef struct ArpEntryRec_ {
 	uint32_t			ipaddr;
@@ -475,7 +325,7 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 		}
 #endif
 
-		NETDRV_SND_PACKET(pd, &pd->arprep, sizeof(pd->arprep));
+		NETDRV_SND_PACKET(pd->drv_p, 0, 0, &pd->arprep, sizeof(pd->arprep));
 	} else {
 		/* a reply to our request */
 #ifdef DEBUG
@@ -543,7 +393,7 @@ int			isbcst = 0;
 				p->ip.src  = pd->ipaddr; 
 				p->ip.csum = 0;
 				p->ip.csum = htons(in_cksum_hdr((void*)&p->ip));
-				NETDRV_SND_PACKET(pd, p, sizeof(EtherHeaderRec) + nbytes);
+				NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EtherHeaderRec) + nbytes);
 			}
 		}
 		break;
@@ -796,8 +646,241 @@ udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_
 	p->ip.dst   = dipaddr;
 	p->ip.csum  = 0;
 	
-	p->p_u.udp_s.hdr.sport = socks[sd].port;
+	p->p_u.udp_s.hdr.sport = htons((uint16_t)socks[sd].port);
 	p->p_u.udp_s.hdr.dport = htons(dport);
 	p->p_u.udp_s.hdr.len   = 0;
 	p->p_u.udp_s.hdr.csum  = 0; /* csum disabled */
 }
+
+/* socks array is protected by disabling thread dispatching */
+
+/* Find socket for 'port' (host byte order)
+ * and return (dispatching disabled on success)
+ */
+static int
+sockget(int port)
+{
+int i;
+	_Thread_Disable_dispatch();
+	for (i=0; i<NSOCKS; i++) {
+		if ( socks[i].port == port )
+			return i;
+	}
+	_Thread_Enable_dispatch();
+	return -ENFILE;
+}
+
+int
+udpSockCreate(int port)
+{
+int       rval = -1, i;
+rtems_id  q = 0;
+
+	/* 0 is invalid (we use it as a marker) */
+	if ( port <= 0 || port >= 1<<16 )
+		return -EINVAL;
+
+	if ( RTEMS_SUCCESSFUL != rtems_message_queue_create(
+			rtems_build_name('u','d','p','q'),
+			QDEPTH,
+			sizeof(rbuf_t*),
+			RTEMS_FIFO | RTEMS_LOCAL,
+			&q) ) {
+		q    =  0;
+		rval = -ENOSPC;
+		goto egress;
+	}
+
+	if ( (rval = sockget(0)) < 0 ) {
+		/* no free slot */
+		goto egress;
+	}
+
+	/* found free slot, array is locked */
+	for ( i=0; i<NSOCKS; i++ ) {
+		if ( socks[i].port == port ) {
+			/* duplicate port */
+			_Thread_Enable_dispatch();
+			rval = -EADDRINUSE;
+			goto egress;
+		}
+	}
+
+	/* everything OK */
+	socks[rval].port = port;
+	socks[rval].msgq = q;
+	socks[rval].peer = 0;
+
+	_Thread_Enable_dispatch();
+
+	q             = 0;
+	rval          = 0;
+
+egress:
+	if ( q )
+		rtems_message_queue_delete(q);
+	return rval;
+}
+
+/* destroying a sock somebody is blocking on is BAD */
+int
+udpSockDestroy(int sd)
+{
+rtems_id  q = 0;
+void     *p = 0;
+
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	_Thread_Disable_dispatch();
+		if (socks[sd].port) {
+			socks[sd].port = 0;
+			q = socks[sd].msgq;
+			socks[sd].msgq = 0;
+			p = socks[sd].peer;
+			socks[sd].peer = 0;
+		}
+	_Thread_Enable_dispatch();
+
+	free(p);
+
+	if (q) {
+		/* drain queue */
+		void     *p;
+		uint32_t sz;
+		while ( RTEMS_SUCCESSFUL == rtems_message_queue_receive(
+										q,
+										&p,
+										&sz,
+										RTEMS_NO_WAIT,
+										0) ) {
+			relrbuf(p);
+		}
+		rtems_message_queue_delete(q);
+		return 0;
+	}
+	return -EBADFD;
+}
+
+int
+udpSockConnect(int sd, uint32_t dipaddr, int dport)
+{
+UdpSockPeer p = 0;
+int rval      = -1;
+
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	if ( 0 == socks[sd].port )
+		return -EBADF;
+
+	if ( dport <= 0 || dport >= 1<<16 )
+		return -EINVAL;
+
+	if ( socks[sd].peer )
+		return -EISCONN;
+
+	if ( !(p=malloc(sizeof(*p))) ) {
+		rval =  -ENOMEM;
+		goto egress;
+	}
+
+	udpSockInitHdrs(sd, (LanIpPacket)&p->hdr, dipaddr, dport, 0);
+	p->intrf = intrf;
+
+	socks[sd].peer = p;
+	p    = 0;
+	rval = 0;
+
+egress:
+	free(p);
+	return rval;
+}
+
+LanIpPacketRec *
+udpSockRecv(int sd, int timeout_ticks)
+{
+LanIpPacketRec *rval = 0;
+uint32_t		sz = sizeof(rval);
+	if ( sd < 0 || sd >= NSOCKS ) {
+		return 0;
+	}
+	if ( RTEMS_SUCCESSFUL != rtems_message_queue_receive(
+								socks[sd].msgq,
+								&rval,
+								&sz,
+								timeout_ticks ? RTEMS_WAIT : RTEMS_NO_WAIT,
+								timeout_ticks < 0 ? RTEMS_NO_TIMEOUT : timeout_ticks) )
+		return 0;
+
+	return rval;
+}
+
+int
+udpSockSend(int sd, void *payload, int payload_len)
+{
+UdpSockPeer p;
+
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	if ( 0 == socks[sd].port )
+		return -EBADF;
+
+	if ( ! (p = socks[sd].peer) )
+		return -ENOTCONN;
+
+	arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst);
+	lanIpUdpHdrSetlen((LanIpPacket)&socks[sd].peer->hdr, payload_len);
+
+	return NETDRV_SND_PACKET( p->intrf->drv_p, &p->hdr, sizeof(p->hdr), payload, payload_len );
+}
+
+void
+udpSockFreeBuf(LanIpPacketRec *b)
+{
+	relrbuf(b);
+}
+
+LanIpPacketRec *
+udpSockGetBuf()
+{
+	return getrbuf();
+}
+
+int
+udpSockSendBufRaw(LanIpPacket buf_p, int len)
+{
+	NETDRV_ENQ_BUFFER(intrf, buf_p,  len);
+	return len;
+}
+
+int
+udpSockSendBuf(int sd, LanIpPacket buf_p)
+{
+uint16_t port;
+int      len;
+
+	if ( sd < 0 || sd >= NSOCKS ) {
+		return -1;
+	}
+
+	if ( !(port = socks[sd].port) )
+		return -1;
+	
+	/* fill source ll address, IP address and UDP port */
+	memcpy(buf_p->ll.src, &intrf->arpreq.ll.src, sizeof(buf_p->ll.src));
+	buf_p->ip.src              = intrf->ipaddr;
+	buf_p->p_u.udp_s.hdr.sport = htons(port);
+
+	buf_p->ip.csum             = 0;
+	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
+
+	buf_p->p_u.udp_s.hdr.csum = 0;
+
+	len = ntohs(buf_p->p_u.udp_s.hdr.len) + sizeof(IpHeaderRec) + sizeof(EtherHeaderRec);
+
+	return udpSockSendBufRaw(buf_p, len);
+}
+
+

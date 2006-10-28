@@ -14,7 +14,7 @@
 			int l_ = sizeof((pd)->arpreq) - ETHERPADSZ;						\
 			memcpy(b, &(pd)->arpreq.ll.dst, l_);							\
 			*(uint32_t*)((IpArpRec*)(b + ETHERHDRSZ))->tpa = ipaddr;		\
-			if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b, l_) <= 0 )	\
+			if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b, b, l_) <= 0 )	\
 				relrbuf((rbuf_t*)b);										\
 		}																	\
 	} while (0)
@@ -22,24 +22,16 @@
 #define NETDRV_READ_INCREMENTAL(pd, ptr, nbytes)							\
 	do {} while (0)
 
-#define NETDRV_SND_PACKET(pd, pbuf, nbytes)									\
-	do {																	\
-		char *b_ = (char*)getrbuf();										\
-																			\
-		if ( b_ ) {															\
-			int l_ = (nbytes) - ETHERPADSZ;									\
-			memcpy(b_, ((char*)(pbuf)) + ETHERPADSZ, l_);					\
-			if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b_, l_) <= 0 )	\
-				relrbuf((rbuf_t*)b_);										\
-		}																	\
-	} while (0)
+static inline int 
+NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz);
+
 
 #define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)									\
 	do {																	\
 		char *b_ = (char*)pbuf + ETHERPADSZ;								\
 		int   l_ = (nbytes) - ETHERPADSZ;									\
 																			\
-		if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b_, l_) <= 0 )	\
+		if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, pbuf, b_, l_) <= 0 )	\
 			relrbuf((rbuf_t*)pbuf);											\
 	} while (0)
 
@@ -54,6 +46,30 @@
 #define RBUF_ALIGNMENT	32
 
 #include "lanIpBasic.c"
+
+static inline int 
+NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz)
+{
+struct mveth_private *mp = pdrv;
+char                 *b_ = (char*)getrbuf();
+char                 *p;
+
+		if ( (p=b_) ) {
+			int l_ = hdrsz + dtasz - ETHERPADSZ;
+			if ( phdr ) {
+				memcpy(p, phdr, hdrsz);
+				p += hdrsz;
+			}
+			memcpy(p, data, dtasz);
+			p = b_ + ETHERPADSZ;
+			if ( BSP_mve_send_buf(mp, b_, p, l_) <= 0 ) {
+				relrbuf((rbuf_t*)b_);
+				return -ENOSPC;
+			}
+			return hdrsz + dtasz;
+		}
+		return -ENOMEM;
+}
 
 static void
 cleanup_txbuf(void *buf, void *closure, int error_on_tx_occurred)

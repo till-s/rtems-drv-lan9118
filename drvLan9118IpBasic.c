@@ -22,12 +22,12 @@
 #define NETDRV_READ_INCREMENTAL(pd, ptr, nbytes)						\
 	drvLan9118FifoRd((DrvLan9118_tps)(pd)->drv_p, (ptr), (nbytes))
 
-#define NETDRV_SND_PACKET(pd, pbuf, nbytes)								\
-	drvLan9118TxPacket((DrvLan9118_tps)(pd)->drv_p, (pbuf), (nbytes), 0)
+static inline int 
+NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz);
 
 #define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)								\
 	do {																\
-		NETDRV_SND_PACKET(pd, pbuf, nbytes);							\
+		NETDRV_SND_PACKET(pd, 0, 0, pbuf, nbytes);						\
 		relrbuf(pbuf);													\
 	} while (0)
 
@@ -37,6 +37,25 @@
 #define NETDRV_INCLUDE	<drvLan9118.h>
 
 #include "lanIpBasic.c"
+
+static inline int 
+NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz)
+{
+DrvLan9118_tps plan = (DrvLan9118_tps)pdrv;
+
+	assert( 0 == (hdrsz  & 3) && 0 == ((uint32_t)phdr & 3) && 0 == ((uint32_t)data & 3) );
+
+	if ( phdr ) {
+		if ( drvLan9118TxPacket(plan, 0, hdrsz+dtasz, 0) ) {
+			return -ENOSPC;
+		}
+		drvLan9118FifoWr(plan, phdr, hdrsz);
+		drvLan9118FifoWr(plan, data, dtasz);
+		drvLan9118TxUnlock(plan);
+		return hdrsz + dtasz;
+	}
+	return drvLan9118TxPacket(plan, data, dtasz, 0);
+}
 
 int
 drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg)

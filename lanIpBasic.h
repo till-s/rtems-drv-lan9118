@@ -10,9 +10,11 @@
 
 /* Create a socket listening on a UDP port
  * RETURNS: descriptor (>=0) on success, < 0 on error
+ *
+ * NOTE: port is in *host* byte order.
  */
 int
-udpSockCreate(uint16_t port);
+udpSockCreate(int port);
 
 /* Destroy socket;
  * RETURNS: 0 on success, nonzero on error.
@@ -42,6 +44,24 @@ udpSockFreeBuf(LanIpPacketRec *ppacket);
 LanIpPacketRec *
 udpSockRecv(int sd, int timeout_ticks);
 
+/* 'Connect' to a peer, i.e., fill in a preallocated header
+ * structure that is re-used for every 'Send' operation.
+ *
+ * 'dipaddr': peer's IP address (*network* byte order)
+ * 'dport'  : peer's UDP destination port (*host* byte order)
+ *
+ * RETURNS: 0 on success -errno on error.
+ */
+int
+udpSockConnect(int sd, uint32_t dipaddr, int dport);
+
+/* Send data over a 'connected' socket.
+ *
+ * RETURNS: number of bytes sent or -errno.
+ */
+int
+udpSockSend(int sd, void *payload, int payload_len);
+
 /* Send a buffer; EVERYTHING (all headers + payload must have been filled in)
  * len: total length (including all headers and initial 2-byte padding).
  * The buffer is taken over by the stack and released eventually.
@@ -61,6 +81,9 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
 
 /* Setup Ethernet, IP and UDP headers in a packet.
  * An ARP lookup for 'dipaddr' is done if necessary.
+ *
+ * NOTE: 'dipaddr' (destination IP address) is in *network* byte order.
+ *       'dport' and 'ip_id' are in *host* byte order.
  */
 void
 udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
