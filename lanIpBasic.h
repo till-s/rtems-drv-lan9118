@@ -46,11 +46,17 @@ udpSockRecv(int sd, int timeout_ticks);
 
 /* 'Connect' to a peer, i.e., fill in a preallocated header
  * structure that is re-used for every 'Send' operation.
+ * Also, datagrams are only accepted from the connected peer
+ * (IP and source port; if the peer IP is a broadcast address
+ * then only the source port is filtered).
  *
  * 'dipaddr': peer's IP address (*network* byte order)
  * 'dport'  : peer's UDP destination port (*host* byte order)
  *
  * RETURNS: 0 on success -errno on error.
+ *
+ * NOTE:    'dipaddr' == 0 and 'dport' == 0 may be passed
+ *          to 'disconnect' the socket.
  */
 int
 udpSockConnect(int sd, uint32_t dipaddr, int dport);
@@ -84,8 +90,10 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
  *
  * NOTE: 'dipaddr' (destination IP address) is in *network* byte order.
  *       'dport' and 'ip_id' are in *host* byte order.
+ *
+ * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
  */
-void
+int
 udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
 
 /* Set length and IP checksum
