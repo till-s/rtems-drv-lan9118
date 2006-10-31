@@ -145,7 +145,7 @@ lanIpSetup(char *ip, char *nmsk, int port)
 	}
 
 	if ( (udpsd = udpSockCreate(port)) < 0 ) {
-		fprintf(stderr,"Unable to create UDPSOCK\n");
+		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-udpsd));
 		goto egress;
 	}
 
@@ -164,46 +164,64 @@ uint32_t pktsent         =  0;
 volatile int keeprunning =  1;
 
 /* bounce a UDP packet back to the caller */
+
 int
-udpSocketEcho(int sd, int idx, int timeout)
+udpSocketEcho(int sd, int raw, int idx, int timeout)
 {
-LanIpPacket p = udpSockRecv(sd, timeout);
+LanIpPacket p;
 uint16_t    tmp;
-int         len = -1;
+int         len = -1, rval;
 uint32_t	now, then;
 
 static LanIpPacketRec dummy = {{{0}}};
 
 	if ( !dummy.ip.src ) {
-		udpSockInitHdrs(sd, &dummy, 0, 0, 0);
+		if ( (rval = udpSockInitHdrs(sd, &dummy, 0, 0, 0)) ) {
+			fprintf(stderr,"udpSocketEcho - Unable to initialize headers: %s\n", strerror(-rval));
+			return rval;
+		}
 	}
 
+	p = udpSockRecv(sd, timeout);
+
 	if ( p ) {
-		memcpy(p->ll.dst, p->ll.src, sizeof(p->ll.dst));
-		p->ip.dst              = p->ip.src;	
-		p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
-		{
-			/* fill source ll address, IP address and UDP port */
-			memcpy(p->ll.src, &dummy.ll.src, sizeof(dummy.ll.src));
-			p->ip.src              = dummy.ip.src;
 
-			tmp                    = p->p_u.udp_s.hdr.dport;
+		if ( raw ) {
+			/* user manages headers */
+			memcpy(p->ll.dst, p->ll.src, sizeof(p->ll.dst));
+			p->ip.dst              = p->ip.src;	
 			p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
-			p->p_u.udp_s.hdr.sport = tmp;
+			{
+				/* fill source ll address, IP address and UDP port */
+				memcpy(p->ll.src, &dummy.ll.src, sizeof(dummy.ll.src));
+				p->ip.src              = dummy.ip.src;
 
-			p->ip.csum             = 0;
-/*
-			p->ip.csum             = htons(in_cksum_hdr((void*)&p->ip));
-*/
+				tmp                    = p->p_u.udp_s.hdr.dport;
+				p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
+				p->p_u.udp_s.hdr.sport = tmp;
 
-			p->p_u.udp_s.hdr.csum = 0;
+				p->ip.csum             = 0;
+				/*
+				   p->ip.csum             = htons(in_cksum_hdr((void*)&p->ip));
+				 */
 
-			len = IPPKTSZ(ntohs(p->p_u.udp_s.hdr.len));
+				p->p_u.udp_s.hdr.csum = 0;
+
+				len = IPPKTSZ(ntohs(p->p_u.udp_s.hdr.len));
+			}
+			now  = READ_TIMER();
+			then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
+			((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
+			udpSockSendBufRaw(p, len);
+
+		} else {
+			now  = READ_TIMER();
+			then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
+			((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
+			len = ntohs(p->p_u.udp_s.hdr.len) - sizeof(UdpHeaderRec);
+			udpSockSend(sd, &p->p_u.udp_s.pld, len);
+			udpSockFreeBuf(p);
 		}
-		now  = READ_TIMER();
-		then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
-		((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
-		udpSockSendBufRaw(p, len);
 
 		pktsent++;
 
@@ -225,26 +243,42 @@ static LanIpPacketRec dummy = {{{0}}};
 }
 
 int
-udpBouncer(int master, uint32_t dipaddr, uint16_t dport)
+udpBouncer(int master, int raw, uint32_t dipaddr, uint16_t dport)
 {
 LanIpPacket p;
+int         err = -1;
+	if ( !raw ) {
+		if ( (err=udpSockConnect(udpsd, dipaddr, dport)) ) {
+			fprintf(stderr,"bouncer: Unable to connect socket: %s\n", strerror(-err));
+			return err;
+		}
+	}
+
 	if ( master ) {
 		do {
 			/* create a packet */
 			if ( !(p=udpSockGetBuf()) ) {
 				fprintf(stderr,"bouncer: Unable to allocate buffer\n");
-				return -1;
+				goto egress;		
 			}
-			/* fillin headers */
-			udpSockInitHdrs(udpsd, p, dipaddr, dport, 0);
-			lanIpUdpHdrSetlen(p, PAYLDLEN);
+			if ( raw ) {
+				/* fillin headers */
+				udpSockInitHdrs(udpsd, p, dipaddr, dport, 0);
+				lanIpUdpHdrSetlen(p, PAYLDLEN);
 
-			/* initialize timestamps */
-			((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
-			((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
-			udpSockSendBufRaw(p, UDPPKTSZ(PAYLDLEN) );	
+				/* initialize timestamps */
+				((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
+				((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
+				udpSockSendBufRaw(p, UDPPKTSZ(PAYLDLEN) );	
+			} else {
+				/* initialize timestamps */
+				((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
+				((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
+				udpSockSend(udpsd, p, PAYLDLEN);
+				udpSockFreeBuf(p);
+			}
 
-			while ( udpSocketEcho(udpsd, 1, 20) > 0 ) {
+			while ( udpSocketEcho(udpsd, raw, 1, 20) > 0 ) {
 				if ( !keeprunning ) {
 					pktlost--;
 					break;
@@ -261,11 +295,19 @@ LanIpPacket p;
 			/* make sure socket is flushed */
 			while ( (p = udpSockRecv(udpsd,0)) )		
 				udpSockFreeBuf(p);
-			while (udpSocketEcho(udpsd, 0, 100) > 0)
+			while (udpSocketEcho(udpsd, raw, 0, 100) > 0)
 					;
 			fprintf(stderr,"Slave timed out; terminating\n");
 	}
-	return 0;
+	err = 0;
+
+egress:
+	if ( !raw ) {
+		if ( (err=udpSockConnect(udpsd, 0, 0)) ) {
+			fprintf(stderr,"bouncer: Unable to disconnect socket: %s\n", strerror(-err));
+		}
+	}
+	return(err);
 }
 
 
