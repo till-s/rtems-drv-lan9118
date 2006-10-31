@@ -27,7 +27,7 @@ NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz);
 
 #define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)								\
 	do {																\
-		NETDRV_SND_PACKET(pd, 0, 0, pbuf, nbytes);						\
+		NETDRV_SND_PACKET((pd)->drv_p, 0, 0, pbuf, nbytes);				\
 		relrbuf(pbuf);													\
 	} while (0)
 
