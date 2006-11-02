@@ -176,7 +176,7 @@ uint32_t	now, then;
 static LanIpPacketRec dummy = {{{0}}};
 
 	if ( !dummy.ip.src ) {
-		if ( (rval = udpSockInitHdrs(sd, &dummy, 0, 0, 0)) ) {
+		if ( (rval = udpSockHdrsInit(sd, &dummy, 0, 0, 0)) ) {
 			fprintf(stderr,"udpSocketEcho - Unable to initialize headers: %s\n", strerror(-rval));
 			return rval;
 		}
@@ -207,12 +207,11 @@ static LanIpPacketRec dummy = {{{0}}};
 
 				p->p_u.udp_s.hdr.csum = 0;
 
-				len = IPPKTSZ(ntohs(p->p_u.udp_s.hdr.len));
 			}
 			now  = READ_TIMER();
 			then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
 			((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
-			udpSockSendBufRaw(p, len);
+			len = udpSockSendBufRawIp(p);
 
 		} else {
 			now  = READ_TIMER();
@@ -263,13 +262,13 @@ int         err = -1;
 			}
 			if ( raw ) {
 				/* fillin headers */
-				udpSockInitHdrs(udpsd, p, dipaddr, dport, 0);
-				lanIpUdpHdrSetlen(p, PAYLDLEN);
+				udpSockHdrsInit(udpsd, p, dipaddr, dport, 0);
+				udpSockHdrsSetlen(p, PAYLDLEN);
 
 				/* initialize timestamps */
 				((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
 				((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
-				udpSockSendBufRaw(p, UDPPKTSZ(PAYLDLEN) );	
+				udpSockSendBufRawIp(p);
 			} else {
 				/* initialize timestamps */
 				((uint32_t*)p->p_u.udp_s.pld)[0] = 0;

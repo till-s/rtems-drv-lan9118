@@ -268,6 +268,43 @@ uint8_t  h;
 		free(found);
 }
 
+/* fillin our source addresses (MAC, IP, SPORT) and checksums
+ * (UDP csum unused)
+ */
+
+static inline void
+fillinSrcCsumIp(IpCbData ifc, LanIpPacket buf_p)
+{
+	memcpy(buf_p->ll.src, &ifc->arpreq.ll.src, sizeof(buf_p->ll.src));
+	buf_p->ip.src              = ifc->ipaddr;
+
+	buf_p->ip.csum             = 0;
+	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
+}
+
+static inline void
+fillinSrcCsumUdp(IpCbData ifc, LanIpPacket buf_p, int port)
+{
+	buf_p->p_u.udp_s.hdr.sport = htons(port);
+	buf_p->p_u.udp_s.hdr.csum = 0;
+	fillinSrcCsumIp(ifc, buf_p);
+}
+
+/* Copy IP and MAC src->dest */
+static inline void
+src2dstIp(LanIpPacket p)
+{
+	memcpy(p->ll.dst, p->ll.src, 6);
+	p->ip.dst = p->ip.src;
+}
+
+static inline void
+src2dstUdp(LanIpPacket p)
+{
+	src2dstIp(p);
+	p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
+}
+
 #ifdef DEBUG
 static void
 prether(FILE *f, const unsigned char *ea)
@@ -389,13 +426,12 @@ int			isbcst = 0;
 #endif
 				p->p_u.icmp_s.hdr.type = 0; /* ICMP REPLY */
 				p->p_u.icmp_s.hdr.csum = 0;
-				memcpy( p->ll.dst, p->ll.src, 6 );
-				memcpy( p->ll.src, pd->arprep.ll.src, 6);
+
 				p->ll.type = htons(0x800); /* IP */
-				p->ip.dst  = p->ip.src;
-				p->ip.src  = pd->ipaddr; 
-				p->ip.csum = 0;
-				p->ip.csum = htons(in_cksum_hdr((void*)&p->ip));
+
+				src2dstIp(p);
+				fillinSrcCsumIp(pd, p);
+
 				NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EtherHeaderRec) + nbytes);
 			}
 		}
@@ -639,7 +675,7 @@ uint32_t s = 0;
 #endif
 
 void
-lanIpUdpHdrSetlen(LanIpPacket p, int payload_len)
+udpSockHdrsSetlen(LanIpPacket p, int payload_len)
 {
 	p->ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
 	p->ip.csum  = 0;
@@ -650,7 +686,7 @@ lanIpUdpHdrSetlen(LanIpPacket p, int payload_len)
 }
 
 int
-udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
+udpSockHdrsInit(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
 {
 int rval = 0;
 	if ( ISBCST(dipaddr, intrf->nmask) ) {
@@ -662,7 +698,6 @@ int rval = 0;
 		else /* they want to leave it blank */
 			memset(p->ll.dst,0,6);
 	}
-	memcpy(p->ll.src, intrf->arpreq.ll.src, 6);
 	p->ll.type  = htons(0x0800);	/* IP */
 
 	p->ip.vhl   = 0x45;	/* version 4, 5words length */
@@ -672,16 +707,25 @@ int rval = 0;
 	p->ip.off   = htons(0);
 	p->ip.ttl   = 4;
 	p->ip.prot  = 17;	/* UDP */
-	p->ip.src   = intrf->ipaddr;
 	p->ip.dst   = dipaddr;
-	p->ip.csum  = 0;
-	
-	p->p_u.udp_s.hdr.sport = htons((uint16_t)socks[sd].port);
+
 	p->p_u.udp_s.hdr.dport = htons(dport);
 	p->p_u.udp_s.hdr.len   = 0;
-	p->p_u.udp_s.hdr.csum  = 0; /* csum disabled */
+
+	fillinSrcCsumUdp(intrf,p,socks[sd].port);
+
+	/* reset checksum; length is not correct yet */
+	p->ip.csum  = 0;
 
 	return rval;
+}
+
+void
+udpSockHdrsReflect(LanIpPacket p)
+{
+uint16_t port = p->p_u.udp_s.hdr.dport;
+	src2dstUdp(p);
+	fillinSrcCsumUdp(intrf, p, port);
 }
 
 /* socks array is protected by disabling thread dispatching */
@@ -830,7 +874,7 @@ int rval      = -1;
 		goto egress;
 	}
 
-	if ( udpSockInitHdrs(sd, (LanIpPacket)&p->hdr, dipaddr, dport, 0) ) {
+	if ( udpSockHdrsInit(sd, (LanIpPacket)&p->hdr, dipaddr, dport, 0) ) {
 		/* ARP lookup failure */
 		rval = -ENOTCONN;
 		goto egress;
@@ -886,7 +930,7 @@ UdpSockPeer p;
 	if ( arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst) )
 		return -ENOTCONN;
 
-	lanIpUdpHdrSetlen((LanIpPacket)&socks[sd].peer->hdr, payload_len);
+	udpSockHdrsSetlen((LanIpPacket)&socks[sd].peer->hdr, payload_len);
 
 	return NETDRV_SND_PACKET( p->intrf->drv_p, &p->hdr, sizeof(p->hdr), payload, payload_len );
 }
@@ -911,10 +955,17 @@ udpSockSendBufRaw(LanIpPacket buf_p, int len)
 }
 
 int
+udpSockSendBufRawIp(LanIpPacket buf_p)
+{
+int len = ntohs(buf_p->ip.len) + sizeof(EtherHeaderRec);
+	NETDRV_ENQ_BUFFER(intrf, buf_p,  len);
+	return len;
+}
+
+int
 udpSockSendBuf(int sd, LanIpPacket buf_p)
 {
 uint16_t port;
-int      len;
 
 	if ( sd < 0 || sd >= NSOCKS ) {
 		return -1;
@@ -923,19 +974,9 @@ int      len;
 	if ( !(port = socks[sd].port) )
 		return -1;
 	
-	/* fill source ll address, IP address and UDP port */
-	memcpy(buf_p->ll.src, &intrf->arpreq.ll.src, sizeof(buf_p->ll.src));
-	buf_p->ip.src              = intrf->ipaddr;
-	buf_p->p_u.udp_s.hdr.sport = htons(port);
+	fillinSrcCsumUdp(intrf, buf_p, port);
 
-	buf_p->ip.csum             = 0;
-	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
-
-	buf_p->p_u.udp_s.hdr.csum = 0;
-
-	len = ntohs(buf_p->p_u.udp_s.hdr.len) + sizeof(IpHeaderRec) + sizeof(EtherHeaderRec);
-
-	return udpSockSendBufRaw(buf_p, len);
+	return udpSockSendBufRawIp(buf_p);
 }
 
 

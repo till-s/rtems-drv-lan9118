@@ -64,6 +64,9 @@ udpSockConnect(int sd, uint32_t dipaddr, int dport);
 /* Send data over a 'connected' socket.
  *
  * RETURNS: number of bytes sent or -errno.
+ *
+ * NOTE:    payload buffer is *not* taken over by the
+ *          stack but copied.
  */
 int
 udpSockSend(int sd, void *payload, int payload_len);
@@ -76,6 +79,12 @@ udpSockSend(int sd, void *payload, int payload_len);
  */
 int
 udpSockSendBufRaw(LanIpPacket buf_p, int len);
+
+/* Like SendBufRaw but assumes the packet is a UDP packet so that
+ * the length can be extracted from the IP header.
+ */
+int
+udpSockSendBufRawIp(LanIpPacket buf_p);
 
 /*
  * RX callback for drvLan9118
@@ -94,13 +103,19 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
  * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
  */
 int
-udpSockInitHdrs(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
+udpSockHdrsInit(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
 
 /* Set length and IP checksum
  * Note: other fields must have been initialized already
  */
 void
-lanIpUdpHdrSetlen(LanIpPacket p, int payload_len);
+udpSockHdrsSetlen(LanIpPacket p, int payload_len);
+
+/* Flip source -> dest and fill-in local source addresses
+ * (at ethernet, IP and UDP level)
+ */
+void
+udpSockHdrsReflect(LanIpPacket p);
 
 /* Create private data (pass as rx callback closure pointer to drvLan9118Start)
  *
