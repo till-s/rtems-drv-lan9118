@@ -178,6 +178,11 @@ int      i,n;
 uint8_t  hh;
 uint8_t  h;
 
+		if ( ISBCST(ipaddr, pd->nmask) ) {
+			memset(enaddr, 0xff, 6);
+			return 0;
+		}
+
 		ARPHASH(h, ipaddr);
 
 		for ( n = 0; n < CACHE_OVERLAP; n++ ) {
@@ -586,7 +591,7 @@ uint8_t		      (*enaddr)[6];
 	cbd_p->drv_p  = drv_p;
 
 	cbd_p->ipaddr = inet_addr(ipaddr);
-	cbd_p->nmask  = inet_addr(ipaddr);
+	cbd_p->nmask  = inet_addr(netmask);
 
 
 	/* convenience variable */
@@ -689,15 +694,12 @@ int
 udpSockHdrsInit(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
 {
 int rval = 0;
-	if ( ISBCST(dipaddr, intrf->nmask) ) {
-		/* broadcast */
-		memset(p->ll.dst, 0xff, 6);
-	} else {
-		if ( dipaddr ) 
-			rval = arpLookup(intrf, dipaddr, p->ll.dst);
-		else /* they want to leave it blank */
-			memset(p->ll.dst,0,6);
-	}
+
+	if ( dipaddr ) 
+		rval = arpLookup(intrf, dipaddr, p->ll.dst);
+	else /* they want to leave it blank */
+		memset(p->ll.dst,0,6);
+
 	p->ll.type  = htons(0x0800);	/* IP */
 
 	p->ip.vhl   = 0x45;	/* version 4, 5words length */

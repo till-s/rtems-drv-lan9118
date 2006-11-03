@@ -12,7 +12,7 @@ DEFINES_uC5282 = -DDRVLAN9118
 C_PIECES_beatnik=drvMveIpBasic
 DEFINES_beatnik= -DDRVMVE
 
-C_PIECES=$(C_PIECES_$(RTEMS_BSP)) lanIpBasicTest padProto
+C_PIECES=$(C_PIECES_$(RTEMS_BSP)) lanIpBasicTest
 
 C_FILES=$(C_PIECES:%=%.c)
 C_O_FILES=$(C_PIECES:%=${ARCH}/%.o)
