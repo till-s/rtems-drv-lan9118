@@ -16,6 +16,11 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.12  2006/10/27 17:46:25  strauman
+		 - enable 'store-and-forward' mode to avoid TX FIFO underflow under all
+		   conditions.
+		 - TX routine now checks FIFO fill status and drops packet if necessary
+		
 		Revision 1.11  2006/10/25 18:43:56  strauman
 		 - don't include DMA header for now
 		
@@ -628,6 +633,9 @@ register volatile uint32_t *dst_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 	assert( ((uint32_t)buf_pa & 3) == 0 );
 	assert( (n_bytes & 3)       == 0 );
 
+#ifdef BYTES_NOT_SWAPPED
+	drvLan9118BufRev(ibuf_p, n_bytes>>2);
+#endif
 
 #if 1
 	n_bytes >>= 2; /* convert into words */
@@ -1641,7 +1649,9 @@ struct in_addr	sa;
 		goto bail;
 	}
 	memcpy(&udph.eh, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.eh));
+#ifdef BYTES_NOT_SWAPPED
 	drvLan9118BufRev((uint32_t*)&udph.eh, sizeof(udph.eh)/4);
+#endif
 	len -= sizeof(udph.eh);
 	prether(f_p,udph.eh.src); fprintf(f_p," -> "); prether(f_p,udph.eh.dst);
 	if ( 0x800 != (tmp = (unsigned short)ntohs(udph.eh.type)) ) {
@@ -1653,7 +1663,9 @@ struct in_addr	sa;
 			goto bail;
 		}
 		memcpy(&udph.ih, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.ih));
+#ifdef BYTES_NOT_SWAPPED
 		drvLan9118BufRev((uint32_t*)&udph.ih, sizeof(udph.ih)/4);
+#endif
 		len -= sizeof(udph.ih);
 		if ( udph.ih.vhl >> 4 != 4 ) {
 			fprintf(f_p,"  IP header not version 4 ???\n");
@@ -1674,7 +1686,9 @@ struct in_addr	sa;
 				goto bail;
 			}
 			memcpy(&udph.uh, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.uh));
+#ifdef BYTES_NOT_SWAPPED
 			drvLan9118BufRev((void*)&udph.uh, sizeof(udph.uh)/4);
+#endif
 			len -= sizeof(udph.uh);
 			fprintf(f_p,"    UDP -- SPORT: %u -> DPORT: %u; payload %lu bytes\n",
 				ntohs(udph.uh.sport), ntohs(udph.uh.dport), ntohs(udph.uh.len) - sizeof(udph.uh));
