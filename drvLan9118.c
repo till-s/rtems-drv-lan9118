@@ -16,6 +16,12 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.14  2006-11-05 01:06:52  strauman
+		 - provide configuration (compile-time switch) for boards with and w/o
+		   byte-swapped byte lanes [network-only devel. board is not byte swapped].
+		   To the user who access the fifo only via the FifoWr / FifoRd routines
+		   the configuration is transparent.
+
 		Revision 1.13  2006/11/04 22:57:02  strauman
 		 - swap bytes in buffer if defined(BYTES_NOT_SWAPPED)
 		
@@ -124,7 +130,9 @@
 #include <sys/sockio.h>
 #include <net/if.h>
 
+#include <netinet/in_systm.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <arpa/inet.h>
 
 #include <errno.h>

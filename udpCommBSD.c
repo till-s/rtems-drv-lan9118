@@ -9,6 +9,7 @@
 #include <udpComm.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 
 int
 udpCommSocket(int port)
