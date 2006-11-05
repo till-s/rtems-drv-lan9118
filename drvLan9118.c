@@ -16,6 +16,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.13  2006/11/04 22:57:02  strauman
+		 - swap bytes in buffer if defined(BYTES_NOT_SWAPPED)
+		
 		Revision 1.12  2006/10/27 17:46:25  strauman
 		 - enable 'store-and-forward' mode to avoid TX FIFO underflow under all
 		   conditions.
@@ -39,7 +42,8 @@
  * include file section...
  */
 
-/* #define BYTES_NOT_SWAPPED */
+/* #define HW_BYTES_NOT_SWAPPED */
+#define HW_BYTES_NOT_SWAPPED
 
 /* ENDIANNESS NOTES
  * ----------------
@@ -138,6 +142,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <machine/endian.h>
 
 #if 0
 #include "drv5282DMA.h"
@@ -517,12 +522,44 @@ DrvLan9118_ts	theLan9118_s;
 
 static inline uint32_t byterev(uint32_t x)
 {
-#ifndef BYTES_NOT_SWAPPED
 	asm volatile("byterev %0":"+r"(x));
-#endif
 	return x;
 }
 
+#ifndef BYTE_ORDER
+#error "unknown CPU endianness"
+#else
+#if BYTE_ORDER == BIG_ENDIAN
+
+#ifdef HW_BYTES_NOT_SWAPPED
+/* Bigendian CPU with wires going straight to the chip (which is little endian).
+ * We can access registers w/o byte swapping (using the 'endian' register to
+ * fix the 2 16-bit accesses).
+ * HOWEVER: when sending data the chip (being) LE assumes the *LSB* (which is
+ *          associated with the 1st byte address) should go out on the wire first.
+ *          => we must byte-swap all words that we read/write from/to the data
+ *          fifos.
+ */
+#define BYTEREV_REG(x) (x)
+#define BYTEREV_BUF(x) byterev(x)
+#else
+/* We must byte-swap register accesses but buffers are now correct */
+#define BYTEREV_REG(x) byterev(x)
+#define BYTEREV_BUF(x) (x)
+#endif
+
+#else  /* if BYTE_ORDER == BIG_ENDIAN */
+/* we are on a little-endian machine */
+
+#ifdef HW_BYTES_NOT_SWAPPED
+#define BYTEREV_REG(x)	(x)
+#define BYTEREV_BUF(x)	(x)
+#else
+#define BYTEREV_REG(x)	(x)
+#define BYTEREV_BUF(x)	(x)
+#endif
+#endif /* if BYTE_ORDER == BIG_ENDIAN */
+#endif /* ifdef BYTE_ORDER */
 
 /* Hmm __IPSBAR is defined in the linker script :-( */
 
@@ -555,8 +592,8 @@ static inline uint32_t byterev(uint32_t x)
  *          AFTER A WRITE OPERATION AND READING SOME REGISTERS AFTER CERTAIN
  *          READ OPERATIONS REQUIRES APPROPRIATE DELAYS
  */
-#define rd9118Reg(base, off)		byterev(*(volatile uint32_t *)((uint32_t)(base) + off))
-#define wr9118Reg(base, off, val)	do { *(volatile uint32_t*)((uint32_t)(base) + off) = byterev(val); } while (0)
+#define rd9118Reg(base, off)		BYTEREV_REG(*(volatile uint32_t *)((uint32_t)(base) + off))
+#define wr9118Reg(base, off, val)	do { *(volatile uint32_t*)((uint32_t)(base) + off) = BYTEREV_REG(val); } while (0)
 
 static inline uint32_t	rd9118RegSlow(uint32_t base, DrvLan9118RegOff_t off)
 {
@@ -609,18 +646,18 @@ register volatile uint32_t *src_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 
 	n_bytes >>= 2; /* convert into words */
 	while (n_bytes >= 8) {
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
-		*ibuf_p++ = *src_p;
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
 		n_bytes -= 8;
 	}
 	while (n_bytes-- > 0) {
-		*ibuf_p++ = *src_p;
+		*ibuf_p++ = BYTEREV_BUF(*src_p);
 	}
 }
 
@@ -633,27 +670,26 @@ register volatile uint32_t *dst_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 	assert( ((uint32_t)buf_pa & 3) == 0 );
 	assert( (n_bytes & 3)       == 0 );
 
-#ifdef BYTES_NOT_SWAPPED
-	drvLan9118BufRev(ibuf_p, n_bytes>>2);
-#endif
-
 #if 1
 	n_bytes >>= 2; /* convert into words */
 	while (n_bytes >= 8) {
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
-		*dst_p = *ibuf_p++;
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
 		n_bytes -= 8;
 	}
 	while (n_bytes-- > 0) {
-		*dst_p = *ibuf_p++;
+		*dst_p = BYTEREV_BUF(*ibuf_p++);
 	}
 #else
+#if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
+	drvLan9118BufRev(ibuf_p, n_bytes>>2);
+#endif
 	memcpy( (void*)(plan_ps->base + FIFO_ALIAS), buf, n_bytes);
 #endif
 }
@@ -892,13 +928,16 @@ int               i;
 unsigned char     buf_a[6];
 unsigned short    sbuf_a[6];
 rtems_status_code sc;
+int tsill = 0;
 
 	theLan9118_s.base = LAN_9118_BASE;
 	plan_ps           = &theLan9118_s;
 
+printk("TSILL %i\n",tsill++);
 	/* make sure interrupts are masked */
 	drvLan9118IrqDisable();
 
+printk("TSILL %i\n",tsill++);
 	/* setup BSP specific glue stuff   */
 	drvLan9118_setup_uc5282();
 
@@ -907,16 +946,37 @@ rtems_status_code sc;
 
 	/* First, we must perform a read access to the BYTE TEST register */
 	tmp = rd9118Reg(plan_ps->base, BYTE_TEST);
+printk("TSILL %i (0x%08x)\n",tsill++,tmp);
+
+#ifdef HW_BYTES_NOT_SWAPPED
+	if ( 0x21436587 == tmp ) {
+		fprintf(stderr,"ERROR: Seems this board has swapped byte lanes but the driver was compiled otherwise\n");
+		return 0;
+	}
+#else
+	if ( 0x65872143 == tmp ) {
+		fprintf(stderr,"ERROR: Seems this board has NON-swapped byte lanes but the driver was compiled otherwise\n");
+		return 0;
+	}
+#endif
 	
-#ifdef BYTES_NOT_SWAPPED
+#if BYTE_ORDER == BIG_ENDIAN
+#ifdef HW_BYTES_NOT_SWAPPED
 	/* Setup for big endian mode */
 	if ( 0x87654321 != tmp )
 		wr9118Reg(plan_ps->base, ENDIAN, 0xffffffff);
 #endif
+#else
+#ifndef HW_BYTES_NOT_SWAPPED
+#error "Setup of ENDIAN register not implemented for byte-swapped connection to a little-endian CPU"
+#endif
+#endif
 
+printk("TSILL %i\n",tsill++);
 	if ( drvLan9118ResetChip(plan_ps) )
 		return 0;
 
+printk("TSILL %i\n",tsill++);
 	if ( !enaddr_pa ) {
 		const char *p = getbenv("HWADDR1");
 		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf_a,sbuf_a+1,sbuf_a+2,sbuf_a+3,sbuf_a+4,sbuf_a+5) ) {
@@ -931,6 +991,7 @@ rtems_status_code sc;
 		}
 	}
 
+printk("TSILL %i\n",tsill++);
 	if ( !plan_ps->mutx ) {
 #define ERR_INTS ( RWT_INT | RXE_INT | TXE_INT | TDFU_INT | TDFO_INT | RXDF_INT | RSFF_INT)
 
@@ -1649,7 +1710,7 @@ struct in_addr	sa;
 		goto bail;
 	}
 	memcpy(&udph.eh, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.eh));
-#ifdef BYTES_NOT_SWAPPED
+#if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
 	drvLan9118BufRev((uint32_t*)&udph.eh, sizeof(udph.eh)/4);
 #endif
 	len -= sizeof(udph.eh);
@@ -1663,7 +1724,7 @@ struct in_addr	sa;
 			goto bail;
 		}
 		memcpy(&udph.ih, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.ih));
-#ifdef BYTES_NOT_SWAPPED
+#if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
 		drvLan9118BufRev((uint32_t*)&udph.ih, sizeof(udph.ih)/4);
 #endif
 		len -= sizeof(udph.ih);
@@ -1686,7 +1747,7 @@ struct in_addr	sa;
 				goto bail;
 			}
 			memcpy(&udph.uh, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.uh));
-#ifdef BYTES_NOT_SWAPPED
+#if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
 			drvLan9118BufRev((void*)&udph.uh, sizeof(udph.uh)/4);
 #endif
 			len -= sizeof(udph.uh);
