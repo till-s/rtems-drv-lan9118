@@ -17,9 +17,9 @@ shutdown(void *drv)
 }
 
 static void *
-setup(IpCbData cbd)
+setup(IpCbData cbd, uint8_t *enaddr)
 {
-	return drvLan9118Setup(0,0);
+	return drvLan9118Setup(enaddr,0);
 }
 
 static int
@@ -56,7 +56,7 @@ extern void *
 drvMveIpBasicGetDrv(rtems_id tid);
 
 static void *
-setup(IpCbData cbd)
+setup(IpCbData cbd, uint8_t *enaddr)
 {
 	mve_tid = drvMveIpBasicSetup(cbd);
 	if ( mve_tid ) {
@@ -115,10 +115,10 @@ lanIpTakedown()
 }
 
 int
-lanIpSetup(char *ip, char *nmsk, int port)
+lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 {
 	if ( !ip || !nmsk || !port ) {
-		fprintf(stderr,"Usage: lanIpSetup(char *ip, char *netmask, int port)\n");
+		fprintf(stderr,"Usage: lanIpSetup(char *ip, char *netmask, int port, enaddr)\n");
 		return -1;
 	}
 	if ( plan ) {
@@ -131,7 +131,7 @@ lanIpSetup(char *ip, char *nmsk, int port)
 		goto egress;
 	}
 
-	plan = setup(cbdta);
+	plan = setup(cbdta, enaddr);
 
 	if ( !plan )
 		goto egress;
