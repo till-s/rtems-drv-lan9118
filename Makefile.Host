@@ -1,0 +1,11 @@
+OBJS =  padProtoHost.o udpCommBSD.o padProto.o
+
+padProtoHost: $(OBJS)
+	$(CC)  -O2 -DBSDSOCKET -o $@ $^
+
+%.o:%.c
+	$(CC) -I. -c -O2 -DBSDSOCKET -o $@ $<
+
+clean:
+	$(RM) padProtoHost
+	$(RM) $(OBJS)
