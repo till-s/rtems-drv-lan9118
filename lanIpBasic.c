@@ -362,11 +362,15 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 		memcpy( pd->arprep.ll.dst,  pipa->sha, 6);
 		memcpy( pd->arprep.arp.tha, pipa->sha, 10);
 
-#ifdef DEBUG
+#if defined(DEBUG)
 		if ( lanIpDebug & DEBUG_ARP ) {
-			extern void md(void*,int);
 			printf("MATCH -> sending\n");
+#if 0
+			{
+			extern void md(void*,int);
 			md(&pd->arprep, sizeof(pd->arprep));
+			}
+#endif
 		}
 #endif
 
