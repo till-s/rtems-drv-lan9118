@@ -63,7 +63,7 @@ include $(RTEMS_ROOT)/make/leaf.cfg
 
 DEFINES  += $(DEFINES_$(RTEMS_BSP))
 CPPFLAGS += -I.
-CFLAGS   += -DCACHE_OVERLAP=3
+CFLAGS   += 
 
 #
 # CFLAGS_DEBUG_V are used when the `make debug' target is built.
