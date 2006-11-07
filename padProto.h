@@ -27,6 +27,24 @@ typedef struct PadCommandRec_ {
 	uint32_t	ldata[];		/* word sized commands                 */
 } PadCommandRec, *PadCommand;
 
+#define PADCMD_START_FLAG_LE	1	/* They want little-endian data    */
+#define PADCMD_START_FLAG_CM	2	/* They want column-major  data    */
+
+typedef struct PadStartCommandRec_ {
+	int8_t		type;			/* PADCMD_XX                           */
+	uint8_t		flags;
+	uint16_t	port;			/* port where to send data             */
+	uint32_t	nsamples;
+} PadStartCommandRec, *PadStartCommand;
+
+/* Reply is sent to the alternate port specified in the request        */
+typedef struct PadStartCommandReplyRec_ {
+	int8_t		type;
+	uint8_t		flags;			/* confirm requested options           */
+	uint16_t	error;			/* 0 on success an ERRNO on error      */
+} PadStartCommandReplyRec, *PadStartCommandReply;
+
+
 #define PADPROTO_VERSION1		0x31	/* some magic number           */
 
 #define PADREQ_BCST	(-128) /* Address all channels with a single command */
