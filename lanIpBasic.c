@@ -8,8 +8,6 @@
  *
  *  - LAN only (no IP routing)
  *
- * NOTE: daemon using the 'lanIpProcessBuffer()' must have enough stack
- *       allocated. The Callback uses ~2k itself.
  */
 
 /* T. Straumann <strauman@slac.stanford.edu> */
@@ -40,7 +38,7 @@
 #define DEBUG_UDP	8
 #define DEBUG_TASK	16
 
-#define DEBUG		0
+#define DEBUG		DEBUG_ARP
 
 #ifdef DEBUG
 int	lanIpDebug = DEBUG;
@@ -48,6 +46,11 @@ int	lanIpDebug = DEBUG;
 
 #ifndef CACHE_OVERLAP
 #define CACHE_OVERLAP 10
+#endif
+
+/* How many times to retry a network lookup */
+#ifndef ARP_SEND_RETRY
+#define ARP_SEND_RETRY	3
 #endif
 
 /* Trivial RX buffers */
@@ -144,20 +147,30 @@ static UdpSockRec	socks[NSOCKS] = {{0}};
 static IpCbData		intrf         = 0;
 
 
+/* Permanent / 'static' flag */
+#define ARP_PERM	((rtems_interval)(-1))
+
 typedef struct ArpEntryRec_ {
-	uint32_t			ipaddr;
-	uint8_t				hwaddr[6];
-	Watchdog_Interval	ctime;
+	uint32_t		ipaddr;
+	uint8_t			hwaddr[6];
+	rtems_interval	ctime;
 } ArpEntryRec, *ArpEntry;
 
 /* NOTES: On class C networks (or equivalent A/B subnets)
  *        there will never be collisions in the cache.
  *
  *        Dont change size (256) w/o adapting hashing
- *        algorithm
+ *        algorithm and w/o changing the 'modulo 256'
+ *        operation implicit into declaring the 'h'
+ *        loopcounter uint8_t.
  *
  */
 static ArpEntry arpcache[256] = {0};
+
+/* Keep an available entry around */
+static ArpEntry	arpScratch    = 0; /* FIXME: should be free()ed when unloading module */
+
+int lanIpBasicAutoRefreshARP  = 1;
 
 /* don't bother about MSBs; assume we're on a LAN anyways */
 #define ARPHASH(h,ipaddr)			\
@@ -171,7 +184,48 @@ static ArpEntry arpcache[256] = {0};
 #define ARPLOCK(pd)		rtems_semaphore_obtain((pd)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
 #define ARPUNLOCK(pd) 	rtems_semaphore_release((pd)->mutx)
 
-int arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr)
+#ifdef DEBUG
+/* Debug helpers */
+
+/* Print an ethernet address to 'file' */
+static void
+prether(FILE *f, const unsigned char *ea)
+{
+int i;
+	for (i=0; i<5; i++)
+		fprintf(f,"%02X:",*ea++);
+	fprintf(f,"%02X",*ea);
+}
+#endif
+
+/* Dump an ARP cache entry */
+static void
+prarp(FILE *f, ArpEntry e)
+{
+char           ipbuf[INET_ADDRSTRLEN+1];
+struct in_addr ina;
+rtems_interval now;
+
+	if ( !f )
+		f = stdout;
+
+	ina.s_addr =  e->ipaddr;
+	if (!inet_ntop(AF_INET, &ina, ipbuf, sizeof(ipbuf))) {
+		perror("\nUnable to print ARP entry (inet_ntop failed)");
+		return;
+	}
+	rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &now);
+	fprintf(f,"%s: ", ipbuf);
+	prether(f, e->hwaddr);
+	fprintf(f," (age: ");
+	if ( ARP_PERM == e->ctime )
+		fprintf(f,"STATIC)\n");
+	else
+		fprintf(f,"%lus)\n", now-e->ctime);
+}
+
+int
+arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly)
 {
 ArpEntry rval;
 int      i,n;
@@ -185,12 +239,15 @@ uint8_t  h;
 
 		ARPHASH(h, ipaddr);
 
-		for ( n = 0; n < CACHE_OVERLAP; n++ ) {
+		for ( n = 0; n < ARP_SEND_RETRY; n++ ) {
 
-			
 			/* Abuse the TX lock */
 			ARPLOCK(pd);
-			for ( i = 0, hh=h; i<CACHE_OVERLAP && (rval = arpcache[hh]); i++, hh++ ) {
+			for ( i = 0, hh=h; i<CACHE_OVERLAP; i++, hh++ ) {
+
+				if ( !(rval = arpcache[hh]) )
+					continue;
+
 				if ( ipaddr == rval->ipaddr ) {
 					memcpy(enaddr, rval->hwaddr, 6);
 					ARPUNLOCK(pd);
@@ -198,6 +255,9 @@ uint8_t  h;
 				}
 			}
 			ARPUNLOCK(pd);
+
+			if ( cacheonly )
+				break;
 
 			/* must do a new lookup */
 			NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr);
@@ -209,35 +269,78 @@ uint8_t  h;
 		return -ENOTCONN;
 }
 
-void
-arpPutEntry(IpCbData pd, uint8_t *enaddr, uint32_t ipaddr)
+int
+arpPutEntry(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int perm)
 {
 ArpEntry rval;
-ArpEntry newe = malloc(sizeof(*newe));	/* pre-allocate */
+ArpEntry newe;
 int      i;
+int      empty;
 uint8_t  oh;
 uint8_t  h;
+int      err = -ENOSPC;
 
 		ARPHASH(h, ipaddr);
 
 		/* Abuse the TX lock */
 		ARPLOCK(pd);
-		for ( i = 0, oh=h; i<CACHE_OVERLAP && (rval = arpcache[h]); i++, h++ ) {
+		if ( !(newe = arpScratch) ) {
+			ARPUNLOCK(pd);
+			newe = malloc(sizeof(*newe));
+			ARPLOCK(pd);
+		} else {
+			/* we took over the scratch entry */
+			arpScratch = 0;
+		}
+		for ( i=0, oh=h, empty=-1; i<CACHE_OVERLAP; i++, h++ ) {
+			if ( !(rval = arpcache[h]) ) {
+				if ( empty < 0 )
+					empty=h;
+				continue;
+			}
 			if ( ipaddr == rval->ipaddr ) {
 				memcpy(rval->hwaddr, enaddr, 6);
-				rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &rval->ctime);
-				ARPUNLOCK(pd);
-				return;
+				if ( perm > 0 ) {
+					rval->ctime = ARP_PERM;
+				} else {
+					/* arg 'perm' == -1 revokes 'permanent' flag */
+					if ( -1 == perm || ARP_PERM != rval->ctime )
+						rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &rval->ctime);
+				}
+#ifdef DEBUG
+				if ( lanIpDebug & DEBUG_ARP ) {
+					printf("arpPutEntry cache hit, refreshing entry #%i: ", h);
+					prarp(0, rval);
+				}
+#endif
+				/* Done. release pre-allocated entry and leave */
+				err = 0;
+				goto egress;
 			}
-			if ( rval->ctime < arpcache[oh]->ctime )
+			/* permanent entries are always 'newest' (ctime in the future)
+			 * hence the first non-permanent entry will be found
+			 * by this algorithm.
+			 */
+			if ( (uint32_t)rval->ctime < (uint32_t)arpcache[oh]->ctime )
 				oh = h;
-				
 		}
 
-		if ( rval ) {
+		if ( empty<0 ) {
 			/* all slots full; must evict oldest entry */
+			if ( arpcache[oh]->ctime == ARP_PERM ) {
+				fprintf(stderr,"arpPutEntry: too many permanent entries, unable to allocate slot\n");
+				err = -ENOSPC;
+				goto egress;
+			}
+#ifdef DEBUG
+			if ( lanIpDebug & DEBUG_ARP ) {
+				printf("arpPutEntry no more slots, evicting #%i: ", oh);
+				prarp(0, arpcache[oh]);
+			}
+#endif
 			h = oh;
 		} else {
+			h = empty;
 			/* use new entry */
 			arpcache[h] = newe;
 			newe        = 0;
@@ -245,10 +348,30 @@ uint8_t  h;
 		rval = arpcache[h];
 		rval->ipaddr = ipaddr;
 		memcpy(rval->hwaddr, enaddr, 6);
-		rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &rval->ctime);
+		if ( perm )
+			rval->ctime = ARP_PERM;
+		else
+			rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &rval->ctime);
+
+#ifdef DEBUG
+		if ( lanIpDebug & DEBUG_ARP ) {
+			printf("arpPutEntry writing entry #%i: ", h);
+			prarp(0, rval);
+		}
+#endif
+
+		err = 0;
+
+egress:
+		if ( newe && !arpScratch ) {
+			arpScratch = newe;
+			newe       = 0;
+		}
 		ARPUNLOCK(pd);
 
 		free(newe);
+
+		return err;
 }
 
 void
@@ -262,15 +385,145 @@ uint8_t  h;
 
 		/* Abuse the TX lock */
 		ARPLOCK(pd);
-		for ( i = 0; i<CACHE_OVERLAP && (rval = arpcache[h]); i++, h++ ) {
+		for ( i = 0; i<CACHE_OVERLAP; i++, h++ ) {
+				if ( !(rval = arpcache[h]) )
+					continue;
 				if ( ipaddr == rval->ipaddr ) {
 					arpcache[h] = 0;
 					found = rval;
 					break;
 				}
 		}
+		if ( found && !arpScratch ) {
+			arpScratch = found;
+			found      = 0;
+		}
 		ARPUNLOCK(pd);
 		free(found);
+}
+
+void
+arpFlushCache(IpCbData pd, int perm_also)
+{
+int i;
+
+	/* cleanup everything */
+
+	ARPLOCK(pd);
+
+	for ( i=0; i<sizeof(arpcache)/sizeof(arpcache[0]); i++ ) {
+		if ( perm_also || (arpcache[i] && ARP_PERM != arpcache[i]->ctime) ) {
+			free(arpcache[i]);
+			arpcache[i] = 0;
+		}
+	}
+
+	free(arpScratch);
+	arpScratch = 0;
+
+	ARPUNLOCK(pd);
+}
+
+void
+arpDumpCache(IpCbData pd, FILE *f)
+{
+ArpEntryRec           abuf;
+rtems_interrupt_level key;
+int                   i;
+
+	if ( !f )
+		f = stdout;
+
+	for ( i=0; i<sizeof(arpcache)/sizeof(arpcache[0]); i++ ) {
+		if ( (volatile ArpEntry) arpcache[i] ) {
+
+			rtems_interrupt_disable(key);
+
+				/* it might have gone... */
+				if ( (volatile ArpEntry) arpcache[i] ) {
+					abuf = *arpcache[i];
+
+					rtems_interrupt_enable(key);
+
+					fprintf(f,"ARP cache entry #%i: ",i);
+					prarp(f, &abuf);
+				} else {
+
+					rtems_interrupt_enable(key);
+				}
+		}
+	}
+}
+
+void
+arpScavenger(IpCbData pd, rtems_interval maxage, rtems_interval period, int nloops)
+{
+rtems_interval        ancient,sec,now;
+int                   i;
+rtems_interrupt_level key;
+ArpEntry              e;
+
+	while ( 1 ) {
+		/* calculate oldest acceptable 'ctime' */
+		rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &now);
+		ancient = now - maxage;
+
+		for ( i=0; i<sizeof(arpcache)/sizeof(arpcache[0]); i++ ) {
+			rtems_interrupt_disable(key);
+			if ( !(e = arpcache[i]) ) {
+				rtems_interrupt_enable(key);
+				continue;
+			}
+			if ( (uint32_t)e->ctime < (uint32_t)ancient ) {
+				/* evict */
+				arpcache[i] = 0;
+				if ( !arpScratch ) {
+					arpScratch = e;
+					e          = 0;
+				}
+				rtems_interrupt_enable(key);
+#ifdef DEBUG
+				if ( lanIpDebug & DEBUG_ARP ) {
+					ARPLOCK(pd);
+					printf("Evicting entry #%i from ARP cache: ",i);
+					/* Note the race condition, arpScratch could have
+					 * changed but for debugging that's good enough...
+					 */
+					if ( e )
+						prarp(0, e);
+					else if ( arpScratch )		/* e has gone to scratch   */
+						prarp(0, arpScratch);	/* probably hasn't changed */
+					else
+						printf("\n");
+					ARPUNLOCK(pd);
+				}
+#endif
+				free(e);
+			} else {
+				rtems_interrupt_enable(key);
+
+#ifdef DEBUG
+				if ( lanIpDebug & DEBUG_ARP ) {
+					ARPLOCK(pd);
+					printf("ARP cache entry #%i: ",i);
+					if (arpcache[i])
+						prarp(0, arpcache[i]);
+					else
+						printf("\n");
+					ARPUNLOCK(pd);
+				}
+#endif
+			}
+		}
+
+		/* let nloops<0 loop forever */
+		if ( nloops > 0 && ! --nloops )
+			break; /* don't sleep after last iteration */
+
+		/* sleep for 'period' seconds */
+		rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &sec);
+		rtems_task_wake_after(sec*period);
+	}
 }
 
 /* fillin our source addresses (MAC, IP, SPORT) and checksums
@@ -309,17 +562,6 @@ src2dstUdp(LanIpPacket p)
 	src2dstIp(p);
 	p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
 }
-
-#ifdef DEBUG
-static void
-prether(FILE *f, const unsigned char *ea)
-{
-int i;
-	for (i=0; i<5; i++)
-		fprintf(f,"%02X:",*ea++);
-	fprintf(f,"%02X",*ea);
-}
-#endif
 
 static int
 handleArp(rbuf_t **ppbuf, IpCbData pd)
@@ -383,7 +625,7 @@ IpArpRec	*pipa = (IpArpRec*)&p->ip;
 			printf("\n");
 		}
 #endif
-		arpPutEntry(pd, pipa->sha, *(uint32_t*)pipa->spa);
+		arpPutEntry(pd, *(uint32_t*)pipa->spa, pipa->sha, 0);
 	}
 
 	return sizeof(*pipa);
@@ -438,6 +680,11 @@ int			isbcst = 0;
 
 				p->ll.type = htons(0x800); /* IP */
 
+				/* refresh peer's ARP entry */
+				if ( lanIpBasicAutoRefreshARP ) {
+					arpPutEntry(pd, p->ip.src, p->ll.src, 0);
+				}
+
 				src2dstIp(p);
 				fillinSrcCsumIp(pd, p);
 
@@ -482,6 +729,12 @@ int			isbcst = 0;
 					/* slurp data */
 					NETDRV_READ_INCREMENTAL(pd, p->p_u.udp_s.pld, l);
 					rval += l;
+
+					/* Refresh peer's ARP entry */
+					if ( lanIpBasicAutoRefreshARP ) {
+						arpPutEntry(pd, p->ip.src, p->ll.src, 0);
+					}
+
 					_Thread_Disable_dispatch();
 					/* see if socket is still alive */
 					if ( socks[i].port == dport ) {
@@ -663,6 +916,7 @@ lanIpCbDataDestroy(IpCbData pd)
 	if ( pd ) {
 		assert( intrf == pd );
 		intrf = 0;
+		arpFlushCache(pd,1);
 		rtems_semaphore_delete(pd->mutx);
 		free(pd);
 	}
@@ -700,7 +954,7 @@ udpSockHdrsInit(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_
 int rval = 0;
 
 	if ( dipaddr ) 
-		rval = arpLookup(intrf, dipaddr, p->ll.dst);
+		rval = arpLookup(intrf, dipaddr, p->ll.dst, 0);
 	else /* they want to leave it blank */
 		memset(p->ll.dst,0,6);
 
@@ -933,7 +1187,7 @@ UdpSockPeer p;
 	if ( ! (p = socks[sd].peer) )
 		return -ENOTCONN;
 
-	if ( arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst) )
+	if ( arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst, 0) )
 		return -ENOTCONN;
 
 	udpSockHdrsSetlen((LanIpPacket)&socks[sd].peer->hdr, payload_len);

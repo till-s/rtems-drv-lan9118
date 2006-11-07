@@ -16,6 +16,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.15  2006-11-05 02:12:40  till
+		 - added missing headers
+
 		Revision 1.14  2006-11-05 01:06:52  strauman
 		 - provide configuration (compile-time switch) for boards with and w/o
 		   byte-swapped byte lanes [network-only devel. board is not byte swapped].
@@ -936,16 +939,13 @@ int               i;
 unsigned char     buf_a[6];
 unsigned short    sbuf_a[6];
 rtems_status_code sc;
-int tsill = 0;
 
 	theLan9118_s.base = LAN_9118_BASE;
 	plan_ps           = &theLan9118_s;
 
-printk("TSILL %i\n",tsill++);
 	/* make sure interrupts are masked */
 	drvLan9118IrqDisable();
 
-printk("TSILL %i\n",tsill++);
 	/* setup BSP specific glue stuff   */
 	drvLan9118_setup_uc5282();
 
@@ -954,7 +954,6 @@ printk("TSILL %i\n",tsill++);
 
 	/* First, we must perform a read access to the BYTE TEST register */
 	tmp = rd9118Reg(plan_ps->base, BYTE_TEST);
-printk("TSILL %i (0x%08x)\n",tsill++,tmp);
 
 #ifdef HW_BYTES_NOT_SWAPPED
 	if ( 0x21436587 == tmp ) {
@@ -980,11 +979,9 @@ printk("TSILL %i (0x%08x)\n",tsill++,tmp);
 #endif
 #endif
 
-printk("TSILL %i\n",tsill++);
 	if ( drvLan9118ResetChip(plan_ps) )
 		return 0;
 
-printk("TSILL %i\n",tsill++);
 	if ( !enaddr_pa ) {
 		const char *p = getbenv("HWADDR1");
 		if ( !p || 6 != sscanf(p,"%2hx:%2hx:%2hx:%2hx:%2hx:%2hx",sbuf_a,sbuf_a+1,sbuf_a+2,sbuf_a+3,sbuf_a+4,sbuf_a+5) ) {
@@ -999,7 +996,6 @@ printk("TSILL %i\n",tsill++);
 		}
 	}
 
-printk("TSILL %i\n",tsill++);
 	if ( !plan_ps->mutx ) {
 #define ERR_INTS ( RWT_INT | RXE_INT | TXE_INT | TDFU_INT | TDFO_INT | RXDF_INT | RSFF_INT)
 

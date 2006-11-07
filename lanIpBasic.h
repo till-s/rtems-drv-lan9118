@@ -8,6 +8,10 @@
 #include <lanIpProto.h>
 #include <drvLan9118.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Create a socket listening on a UDP port
  * RETURNS: descriptor (>=0) on success, < 0 on error
  *
@@ -118,7 +122,8 @@ void
 udpSockHdrsReflect(LanIpPacket p);
 
 /* Create private data (pass as rx callback closure pointer to drvLan9118Start)
- *
+ * 
+ * This can be thought of (and should better be called) as an 'interface handle'.
  * RETURNS handle on success, NULL on failure.
  */
 
@@ -138,5 +143,89 @@ lanIpCbDataGetDrv(IpCbData cbd_p);
 
 void
 lanIpCbDataDestroy(IpCbData);
+
+/* The ARP interface.
+ * 
+ * NOTES: >>> ARP replies (to other hosts) are always generated and sent by
+ *        the lanIp daemon [as a result of requests from other hosts].
+ *        If you don't want the transmitter to send ARP replies then
+ *        you should make sure noone issues ARP requests.
+ *
+ *        >>> ARP lookups are ONLY performed under two circumstances:
+ *        a) when filling a 'destination IP' (non-null, non-bcst) address
+ *        into a header (udpSockHdrsInit())
+ *
+ *        b) when connecting a socket
+ *        c) when sending from a connected socket
+ *
+ *        >>> ARP cache entries are refreshed when data is received on
+ *        a socket or when an ICMP ('ping') echo-request is received.
+ *        It is possible to disable this feature by setting the
+ *        global variable 'lanIpBasicAutoRefreshARP' to zero.
+ */
+
+extern int lanIpBasicAutoRefreshARP;
+
+/* 'Manual' maintenance of the ARP cache */
+
+/* Perform an ARP lookup for 'ipaddr' (network byte order) first
+ * in the cache and then on the network.
+ * Note that this routine doesn't synchronize with getting a reply
+ * but simply delays the executing task for one OS system 'tick'
+ * before re-trying the cache [which should then hit if a reply was
+ * received].
+ * Hence, this routine may be quite SLOW. This routine is called
+ * by udpSockHdrsInit, udpSockConnect, udpSockSend.
+ * By manually managing cache entries it is possible to avoid
+ * network lookups.
+ *
+ *    'enaddr': pointer to uint8_t [6] array where MAC address is stored.
+ * 'cacheonly': only consult the cache - no network lookup is done.
+ *
+ * RETURNS: 0 on success,  -errno on error.
+ */
+
+int
+arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly);
+
+/*
+ * Create an ARP cache entry for 'ipaddr' (network byte order) / 'enaddr'.
+ * If 'perm' is > 0 a permanent (static) entry is created.
+ *
+ * RETURNS: 0 on success, -errno on error [trying to create too many
+ *          permanent entries -- would exhaust the hash table].
+ */
+int
+arpPutEntry(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int perm);
+
+/*
+ * Remove entry from the cache
+ */
+void
+arpDelEntry(IpCbData pd, uint32_t ipaddr);
+
+/*
+ * Swipe the arp cache and evict all entries older than 'maxage' seconds
+ * except for 'permanent' entires. Then go to sleep for 'period' seconds
+ * and repeat 'nloops' times. Setting nloops < 0 lets the scavenger run
+ * forever.
+ */
+
+void
+arpScavenger(IpCbData pd, rtems_interval maxage, rtems_interval period, int nloops);
+
+/* Flush the entire arp cache (except for permanent/static entires
+ * if 'perm_also' is zero).
+ */
+void
+arpFlushCache(IpCbData pd, int perm_also);
+
+/* Print ARP cache contents to a file (stdout if NULL) */
+void
+arpDumpCache(IpCbData pd, FILE *f);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
