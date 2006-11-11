@@ -972,7 +972,7 @@ int rval = 0;
 	p->p_u.udp_s.hdr.dport = htons(dport);
 	p->p_u.udp_s.hdr.len   = 0;
 
-	fillinSrcCsumUdp(intrf,p,socks[sd].port);
+	fillinSrcCsumUdp(intrf,p, sd >= 0 ? socks[sd].port : 0);
 
 	/* reset checksum; length is not correct yet */
 	p->ip.csum  = 0;

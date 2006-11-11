@@ -33,11 +33,13 @@ struct sockaddr_in me;
 }
 
 UdpCommPkt
-udpCommRecv(int sd, int timeout_ms)
+udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
 {
-struct timeval tv;
-fd_set         fds;
-UdpCommPkt     p;
+struct timeval     tv;
+fd_set             fds;
+UdpCommPkt         p;
+struct sockaddr_in sa;
+socklen_t          len=sizeof(sa);
 
 	tv.tv_sec  = timeout_ms/1000;
 	tv.tv_usec = 1000*(timeout_ms % 1000);
@@ -47,11 +49,22 @@ UdpCommPkt     p;
 	if ( select(sd+1, &fds, 0, 0, &tv) <= 0 )
 		return 0;
 	p = malloc(1500);
-	if ( recv(sd, p, 1500, 0) < 0 ) {
+	if ( recvfrom(sd, p, 1500, 0, (struct sockaddr*)&sa, &len) < 0 ) {
 		free(p);
 		return 0;
+	} else {
+		if ( ppeerip )
+			*ppeerip = sa.sin_addr.s_addr;
+		if ( ppeerport )
+			*ppeerport = ntohs(sa.sin_addr.s_addr);
 	}
 	return p;
+}
+
+UdpCommPkt
+udpCommRecv(int sd, int timeout_ms)
+{
+	return udpCommRecvFrom(sd, timeout_ms, 0, 0);
 }
 
 int

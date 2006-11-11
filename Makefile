@@ -6,7 +6,7 @@
 #
 
 # C source names, if any, go here -- minus the .c
-C_PIECES_uC5282=drvLan9118 drvLan9118IpBasic padProto
+C_PIECES_uC5282=drvLan9118 drvLan9118IpBasic padProto padStream
 DEFINES_uC5282 = -DDRVLAN9118
 
 C_PIECES_beatnik=drvMveIpBasic

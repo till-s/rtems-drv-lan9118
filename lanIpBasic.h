@@ -101,8 +101,15 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
 /* Setup Ethernet, IP and UDP headers in a packet.
  * An ARP lookup for 'dipaddr' is done if necessary.
  *
- * NOTE: 'dipaddr' (destination IP address) is in *network* byte order.
- *       'dport' and 'ip_id' are in *host* byte order.
+ * NOTES: 'dipaddr' (destination IP address) is in *network* byte order.
+ *        'dport' and 'ip_id' are in *host* byte order.
+ *
+ *        It is legal to provide an all zero destination IP to avoid
+ *        ARP lookup. You must fill in the IP and checksum later.
+ *
+ *        The socket descriptor is only needed to determine the source
+ *        UDP port. It is legal to submit a sd < 0 and fill in the source
+ *        port 'manually'.
  *
  * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
  */

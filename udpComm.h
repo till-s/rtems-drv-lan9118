@@ -9,12 +9,12 @@
 
 #ifdef BSDSOCKET
 #include <sys/socket.h>
-#include <netinet/in.h>
 #define STATICINLINE
 #else
 #include <lanIpBasic.h>
 #define STATICINLINE static inline
 #endif
+#include <netinet/in.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +38,13 @@ udpCommConnect(int sd, uint32_t diaddr, int port);
 /* Receive a packet */
 STATICINLINE UdpCommPkt
 udpCommRecv(int sd, int timeout_ms);
+
+/* Receive a packet and sender information
+ *
+ * NOTE: port is in host, IP address in network byte order.
+ */
+STATICINLINE UdpCommPkt
+udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport);
 
 /* Obtain pointer to data area in buffer (UDP payload) */
 static inline void *
@@ -129,6 +136,22 @@ udpCommRecv(int sd, int timeout_ms)
 	if ( ! (timeout_ms/=20) )
 		timeout_ms = 1;
 	return udpSockRecv(sd, timeout_ms/20); /* FIXME: use system clock rate */
+}
+
+STATICINLINE UdpCommPkt
+udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
+{
+UdpCommPkt rval;
+	if ( ! (timeout_ms/=20) )
+		timeout_ms = 1;
+	rval = udpSockRecv(sd, timeout_ms/20); /* FIXME: use system clock rate */
+	if ( rval ) {
+		if ( ppeerip )
+			*ppeerip = ((LanIpPacket)rval)->ip.src;
+		if ( ppeerport )
+			*ppeerport = ntohs(((LanIpPacket)rval)->p_u.udp_s.hdr.sport);
+	}
+	return rval;
 }
 
 static inline int

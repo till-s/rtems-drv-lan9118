@@ -17,13 +17,51 @@
 int padProtoDebug = DEBUG;
 #endif
 
+typedef struct StreamPeerRec_ {
+	uint32_t  ip;
+	uint16_t  port;
+} StreamPeerRec, *StreamPeer;
+
 int
-padProtoHandler(PadRequest req_p, int me, int *killed_p)
+padStreamStart(PadRequest req, PadStartCommand cmd, int me, uint32_t hostip)
+__attribute__((weak, alias("padStreamStartNotimpl")));
+
+int
+padStreamStartNotimpl(PadRequest req, PadStartCommand cmd, int me, uint32_t hostip)
 {
-int        chnl = me;
-int        n;
-PadCommand cmd;
-PadReply   rply;
+
+	return -ENOSYS;
+}
+
+int
+padStreamPet(PadRequest req)
+__attribute__((weak, alias("padStreamPetNotimpl")));
+
+int
+padStreamPetNotimpl(PadRequest req)
+{
+	return -ENOSYS;
+}
+
+int
+padStreamStop(void)
+__attribute__((weak, alias("padStreamStopNotimpl")));
+
+int
+padStreamStopNotimpl(void)
+{
+	return -ENOSYS;
+}
+
+int
+padProtoHandler(PadRequest req_p, int me, int *killed_p, uint32_t peerip)
+{
+int        		chnl = me;
+int        		n;
+PadCommand 		cmd;
+PadReply   		rply;
+StreamPeerRec	peer = {0, 0};
+int32_t			err  = 0;
 
 	if ( PADPROTO_VERSION1 != req_p->version )
 		return -1;
@@ -56,7 +94,8 @@ PadReply   rply;
 			}
 #endif
 			fprintf(stderr,"padProtoHandler: Unknown request %i\n",cmd->type);	
-			return -3;
+			err = -EBADMSG;
+			break;
 
 		case PADCMD_NOP:	/* ignore  */
 #ifdef DEBUG
@@ -77,19 +116,52 @@ PadReply   rply;
 		case PADCMD_ECHO | PADCMD_RPLY: /* echo reply */
 			/* UNIMPLEMENTED */
 			fprintf(stderr,"padProtoHandler: ECHO REPLY unimplemented\n");
-			return -4;
+			err = -ENOSYS;
+			break;
 
 		case PADCMD_STRM:
-			/* TODO start stream */
 #ifdef DEBUG
 			if ( padProtoDebug & DEBUG_PROTOHDL ) {
 				printf("padProtoHandler: STRM command\n");
 			}
 #endif
+			if ( ! peer.ip ) {
+				peer.ip   = peerip;
+				peer.port = ntohs(((PadStartCommand)cmd)->port);
+				err = padStreamStart(req_p, (PadStartCommand)cmd, me, peer.ip);
+			} else  {
+				/* can only stream to one peer */
+				if ( peer.ip != peerip || peer.port != ntohs(((PadStartCommand)cmd)->port) ) {
+					err = -EADDRINUSE;
+				}
+			}
+			break;
+
+		case PADCMD_SPET:
+			if ( ! peer.ip ) {
+				err = -ENOTCONN;
+			} else if ( peer.ip != peerip ) {
+				err = -EADDRINUSE;
+			} else {
+				err = padStreamPet(req_p);
+			}
 			break;
 
 		case PADCMD_STOP:
-			/* TODO stop stream */
+			if ( !peer.ip ) {
+				/* not running */
+				err = -ENOTCONN;
+			} else {
+				if ( peerip != peer.ip ) {
+					err = -EACCES;
+				} else {
+					err = padStreamStop();
+					if ( !err ) {
+						peer.ip   = 0;
+						peer.port = 0;
+					}
+				}
+			}
 #ifdef DEBUG
 			if ( padProtoDebug & DEBUG_PROTOHDL ) {
 				printf("padProtoHandler: STOP command\n");
@@ -111,6 +183,7 @@ PadReply   rply;
 	rply->type   = cmd->type | PADCMD_RPLY;
 	rply->nBytes = 0;
 	rply->chnl   = me;
+	rply->status = htonl(err);
 	/* leave other fields untouched */
 
 	return 1;	/* packet should be sent back */
@@ -125,19 +198,21 @@ inline uint32_t Read_timer() { return 0xdeadbeef; }
 int
 padUdpHandler(int port, int me)
 {
-int sd,err = -1;
-UdpCommPkt p;
+int         err = -1;
+int         sd;
+UdpCommPkt  p;
+uint32_t	peerip;
 
 	if ( (sd = udpCommSocket(port)) < 0 ) {
 		return sd;
 	}
 
 	while ( !padudpkilled ) {
-		if ( (p = udpCommRecv(sd, 10)) ) {
-			err = padProtoHandler((PadRequest)udpCommBufPtr(p), me, (int*)&padudpkilled);
+		if ( (p = udpCommRecvFrom(sd, 10, &peerip, 0)) ) {
+			err = padProtoHandler((PadRequest)udpCommBufPtr(p), me, (int*)&padudpkilled, peerip);
 			if ( 0 < err ) {
 				/* OK to send packet */
-				udpCommReturnPacket(sd, p, ((PadReply)udpCommBufPtr(p))->nBytes);
+				udpCommReturnPacket(sd, p, ntohs(((PadReply)udpCommBufPtr(p))->nBytes));
 			} else {
 				/* release buffer */
 				udpCommFreePacket(p);

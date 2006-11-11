@@ -18,7 +18,8 @@ extern "C" {
 #define	PADCMD_NOP  ((int8_t) 0)
 #define	PADCMD_ECHO ((int8_t) 1)
 #define	PADCMD_STRM ((int8_t) 2)
-#define	PADCMD_STOP ((int8_t) 3)
+#define	PADCMD_SPET ((int8_t) 3)		/* 'pet' just update timestamps    */
+#define	PADCMD_STOP ((int8_t) 4)
 #define PADCMD_KILL ((int8_t)15)
 
 typedef struct PadCommandRec_ {
@@ -32,18 +33,10 @@ typedef struct PadCommandRec_ {
 
 typedef struct PadStartCommandRec_ {
 	int8_t		type;			/* PADCMD_XX                           */
-	uint8_t		flags;
+	uint8_t		flags;			/* echoed in 'spec[0]' of reply        */
 	uint16_t	port;			/* port where to send data             */
 	uint32_t	nsamples;
 } PadStartCommandRec, *PadStartCommand;
-
-/* Reply is sent to the alternate port specified in the request        */
-typedef struct PadStartCommandReplyRec_ {
-	int8_t		type;
-	uint8_t		flags;			/* confirm requested options           */
-	uint16_t	error;			/* 0 on success an ERRNO on error      */
-} PadStartCommandReplyRec, *PadStartCommandReply;
-
 
 #define PADPROTO_VERSION1		0x31	/* some magic number           */
 
@@ -66,25 +59,31 @@ typedef struct PadRequestRec_ {
 typedef struct PadReplyRec_ {
 	uint8_t		version;		/* Protocol version                    */
 	int8_t		type;			/* reply to command of 'type'          */
-	int8_t		nBytes;			/* size of reply; command dependent    */
 	int8_t		chnl;			/* channel sending the reply           */
-	uint32_t	timestampHi;
+	int8_t		r1;				/* size of reply payload in quadwords  */
+	uint16_t	nBytes;			/* size of reply                       */
+	uint16_t	timestampHi;
 	uint32_t	timestampLo;
 	uint32_t	xid;            /* transaction 'id'                    */
-	uint32_t	r2;				/* align to 16-bytes (incl. IP hdrs)   */
-	uint8_t		data[];
+	int16_t		status;			/* error code (-errno)                 */
+	uint8_t		spec[2];		/* 2 bytes of command specific data    */
+	uint8_t		data[];         /* aligned on 16-byte boundary         */
 } PadReplyRec, *PadReply;
+
+#define start_cmd_flags	spec[0]
+#define start_cmd_idx   spec[1]
 
 /* Handle Protocol Request
  *    'req_p': The request. This may be modified by this routine to form a reply.
  *       'me': Channel number to look for ('our' channel/slot # in the packet).
  * 'killed_p': Pointer to a variable that is set if a 'KILL' command was received.
+ *   'peerip': IP address of the requestor (network byte order).
  *
  * RETURNS: < 0 on error (-errno), 0 or 1 on success. If 1 is returned then the
  *          request was transformed into a reply and should be returned to the requestor.
  */
 int
-padProtoHandler(PadRequest req_p, int me, int *killed_p);
+padProtoHandler(PadRequest req_p, int me, int *killed_p, uint32_t peerip);
 
 /* Handle padProto requests on 'port' for channel/slot 'chnl' until an error
  * occurs or a KILL command is received.
@@ -110,6 +109,23 @@ padUdpHandler(int port, int chnl);
  */
 int
 padRequest(int sd, int chnl, int type, void *cmdData, UdpCommPkt *wantReply);
+
+/* Function that actually starts streaming transfer
+ * to a host.
+ *        'me': our channel #
+ *    'hostip': IP address in network byte order.
+ *  'hostport': UDP port on host (*host byte order*).
+ */
+int
+padStreamStart(PadRequest req, PadStartCommand cmd, int me, uint32_t hostip);
+
+/* 'pet' the timestamp and transaction id */
+int
+padStreamPet(PadRequest req);
+
+/* Function that actually stops streaming transfer */
+int
+padStreamStop(void);
 
 #ifdef __cplusplus
 }
