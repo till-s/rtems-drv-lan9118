@@ -28,15 +28,15 @@ typedef struct PadCommandRec_ {
 	uint32_t	ldata[];		/* word sized commands                 */
 } PadCommandRec, *PadCommand;
 
-#define PADCMD_START_FLAG_LE	1	/* They want little-endian data    */
-#define PADCMD_START_FLAG_CM	2	/* They want column-major  data    */
+#define PADCMD_STRM_FLAG_LE	1	/* They want little-endian data    */
+#define PADCMD_STRM_FLAG_CM	2	/* They want column-major  data    */
 
-typedef struct PadStartCommandRec_ {
+typedef struct PadStrmCommandRec_ {
 	int8_t		type;			/* PADCMD_XX                           */
 	uint8_t		flags;			/* echoed in 'spec[0]' of reply        */
 	uint16_t	port;			/* port where to send data             */
-	uint32_t	nsamples;
-} PadStartCommandRec, *PadStartCommand;
+	uint32_t	nsamples;		/* # samples per channel               */
+} PadStrmCommandRec, *PadStrmCommand;
 
 #define PADPROTO_VERSION1		0x31	/* some magic number           */
 
@@ -70,8 +70,8 @@ typedef struct PadReplyRec_ {
 	uint8_t		data[];         /* aligned on 16-byte boundary         */
 } PadReplyRec, *PadReply;
 
-#define start_cmd_flags	spec[0]
-#define start_cmd_idx   spec[1]
+#define strm_cmd_flags	spec[0]
+#define strm_cmd_idx    spec[1]
 
 /* Handle Protocol Request
  *    'req_p': The request. This may be modified by this routine to form a reply.
@@ -100,6 +100,7 @@ padUdpHandler(int port, int chnl);
  *   'cmdData': parameter to command
  * 'wantReply': if non-NULL then q reply from the peer is requested and
  *              returned in *wantReply.
+ *'timeout_ms': how many ms to wait for a reply.
  *
  * RETURNS: 0 on success, -errno on error.
  *
@@ -108,7 +109,7 @@ padUdpHandler(int port, int chnl);
  *        commands to different channels with this routine.
  */
 int
-padRequest(int sd, int chnl, int type, void *cmdData, UdpCommPkt *wantReply);
+padRequest(int sd, int chnl, int type, void *cmdData, UdpCommPkt *wantReply, int timeout_ms);
 
 /* Function that actually starts streaming transfer
  * to a host.
@@ -117,7 +118,7 @@ padRequest(int sd, int chnl, int type, void *cmdData, UdpCommPkt *wantReply);
  *  'hostport': UDP port on host (*host byte order*).
  */
 int
-padStreamStart(PadRequest req, PadStartCommand cmd, int me, uint32_t hostip);
+padStreamStart(PadRequest req, PadStrmCommand cmd, int me, uint32_t hostip);
 
 /* 'pet' the timestamp and transaction id */
 int

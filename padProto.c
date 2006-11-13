@@ -23,11 +23,11 @@ typedef struct StreamPeerRec_ {
 } StreamPeerRec, *StreamPeer;
 
 int
-padStreamStart(PadRequest req, PadStartCommand cmd, int me, uint32_t hostip)
+padStreamStart(PadRequest req, PadStrmCommand cmd, int me, uint32_t hostip)
 __attribute__((weak, alias("padStreamStartNotimpl")));
 
 int
-padStreamStartNotimpl(PadRequest req, PadStartCommand cmd, int me, uint32_t hostip)
+padStreamStartNotimpl(PadRequest req, PadStrmCommand cmd, int me, uint32_t hostip)
 {
 
 	return -ENOSYS;
@@ -56,11 +56,13 @@ padStreamStopNotimpl(void)
 int
 padProtoHandler(PadRequest req_p, int me, int *killed_p, uint32_t peerip)
 {
+static
+StreamPeerRec	peer = {0, 0};
+
 int        		chnl = me;
 int        		n;
 PadCommand 		cmd;
 PadReply   		rply;
-StreamPeerRec	peer = {0, 0};
 int32_t			err  = 0;
 
 	if ( PADPROTO_VERSION1 != req_p->version )
@@ -127,17 +129,22 @@ int32_t			err  = 0;
 #endif
 			if ( ! peer.ip ) {
 				peer.ip   = peerip;
-				peer.port = ntohs(((PadStartCommand)cmd)->port);
-				err = padStreamStart(req_p, (PadStartCommand)cmd, me, peer.ip);
-			} else  {
-				/* can only stream to one peer */
-				if ( peer.ip != peerip || peer.port != ntohs(((PadStartCommand)cmd)->port) ) {
-					err = -EADDRINUSE;
-				}
+				peer.port = ntohs(((PadStrmCommand)cmd)->port);
+			}
+			/* can only stream to one peer */
+			if ( peer.ip != peerip || peer.port != ntohs(((PadStrmCommand)cmd)->port) ) {
+				err = -EADDRINUSE;
+			} else {
+				err = padStreamStart(req_p, (PadStrmCommand)cmd, me, peer.ip);
 			}
 			break;
 
 		case PADCMD_SPET:
+#ifdef DEBUG
+			if ( padProtoDebug & DEBUG_PROTOHDL ) {
+				printf("padProtoHandler: SPET command\n");
+			}
+#endif
 			if ( ! peer.ip ) {
 				err = -ENOTCONN;
 			} else if ( peer.ip != peerip ) {
@@ -181,7 +188,7 @@ int32_t			err  = 0;
 
 	rply         = (PadReply)req_p;
 	rply->type   = cmd->type | PADCMD_RPLY;
-	rply->nBytes = 0;
+	rply->nBytes = htons(sizeof(*rply));
 	rply->chnl   = me;
 	rply->status = htonl(err);
 	/* leave other fields untouched */
@@ -235,9 +242,9 @@ uint32_t	peerip;
 #define RETRIES 2
 
 int
-padRequest(int sd, int who, int type, void *cmdData, UdpCommPkt *wantReply)
+padRequest(int sd, int who, int type, void *cmdData, UdpCommPkt *wantReply, int timeout_ms)
 {
-uint32_t	buf[20];
+uint32_t	buf[(sizeof(PadRequestRec) + sizeof(PadStrmCommandRec) + 10)/sizeof(uint32_t)];
 PadRequest  req = (PadRequest)buf;
 PadReply    rep;
 PadCommand	cmd = (PadCommand)req->data;
@@ -272,7 +279,18 @@ UdpCommPkt  p = 0;
 		req->timestampLo = htonl(Read_timer());
 	}
 #endif
-	cmd->type = type;
+
+	/* Add command-specific parameters */
+	switch ( (cmd->type = type) ) {
+		default:
+			break;
+
+		case PADCMD_STRM:
+			/* cmdData is a 'start command' struct */
+			memcpy(cmd, cmdData, sizeof(PadStrmCommandRec));
+			cmd->type = type;
+			break;
+	}
 
 	if ( (rval = udpCommSend(sd, req, sizeof(*req) + req->cmdSize)) < 0 ) {
 		fprintf(stderr,"padRequest: send failed -- %s\n",strerror(-rval));
@@ -285,7 +303,7 @@ UdpCommPkt  p = 0;
 		do {
 		/* wait for reply */
 
-			if ( (p = udpCommRecv(sd, TIMEOUT)) ) {
+			if ( (p = udpCommRecv(sd, timeout_ms)) ) {
 				rep = (PadReply)udpCommBufPtr(p);
 				if ( rep->type == (type | PADCMD_RPLY) && rep->xid == htonl(xid) ) {
 					if ( wantReply )
