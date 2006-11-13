@@ -87,7 +87,7 @@ iir2_bpmsim(int16_t *pf, int nloops, int ini, unsigned long *pn, int swp, int st
 {
 unsigned then = Read_timer();
 FiltNumber ysa[2] = { FNUM(0.), FNUM(0.) }, xsa[2] = { FNUM(0.), FNUM(0.)};
-FiltNumber ysb[2] = { FNUM(0.), FNUM(0.) }, xsb[2] = { FNUM(0.), FNUM(0.)};
+FiltNumber ysb[2] = { FNUM(0.), FNUM(0.) };
 signed char n;
 int16_t     *pf1 = pf+stride;
 	NOISESTEP(pn);
@@ -104,8 +104,8 @@ int16_t     *pf1 = pf+stride;
 	} else {
 		*pf = (ysa[0] + ysb[0]);      *pf1 = (ysa[1] + ysb[1]);
 	}
-	pf   = pf1;
-	pf1 += stride;
+	pf  = pf1 + stride;
+	pf1 = pf  + stride;
 	nloops-=2;
 	if (swp) {
 		while ( nloops > 0 ) {
@@ -115,8 +115,8 @@ int16_t     *pf1 = pf+stride;
 			IIRBP2(ysa,ysb,xsa,(FiltNumber)ini,n>>(8-IBNOISEBITS),CN0,CN1,CN2,CD1,CD2);
 			*pf  = bswap(ysa[0] + ysb[0]);
 			*pf1 = bswap(ysa[1] + ysb[1]);
-			pf   = pf1;
-			pf1 += stride;
+			pf  = pf1 + stride;
+			pf1 = pf  + stride;
 			nloops-=2;
 		}
 	} else {
@@ -127,8 +127,8 @@ int16_t     *pf1 = pf+stride;
 			IIRBP2(ysa,ysb,xsa,(FiltNumber)ini,n>>(8-IBNOISEBITS),CN0,CN1,CN2,CD1,CD2);
 			*pf  = (ysa[0] + ysb[0]);
 			*pf1 = (ysa[1] + ysb[1]);
-			pf   = pf1;
-			pf1 += stride;
+			pf  = pf1 + stride;
+			pf1 = pf  + stride;
 			nloops-=2;
 		}
 	}
