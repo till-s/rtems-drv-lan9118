@@ -35,7 +35,9 @@ typedef struct PadCommandRec_ {
 #define PADCMD_STRM_FLAG_LE	1	/* They want little-endian data    */
 #define PADCMD_STRM_FLAG_CM	2	/* They want column-major  data    */
 
-#define PADRPLY_STRM_NSAMPLES(nbytes) (((nbytes) - sizeof(PadReplyRec))/sizeof(int16_t)/4)
+/* Sample size is sizeof(int16_t) */
+#define PADRPLY_STRM_NCHANNELS	4
+#define PADRPLY_STRM_NSAMPLES(nbytes) (((nbytes) - sizeof(PadReplyRec))/sizeof(int16_t)/PADRPLY_STRM_NCHANNELS)
 
 typedef struct PadStrmCommandRec_ {
 	int8_t		type;			/* PADCMD_XX                           */

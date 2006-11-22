@@ -193,6 +193,8 @@ int32_t			err  = 0;
 			} else if ( peer.ip != peerip ) {
 				err = -EADDRINUSE;
 			} else {
+				/* update timestamps and produce simulated data */
+				padStreamPet(req_p);
 				err = padStreamSim( (PadSimCommand) cmd);
 			}
 #ifdef DEBUG
