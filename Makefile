@@ -22,7 +22,8 @@ CC_PIECES=
 CC_FILES=$(CC_PIECES:%=%.cc)
 CC_O_FILES=$(CC_PIECES:%=${ARCH}/%.o)
 
-H_FILES=
+H_FILES= drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h copyright_SLAC.h
+INST_HEADERS= drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h copyright_SLAC.h
 
 # Assembly source names, if any, go here -- minus the .S
 S_PIECES=
@@ -118,3 +119,4 @@ ${RTEMS_SITE_INSTALLDIR}/bin:
 #    below so the essential files get installed. YMMV.
 install:  all $(RTEMS_SITE_INSTALLDIR)/bin
 	$(INSTALL_VARIANT) -m 555 ${PGMS} ${PGMS:%.exe=%.bin} ${PGMS:%.exe=%.sym} ${RTEMS_SITE_INSTALLDIR}/bin
+	$(INSTALL_CHANGE) -m 444 ${INST_HEADERS}  ${RTEMS_SITE_INSTALLDIR}/include

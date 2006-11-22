@@ -54,6 +54,17 @@ padStreamStopNotimpl(void)
 }
 
 int
+padStreamSim(PadSimCommand scmd)
+__attribute__((weak, alias("padStreamSimNotimpl")));
+
+int
+padStreamSimNotimpl(PadSimCommand scmd)
+{
+	return -ENOSYS;
+}
+
+
+int
 padProtoHandler(PadRequest req_p, int me, int *killed_p, uint32_t peerip)
 {
 static
@@ -176,6 +187,22 @@ int32_t			err  = 0;
 #endif
 			break;	
 
+		case PADCMD_SIM:
+			if ( ! peer.ip ) {
+				err = -ENOTCONN;
+			} else if ( peer.ip != peerip ) {
+				err = -EADDRINUSE;
+			} else {
+				err = padStreamSim( (PadSimCommand) cmd);
+			}
+#ifdef DEBUG
+			if ( padProtoDebug & DEBUG_PROTOHDL ) {
+				printf("padProtoHandler: SIM command\n");
+			}
+#endif
+			break;	
+
+
 		case PADCMD_KILL:
 			*killed_p = 1;
 			break;
@@ -199,7 +226,7 @@ int32_t			err  = 0;
 volatile int padudpkilled = 0;
 
 #ifdef BSDSOCKET
-inline uint32_t Read_timer() { return 0xdeadbeef; }
+__inline__ uint32_t Read_timer() { return 0xdeadbeef; }
 #endif
 
 int
@@ -242,14 +269,13 @@ uint32_t	peerip;
 #define RETRIES 2
 
 int
-padRequest(int sd, int who, int type, void *cmdData, UdpCommPkt *wantReply, int timeout_ms)
+padRequest(int sd, int who, int type, uint32_t xid, void *cmdData, UdpCommPkt *wantReply, int timeout_ms)
 {
 uint32_t	buf[(sizeof(PadRequestRec) + sizeof(PadStrmCommandRec) + 10)/sizeof(uint32_t)];
 PadRequest  req = (PadRequest)buf;
 PadReply    rep;
 PadCommand	cmd = (PadCommand)req->data;
 int			rval;
-static uint32_t xid = 0;
 UdpCommPkt  p = 0;
 
 	if ( who > 20 )
@@ -259,7 +285,7 @@ UdpCommPkt  p = 0;
 	req->nCmds   = who < 0 ? PADREQ_BCST : -who;
 	req->cmdSize = CMDSIZE;
 
-	req->xid     = htonl(++xid);
+	req->xid     = htonl(xid);
 
 #ifdef __PPC__
 	{
@@ -281,7 +307,7 @@ UdpCommPkt  p = 0;
 #endif
 
 	/* Add command-specific parameters */
-	switch ( (cmd->type = type) ) {
+	switch ( PADCMD_GET(cmd->type = type) ) {
 		default:
 			break;
 

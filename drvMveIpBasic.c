@@ -4,6 +4,8 @@
  * or copy, fillin send copy...
  */
 
+typedef struct mveth_drv_s_ *mveth_drv;
+
 #define ETHERPADSZ sizeof(((EtherHeaderRec*)0)->pad)
 #define ETHERHDRSZ (sizeof(EtherHeaderRec) - ETHERPADSZ) 
 
@@ -11,10 +13,11 @@
 	do {																	\
 		char *b = (char*)getrbuf();											\
 		if ( b ) {															\
+			mveth_drv mdrv = (mveth_drv)(pd)->drv_p;						\
 			int l_ = sizeof((pd)->arpreq) - ETHERPADSZ;						\
 			memcpy(b, &(pd)->arpreq.ll.dst, l_);							\
 			*(uint32_t*)((IpArpRec*)(b + ETHERHDRSZ))->tpa = ipaddr;		\
-			if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, b, b, l_) <= 0 )	\
+			if ( mve_send_buf_locked(mdrv, b, b, l_) <= 0 )					\
 				relrbuf((rbuf_t*)b);										\
 		}																	\
 	} while (0)
@@ -25,13 +28,16 @@
 static inline int 
 NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz);
 
+static inline int
+mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len);
 
 #define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)									\
 	do {																	\
 		char *b_ = (char*)pbuf + ETHERPADSZ;								\
 		int   l_ = (nbytes) - ETHERPADSZ;									\
+		mveth_drv mdrv = (mveth_drv)(pd)->drv_p;							\
 																			\
-		if ( BSP_mve_send_buf((struct mveth_private *)pd->drv_p, pbuf, b_, l_) <= 0 )	\
+		if ( mve_send_buf_locked(mdrv, pbuf, b_, l_) <= 0 )					\
 			relrbuf((rbuf_t*)pbuf);											\
 	} while (0)
 
@@ -47,10 +53,29 @@ NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz);
 
 #include "lanIpBasic.c"
 
+typedef struct mveth_drv_s_ {
+	struct mveth_private *mp;
+	rtems_id             mutex;
+} mveth_drv_s;
+
+#define DRVLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain( (drv)->mutex, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
+#define DRVUNLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_release( (drv)->mutex) )
+
+
+static inline int
+mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len)
+{
+int rval;
+	DRVLOCK(mdrv);
+		rval = BSP_mve_send_buf(mdrv->mp, pbuf, data, len);
+	DRVUNLOCK(mdrv);
+	return rval;
+}
+
 static inline int 
 NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz)
 {
-struct mveth_private *mp = pdrv;
+mveth_drv            mdrv = pdrv;
 char                 *b_ = (char*)getrbuf();
 char                 *p;
 
@@ -62,7 +87,9 @@ char                 *p;
 			}
 			memcpy(p, data, dtasz);
 			p = b_ + ETHERPADSZ;
-			if ( BSP_mve_send_buf(mp, b_, p, l_) <= 0 ) {
+
+
+			if ( mve_send_buf_locked(mdrv, b_, p, l_) <= 0 ) {
 				relrbuf((rbuf_t*)b_);
 				return -ENOSPC;
 			}
@@ -114,8 +141,9 @@ IpCbData pd = closure;
 void
 drvMveIpBasicTask(rtems_task_argument arg)
 {
-IpCbData				cbd = (IpCbData)arg;
-struct mveth_private	*mp = lanIpCbDataGetDrv(cbd);
+IpCbData				cbd  = (IpCbData)arg;
+mveth_drv				mdrv = lanIpCbDataGetDrv(cbd);
+struct mveth_private	*mp = mdrv->mp; 
 rtems_event_set			evs;
 uint32_t				irqs;
 
@@ -146,6 +174,9 @@ uint32_t				irqs;
 #endif
 	BSP_mve_detach( mp );
 
+	rtems_semaphore_delete(mdrv->mutex);
+	free(mdrv);
+
 	rtems_task_delete(RTEMS_SELF);
 }
 
@@ -153,8 +184,23 @@ rtems_id
 drvMveIpBasicSetup(IpCbData cbd)
 {
 int                   unit;
-struct mveth_private *mp;
-rtems_id              tid;
+mveth_drv             mdrv = 0;
+rtems_id              tid  = 0;
+
+	if ( ! (mdrv = malloc(sizeof(*mdrv))) ) {
+		return 0;
+	}
+
+	mdrv->mutex = 0;
+
+	if ( RTEMS_SUCCESSFUL != rtems_semaphore_create(
+								rtems_build_name('m','v','e','L'),
+								1,
+								RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+								0,
+								&mdrv->mutex) ) {
+			goto egress;
+	}
 
 	if ( RTEMS_SUCCESSFUL != rtems_task_create(
 								rtems_build_name('i','p','b','d'),
@@ -163,21 +209,29 @@ rtems_id              tid;
 								RTEMS_DEFAULT_MODES,
 								RTEMS_FLOATING_POINT | RTEMS_LOCAL,
 								&tid) )
-			return 0;
+			goto egress;
 
 	for ( unit=1; unit < 3; unit++ ) {
-		if ( (mp = BSP_mve_setup( unit,
+		if ( (mdrv->mp = BSP_mve_setup( unit,
 								tid,
 								cleanup_txbuf, cbd,
 								alloc_rxbuf,
 								consume_rxbuf, cbd,
 								RX_RING_SIZE, TX_RING_SIZE,
 								BSP_MVE_IRQ_TX | BSP_MVE_IRQ_RX /* | BSP_MVE_IRQ_LINK */ )) ) {
-			rtems_task_set_note( tid, RTEMS_NOTEPAD_0, (uint32_t)mp );
+			rtems_task_set_note( tid, RTEMS_NOTEPAD_0, (uint32_t)mdrv );
 			return tid;
 		}
 	}
-	rtems_task_delete(tid);
+
+egress:
+	if ( mdrv ) {
+		if ( mdrv->mutex )
+			rtems_semaphore_delete( mdrv->mutex );
+		free(mdrv);
+	}
+	if ( tid )
+		rtems_task_delete(tid);
 	return 0;
 }
 

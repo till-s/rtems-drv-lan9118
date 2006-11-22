@@ -140,8 +140,12 @@ typedef struct UdpSockPeerRec_ {
 typedef struct UdpSockRec_ {
 	volatile int	port;	/* host byte order */
 	rtems_id		msgq;
+	rtems_id		mutx;
 	UdpSockPeer		peer;
 } UdpSockRec, *UdpSock;
+
+#define SOCKLOCK(sck)		assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain((sck)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
+#define SOCKUNLOCK(sck) 	assert( RTEMS_SUCCESSFUL == rtems_semaphore_release((sck)->mutx) )
 
 static UdpSockRec	socks[NSOCKS] = {{0}};
 static IpCbData		intrf         = 0;
@@ -181,8 +185,8 @@ int lanIpBasicAutoRefreshARP  = 1;
 		h += ipaddr_h_>>8;			\
 	} while (0)
 
-#define ARPLOCK(pd)		rtems_semaphore_obtain((pd)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT)
-#define ARPUNLOCK(pd) 	rtems_semaphore_release((pd)->mutx)
+#define ARPLOCK(pd)		assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain((pd)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
+#define ARPUNLOCK(pd) 	assert( RTEMS_SUCCESSFUL == rtems_semaphore_release((pd)->mutx) )
 
 #ifdef DEBUG
 /* Debug helpers */
@@ -1011,6 +1015,7 @@ udpSockCreate(int port)
 {
 int       rval = -1, i;
 rtems_id  q = 0;
+rtems_id  m = 0;
 
 	/* 0 is invalid (we use it as a marker) */
 	if ( port <= 0 || port >= 1<<16 )
@@ -1026,6 +1031,18 @@ rtems_id  q = 0;
 		rval = -ENOSPC;
 		goto egress;
 	}
+
+	if ( RTEMS_SUCCESSFUL != rtems_semaphore_create(
+			rtems_build_name('u','d','p','l'),
+			1,
+			RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+			0,
+			&m) ) {
+		m    =  0;
+		rval = -ENOSPC;
+		goto egress;
+	}
+
 
 	if ( (rval = sockget(0)) < 0 ) {
 		/* no free slot */
@@ -1045,16 +1062,20 @@ rtems_id  q = 0;
 	/* everything OK */
 	socks[rval].port = port;
 	socks[rval].msgq = q;
+	socks[rval].mutx = m;
 	socks[rval].peer = 0;
 
 	_Thread_Enable_dispatch();
 
 	q             = 0;
+	m             = 0;
 	rval          = 0;
 
 egress:
 	if ( q )
 		rtems_message_queue_delete(q);
+	if ( m )
+		rtems_semaphore_delete(m);
 	return rval;
 }
 
@@ -1063,6 +1084,7 @@ int
 udpSockDestroy(int sd)
 {
 rtems_id  q = 0;
+rtems_id  m = 0;
 void     *p = 0;
 
 	if ( sd < 0 || sd >= NSOCKS )
@@ -1075,6 +1097,8 @@ void     *p = 0;
 			socks[sd].msgq = 0;
 			p = socks[sd].peer;
 			socks[sd].peer = 0;
+			m = socks[sd].mutx;
+			socks[sd].mutx = 0;
 		}
 	_Thread_Enable_dispatch();
 
@@ -1094,6 +1118,10 @@ void     *p = 0;
 		}
 		rtems_message_queue_delete(q);
 		return 0;
+	}
+
+	if (m) {
+		rtems_semaphore_delete(m);
 	}
 	return -EBADFD;
 }
@@ -1176,6 +1204,7 @@ rtems_status_code sc;
 int
 udpSockSend(int sd, void *payload, int payload_len)
 {
+int         rval;
 UdpSockPeer p;
 
 	if ( sd < 0 || sd >= NSOCKS )
@@ -1184,15 +1213,25 @@ UdpSockPeer p;
 	if ( 0 == socks[sd].port )
 		return -EBADF;
 
-	if ( ! (p = socks[sd].peer) )
-		return -ENOTCONN;
+	SOCKLOCK( &socks[sd] );
 
-	if ( arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst, 0) )
+	if ( ! (p = socks[sd].peer) ) {
+		SOCKUNLOCK( &socks[sd] );
 		return -ENOTCONN;
+	}
+
+	if ( arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst, 0) ) {
+		SOCKUNLOCK( &socks[sd] );
+		return -ENOTCONN;
+	}
 
 	udpSockHdrsSetlen((LanIpPacket)&socks[sd].peer->hdr, payload_len);
 
-	return NETDRV_SND_PACKET( p->intrf->drv_p, &p->hdr, sizeof(p->hdr), payload, payload_len );
+	rval = NETDRV_SND_PACKET( p->intrf->drv_p, &p->hdr, sizeof(p->hdr), payload, payload_len );
+
+	SOCKUNLOCK( &socks[sd] );
+
+	return rval;
 }
 
 void

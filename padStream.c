@@ -299,9 +299,9 @@ padStreamTest()
 }
 
 int
-padStreamSim(int a, int b, int c, int d)
+padStreamSim(PadSimCommand scmd)
 {
-StripSimValRec strips = { a, b, c, d };
+StripSimValRec strips = { ntohl(scmd->a), ntohl(scmd->b), ntohl(scmd->c), ntohl(scmd->d) };
 
 	return padStreamSend(streamSim, 0, &strips);
 }

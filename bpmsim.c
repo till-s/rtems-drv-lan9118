@@ -90,14 +90,16 @@ FiltNumber ysa[2] = { FNUM(0.), FNUM(0.) }, xsa[2] = { FNUM(0.), FNUM(0.)};
 FiltNumber ysb[2] = { FNUM(0.), FNUM(0.) };
 signed char n;
 int16_t     *pf1 = pf+stride;
+int         ini1 = ini;
+
 	NOISESTEP(pn);
 	/* use top 4 bits of noise */
-	ini += ((int)*pn)>>(32-IBNOISEBITS);
-	n    = (signed char)(*pn)>>24;
+	ini1 += ((int)*pn)>>(32-IBNOISEBITS);
+	n     = (signed char)(*pn)>>24;
 	/* This is 'in-band' noise. We should also add wide-band noise
 	 * at the output but we probably wouldn't have time to make it gaussian
 	 */
-	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini,n>>(8-IBNOISEBITS),CN0,CN1,CN2,CD1,CD2);
+	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini1,(FiltNumber)(n>>(8-IBNOISEBITS)),CN0,CN1,CN2,CD1,CD2);
 	*pf = ysa[0] + ysb[0]; *pf1 = ysa[1] + ysb[1];
 	if ( swp ) {
 		*pf = bswap(ysa[0] + ysb[0]); *pf1 = bswap(ysa[1] + ysb[1]);
@@ -107,6 +109,25 @@ int16_t     *pf1 = pf+stride;
 	pf  = pf1 + stride;
 	pf1 = pf  + stride;
 	nloops-=2;
+
+	if ( 0 ) {
+	ini1  = -ini;
+	NOISESTEP(pn);
+	/* use top 4 bits of noise */
+	ini1 += ((int)*pn)>>(32-IBNOISEBITS);
+	n     = (signed char)(*pn)>>24;
+	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini1,(FiltNumber)0,CN0,CN1,CN2,CD1,CD2);
+	*pf = ysa[0] + ysb[0]; *pf1 = ysa[1] + ysb[1];
+	if ( swp ) {
+		*pf = bswap(ysa[0] + ysb[0]); *pf1 = bswap(ysa[1] + ysb[1]);
+	} else {
+		*pf = (ysa[0] + ysb[0]);      *pf1 = (ysa[1] + ysb[1]);
+	}
+	pf  = pf1 + stride;
+	pf1 = pf  + stride;
+	nloops-=2;
+	}
+
 	if (swp) {
 		while ( nloops > 0 ) {
 			NOISESTEP(pn);
@@ -143,12 +164,12 @@ int
 main(int argc, char **argv)
 {
 int              i;
-FiltNumber buf[128];
+int16_t buf[128];
 unsigned long nois = 1;
 
 	if ( argc < 2 || 1!=sscanf(argv[1],"%i",&i) )
 		i = 10000;
-	iir2_bpmsim(buf, sizeof(buf)/sizeof(buf[0]), i, &nois);
+	iir2_bpmsim(buf, sizeof(buf)/sizeof(buf[0]), i, &nois, 0, 1);
 
 	for ( i=0; i<sizeof(buf)/sizeof(buf[0]); i++)
 		printf("%f\n",(float)buf[i]);

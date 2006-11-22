@@ -21,6 +21,10 @@ extern "C" {
 #define	PADCMD_SPET ((int8_t) 3)		/* 'pet' just update timestamps    */
 #define	PADCMD_STOP ((int8_t) 4)
 #define PADCMD_KILL ((int8_t)15)
+#define PADCMD_SIM  ((int8_t) 5)        /* generate simulated response     */
+
+/* mask off the flag bits */
+#define PADCMD_GET(type)  ((type) & ~(PADCMD_RPLY | PADCMD_QUIET))
 
 typedef struct PadCommandRec_ {
 	int8_t		type;			/* PADCMD_XX                           */
@@ -31,12 +35,20 @@ typedef struct PadCommandRec_ {
 #define PADCMD_STRM_FLAG_LE	1	/* They want little-endian data    */
 #define PADCMD_STRM_FLAG_CM	2	/* They want column-major  data    */
 
+#define PADRPLY_STRM_NSAMPLES(nbytes) (((nbytes) - sizeof(PadReplyRec))/sizeof(int16_t)/4)
+
 typedef struct PadStrmCommandRec_ {
 	int8_t		type;			/* PADCMD_XX                           */
 	uint8_t		flags;			/* echoed in 'spec[0]' of reply        */
 	uint16_t	port;			/* port where to send data             */
 	uint32_t	nsamples;		/* # samples per channel               */
 } PadStrmCommandRec, *PadStrmCommand;
+
+typedef struct PadSimCommandRec_ {
+	int8_t		type;
+	int8_t		sdata[3];
+	int32_t		a,b,c,d;
+} PadSimCommandRec, *PadSimCommand;
 
 #define PADPROTO_VERSION1		0x31	/* some magic number           */
 
@@ -60,7 +72,7 @@ typedef struct PadReplyRec_ {
 	uint8_t		version;		/* Protocol version                    */
 	int8_t		type;			/* reply to command of 'type'          */
 	int8_t		chnl;			/* channel sending the reply           */
-	int8_t		r1;				/* size of reply payload in quadwords  */
+	int8_t		r1;
 	uint16_t	nBytes;			/* size of reply                       */
 	uint16_t	timestampHi;
 	uint32_t	timestampLo;
@@ -97,6 +109,7 @@ padUdpHandler(int port, int chnl);
  *        'sd': socket descriptor
  *      'chnl': target channel/slot (may be broadcast)
  *      'type': command
+ *       'xid': transaction ID - value is returned in reply
  *   'cmdData': parameter to command
  * 'wantReply': if non-NULL then q reply from the peer is requested and
  *              returned in *wantReply.
@@ -109,7 +122,7 @@ padUdpHandler(int port, int chnl);
  *        commands to different channels with this routine.
  */
 int
-padRequest(int sd, int chnl, int type, void *cmdData, UdpCommPkt *wantReply, int timeout_ms);
+padRequest(int sd, int chnl, int type, uint32_t xid, void *cmdData, UdpCommPkt *wantReply, int timeout_ms);
 
 /* Function that actually starts streaming transfer
  * to a host.

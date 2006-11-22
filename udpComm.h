@@ -9,10 +9,12 @@
 
 #ifdef BSDSOCKET
 #include <sys/socket.h>
+#include <unistd.h>
+#include <stdlib.h>
 #define STATICINLINE
 #else
 #include <lanIpBasic.h>
-#define STATICINLINE static inline
+#define STATICINLINE static __inline__
 #endif
 #include <netinet/in.h>
 
@@ -27,7 +29,7 @@ STATICINLINE int
 udpCommSocket(int port);
 
 /* Close  */
-static inline int
+static __inline__ int
 udpCommClose(int sd);
 
 /* Connect socket to a peer */
@@ -47,26 +49,26 @@ STATICINLINE UdpCommPkt
 udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport);
 
 /* Obtain pointer to data area in buffer (UDP payload) */
-static inline void *
+static __inline__ void *
 udpCommBufPtr(UdpCommPkt p);
 
 /* Release packet (obtained from Recv) when done */
-static inline void
+static __inline__ void
 udpCommFreePacket(UdpCommPkt p);
 
 /* Send packet to connected peer */
-static inline int
+static __inline__ int
 udpCommSend(int sd, void *buf, int len);
 
 /* Return packet to sender (similar to 'send'; 
  * this interface exists for efficiency reasons
  * [coldfire/lan9118]).
  */
-static inline void
+static __inline__ void
 udpCommReturnPacket(int sd, UdpCommPkt p, int len);
 
 /* Inline implementations for both BSD and udpSocks */
-static inline int
+static __inline__ int
 udpCommClose(int sd)
 {
 #ifdef BSDSOCKET
@@ -76,7 +78,7 @@ udpCommClose(int sd)
 #endif
 }
 
-static inline void *
+static __inline__ void *
 udpCommBufPtr(UdpCommPkt p)
 {
 #ifdef BSDSOCKET
@@ -86,7 +88,7 @@ udpCommBufPtr(UdpCommPkt p)
 #endif
 }
 
-static inline void
+static __inline__ void
 udpCommFreePacket(UdpCommPkt p)
 {
 #ifdef BSDSOCKET
@@ -96,7 +98,7 @@ udpCommFreePacket(UdpCommPkt p)
 #endif
 }
 
-static inline int
+static __inline__ int
 udpCommSend(int sd, void *buf, int len)
 {
 #ifdef BSDSOCKET
@@ -106,7 +108,7 @@ udpCommSend(int sd, void *buf, int len)
 #endif
 }
 
-static inline void
+static __inline__ void
 udpCommReturnPacket(int sd, UdpCommPkt p, int len)
 {
 #ifdef BSDSOCKET
@@ -124,13 +126,13 @@ udpCommReturnPacket(int sd, UdpCommPkt p, int len)
 
 #ifndef BSDSOCKET
 /* Inline implementation for udpSocks */
-static inline int
+static __inline__ int
 udpCommSocket(int port)
 {
 	return udpSockCreate(port);
 }
 
-static inline UdpCommPkt
+static __inline__ UdpCommPkt
 udpCommRecv(int sd, int timeout_ms)
 {
 	if ( ! (timeout_ms/=20) )
@@ -154,7 +156,7 @@ UdpCommPkt rval;
 	return rval;
 }
 
-static inline int
+static __inline__ int
 udpCommConnect(int sd, uint32_t diaddr, int port)
 {
 	return udpSockConnect(sd, diaddr, port);
