@@ -132,7 +132,7 @@ int bigEndian()
 union {
 	uint8_t  x[2];
 	uint16_t tst;
-} endian = { {0xBE, 0} };
+} endian = { x : {0xBE, 0} };
 	return(endian.tst == 0xBE00);
 }
 

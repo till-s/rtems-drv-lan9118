@@ -52,7 +52,7 @@ isbe()
 union {
 	uint8_t	 xx[2];
 	uint16_t tst;
-} endian = { {0xbe, 00} };
+} endian = { xx : {0xbe, 00} };
 	return (0xbe00 == endian.tst);
 }
 
