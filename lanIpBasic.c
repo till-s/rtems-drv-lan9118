@@ -1069,7 +1069,6 @@ rtems_id  m = 0;
 
 	q             = 0;
 	m             = 0;
-	rval          = 0;
 
 egress:
 	if ( q )
