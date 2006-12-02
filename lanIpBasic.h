@@ -114,19 +114,19 @@ drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
  * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
  */
 int
-udpSockHdrsInit(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
+udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
 
 /* Set length and IP checksum
  * Note: other fields must have been initialized already
  */
 void
-udpSockHdrsSetlen(LanIpPacket p, int payload_len);
+udpSockHdrsSetlen(LanUdpHeader p, int payload_len);
 
 /* Flip source -> dest and fill-in local source addresses
  * (at ethernet, IP and UDP level)
  */
 void
-udpSockHdrsReflect(LanIpPacket p);
+udpSockHdrsReflect(LanUdpHeader p);
 
 /* Create private data (pass as rx callback closure pointer to drvLan9118Start)
  * 

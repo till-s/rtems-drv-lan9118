@@ -273,8 +273,11 @@ uint32_t	peerip;
 int
 padRequest(int sd, int who, int type, uint32_t xid, void *cmdData, UdpCommPkt *wantReply, int timeout_ms)
 {
-uint32_t	buf[(sizeof(PadRequestRec) + sizeof(PadStrmCommandRec) + 10)/sizeof(uint32_t)];
-PadRequest  req = (PadRequest)buf;
+struct {
+	PadRequestRec		req;
+	uint8_t				data[sizeof(PadStrmCommandRec) + 10];
+}           buf;
+PadRequest  req = &buf.req;
 PadReply    rep;
 PadCommand	cmd = (PadCommand)req->data;
 int			rval;

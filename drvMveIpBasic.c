@@ -1,4 +1,4 @@
-
+#include <stdint.h>
 /* How to send the ARP request structure:
  * Either lock, fillin-IP addr, send, unlock
  * or copy, fillin send copy...
@@ -41,8 +41,8 @@ mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len);
 			relrbuf((rbuf_t*)pbuf);											\
 	} while (0)
 
-#define NETDRV_READ_ENADDR(drvhdl, buf)										\
-	BSP_mve_read_eaddr((struct mveth_private*)(drvhdl),(buf))
+static inline void
+NETDRV_READ_ENADDR(mveth_drv drvhdl, uint8_t *buf);
 
 #define NETDRV_INCLUDE	<bsp/if_mve_pub.h>
 
@@ -96,6 +96,11 @@ char                 *p;
 			return hdrsz + dtasz;
 		}
 		return -ENOMEM;
+}
+
+static inline void NETDRV_READ_ENADDR(mveth_drv drvhdl, uint8_t *buf)
+{
+	BSP_mve_read_eaddr(drvhdl->mp, buf);
 }
 
 static void

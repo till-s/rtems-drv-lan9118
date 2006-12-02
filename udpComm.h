@@ -84,7 +84,7 @@ udpCommBufPtr(UdpCommPkt p)
 #ifdef BSDSOCKET
 	return (void*)p;
 #else
-	return (void*)((LanIpPacket)p)->p_u.udp_s.pld;
+	return (void*)lpkt_udphdr((LanIpPacket)p).pld;
 #endif
 }
 
@@ -149,9 +149,9 @@ UdpCommPkt rval;
 	rval = udpSockRecv(sd, timeout_ms/20); /* FIXME: use system clock rate */
 	if ( rval ) {
 		if ( ppeerip )
-			*ppeerip = ((LanIpPacket)rval)->ip.src;
+			*ppeerip = lpkt_ip((LanIpPacket)rval).src;
 		if ( ppeerport )
-			*ppeerport = ntohs(((LanIpPacket)rval)->p_u.udp_s.hdr.sport);
+			*ppeerport = ntohs(lpkt_udp((LanIpPacket)rval).sport);
 	}
 	return rval;
 }

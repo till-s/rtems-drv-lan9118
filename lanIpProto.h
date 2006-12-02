@@ -39,13 +39,6 @@ typedef struct UdpHeaderRec_ {
 	uint16_t	csum;
 } UdpHeaderRec;
 
-/* sizeof(UdpPacketRec) is 44 */
-typedef struct UdpPacketRec_ {
-	EtherHeaderRec	eh;
-	IpHeaderRec		ih;
-	UdpHeaderRec 	uh;
-} UdpPacketRec;
-
 typedef struct IpArpRec_ {
 	uint16_t	htype;
 	uint16_t	ptype;
@@ -75,21 +68,64 @@ typedef struct IcmpHeaderRec_ {
 #define UDPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(UdpHeaderRec))
 #define ICMPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(IcmpHeaderRec))
 
-typedef struct LanIpPacketRec_ {
+typedef struct LanEtherRec_ {
+	EtherHeaderRec  ll;
+	uint8_t			pld[];
+} LanEtherRec, *LanEther;
+
+typedef struct LanArpRec_ {
 	EtherHeaderRec	ll;
-	IpHeaderRec		ip;
-	union {
-		struct {
-			IcmpHeaderRec	hdr;
-			unsigned char	pld[ICMPPAYLOADSIZE];
-		}					icmp_s;
-		struct {
-			UdpHeaderRec	hdr;
-			unsigned char	pld[UDPPAYLOADSIZE];
-		}					udp_s;
-		unsigned char raw[IPPAYLOADSIZE];
-	}				p_u;
+	IpArpRec		arp;
+} LanArpRec, *LanArp;
+
+typedef struct LanIpRec_ {
+	EtherHeaderRec	ll;
+	IpHeaderRec     ip;
+} LanIpRec, *LanIp;
+
+typedef struct LanIpHeaderRec_ {
+	LanIpRec        hdr;
+	uint8_t         pld[];
+} LanIpHeaderRec, *LanIpHeader;
+
+typedef struct LanIcmpHeaderRec_ {
+	LanIpRec        hdr;
+	IcmpHeaderRec	icmp;
+	uint8_t			pld[];
+} LanIcmpHeaderRec, *LanIcmpHeader;
+
+/* sizeof(LanUdpHeaderRec) is 44 */
+typedef struct LanUdpHeaderRec_ {
+	LanIpRec		hdr;
+	UdpHeaderRec	udp;
+	uint8_t			pld[];
+} LanUdpHeaderRec, *LanUdpHeader;
+
+typedef union LanIpPacketHeaderRec_ {
+	LanEtherRec			eth_S;
+	LanArpRec			arp_S;
+	LanIpHeaderRec		ip_S;
+	LanIcmpHeaderRec	icmp_S;
+	LanUdpHeaderRec		udp_S;
+} LanIpPacketHeaderRec, *LanIpPacketHeader;
+
+typedef union LanIpPacketRec_ {
+	LanIpPacketHeaderRec	p_u;
+	char					raw[LANPKTMAX];
 } LanIpPacketRec, *LanIpPacket;
+
+#define lpkt_eth(p)		(p)->p_u.eth_S.ll
+#define lpkt_arp(p)	    (p)->p_u.arp_S.arp
+#define lpkt_ip(p)		(p)->p_u.ip_S.hdr.ip
+#define lpkt_udp(p)		(p)->p_u.udp_S.udp
+#define lpkt_icmp(p)	(p)->p_u.icmp_S.icmp
+
+#define lpkt_iphdr(p)	(p)->p_u.ip_S.hdr
+#define lpkt_udphdr(p)	(p)->p_u.udp_S
+
+#define lpkt_eth_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.eth_S.pld)->x)
+#define lpkt_ip_pld(p,type)	    (((union { char c[sizeof(type)]; type x; } *)(p)->p_u.ip_S.pld)->x)
+#define lpkt_udp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.udp_S.pld)->x)
 
 #define ETHPKTSZ(eth_payload_sz)	((eth_payload_sz) + sizeof(EtherHeaderRec))
 #define IPPKTSZ(ip_payload_sz)      ETHPKTSZ((ip_payload_sz) + sizeof(IpHeaderRec))

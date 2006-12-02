@@ -30,7 +30,7 @@ static rtems_id mutex = 0;
 #define UNLOCK() \
 	assert( RTEMS_SUCCESSFUL == rtems_semaphore_release(mutex) )
 
-static LanIpPacketRec replyPacket = {{{0}}};
+static LanIpPacketRec replyPacket = {{{{{0}}}}};
 static int            nsamples; /* keep value around (lazyness) */
 
 static IpCbData intrf;
@@ -78,7 +78,7 @@ dopet(PadRequest req, PadReply rply)
 int
 padStreamStart(PadRequest req, PadStrmCommand scmd, int me, uint32_t hostip)
 {
-PadReply        rply = (PadReply)replyPacket.p_u.udp_s.pld;
+PadReply        rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
 int             len;
 
 	
@@ -90,15 +90,15 @@ int             len;
 	LOCK();
 
 		/* Avoid ARP lookup, don't provide destination IP yet */
-		udpSockHdrsInit(-1, &replyPacket, 0, ntohs(scmd->port), 0); 	
+		udpSockHdrsInit(-1, &lpkt_udphdr(&replyPacket), 0, ntohs(scmd->port), 0); 	
 
 		/* Add missing bits: destination IP , source port */
-		replyPacket.ip.dst               = hostip;
-		replyPacket.p_u.udp_s.hdr.sport  = scmd->port;
+		lpkt_ip(&replyPacket).dst     = hostip;
+		lpkt_udp(&replyPacket).sport  = scmd->port;
 
 		len = nsamples*sizeof(int16_t)*NCHNS + sizeof(*rply);
 		/* Fill in length and IP header checksum etc */
-		udpSockHdrsSetlen(&replyPacket, len);
+		udpSockHdrsSetlen(&lpkt_udphdr(&replyPacket), len);
 		/* Setup Reply */
 		rply->version         = req->version;
 		rply->type            = PADCMD_STRM | PADCMD_RPLY;
@@ -118,7 +118,7 @@ int             len;
 int
 padStreamPet(PadRequest req)
 {
-PadReply  rply = (PadReply)replyPacket.p_u.udp_s.pld;
+PadReply  rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
 	LOCK();
 		dopet(req, rply);
 	UNLOCK();
@@ -240,7 +240,7 @@ int
 padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int endianLittle, int colMajor, void *uarg), int idx, void *uarg)
 {
 int            rval = 0;
-PadReply       rply = (PadReply)replyPacket.p_u.udp_s.pld;
+PadReply       rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
 DrvLan9118_tps plan = lanIpCbDataGetDrv(intrf);
 int            len;
 void          *data_p;
@@ -256,7 +256,7 @@ void          *data_p;
 	}
 
 	/* just look in the cache - we rely on the RX daemon refreshing it */
-	if ( (rval = arpLookup(intrf, replyPacket.ip.dst, replyPacket.ll.dst, 1)) ) {
+	if ( (rval = arpLookup(intrf, lpkt_ip(&replyPacket).dst, lpkt_eth(&replyPacket).dst, 1)) ) {
 		UNLOCK();
 		return rval;
 	}

@@ -74,7 +74,7 @@ static rbuf_t		rbufs[NRBUFS]
 #ifdef RBUF_ALIGNMENT
 __attribute__ ((aligned(RBUF_ALIGNMENT)))
 #endif
-                    = {{{{0}}}};
+                    = {{{{{{0}}}}}};
 
 /* lazy init of tbuf facility */
 static int    ravail = NRBUFS;
@@ -118,23 +118,13 @@ typedef struct IpCbDataRec_ {
 	rtems_id		mutx;
 	uint32_t		ipaddr;
 	uint32_t		nmask;
-	struct {
-		EtherHeaderRec  ll;
-		IpArpRec		arp;
-	} arpreq;
-	struct {
-		EtherHeaderRec  ll;
-		IpArpRec		arp;
-	} arprep;
+	struct LanArpRec_		arpreq;
+	LanArpRec		arprep;
 } IpCbDataRec;
 
 typedef struct UdpSockPeerRec_ {
-	IpCbData	intrf;
-	struct {
-		EtherHeaderRec	 ll;
-		IpHeaderRec		 ip;
-		UdpHeaderRec	udp;
-	}			hdr;
+	IpCbData		intrf;
+	LanUdpHeaderRec	pkt;
 } UdpSockPeerRec, *UdpSockPeer;
 
 typedef struct UdpSockRec_ {
@@ -535,7 +525,7 @@ ArpEntry              e;
  */
 
 static inline void
-fillinSrcCsumIp(IpCbData ifc, LanIpPacket buf_p)
+fillinSrcCsumIp(IpCbData ifc, LanIp buf_p)
 {
 	memcpy(buf_p->ll.src, &ifc->arpreq.ll.src, sizeof(buf_p->ll.src));
 	buf_p->ip.src              = ifc->ipaddr;
@@ -545,26 +535,26 @@ fillinSrcCsumIp(IpCbData ifc, LanIpPacket buf_p)
 }
 
 static inline void
-fillinSrcCsumUdp(IpCbData ifc, LanIpPacket buf_p, int port)
+fillinSrcCsumUdp(IpCbData ifc, LanUdpHeader buf_p, int port)
 {
-	buf_p->p_u.udp_s.hdr.sport = htons(port);
-	buf_p->p_u.udp_s.hdr.csum = 0;
-	fillinSrcCsumIp(ifc, buf_p);
+	buf_p->udp.sport = htons(port);
+	buf_p->udp.csum = 0;
+	fillinSrcCsumIp(ifc, &buf_p->hdr);
 }
 
 /* Copy IP and MAC src->dest */
 static inline void
-src2dstIp(LanIpPacket p)
+src2dstIp(LanIp p)
 {
-	memcpy(p->ll.dst, p->ll.src, 6);
+	memcpy(p->ll.dst, p->ll.src, sizeof(p->ll.dst));
 	p->ip.dst = p->ip.src;
 }
 
 static inline void
-src2dstUdp(LanIpPacket p)
+src2dstUdp(LanUdpHeader p)
 {
-	src2dstIp(p);
-	p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
+	src2dstIp(&p->hdr);
+	p->udp.dport = p->udp.sport;
 }
 
 static int
@@ -572,7 +562,7 @@ handleArp(rbuf_t **ppbuf, IpCbData pd)
 {
 int			isreq = 0;
 rbuf_t		*p    = *ppbuf;
-IpArpRec	*pipa = (IpArpRec*)&p->ip;
+IpArpRec	*pipa = &lpkt_arp(p);
 
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
@@ -640,76 +630,84 @@ handleIP(rbuf_t **ppbuf, IpCbData pd)
 {
 int         rval = 0, l, nbytes, i;
 rbuf_t		*p = *ppbuf;
+IpHeaderRec *pip = &lpkt_ip(p);
 uint16_t	dport;
 int			isbcst = 0;
 
-	NETDRV_READ_INCREMENTAL(pd, &p->ip, sizeof(p->ip));
-	rval += sizeof(p->ip);
+	NETDRV_READ_INCREMENTAL(pd, pip, sizeof(*pip));
+	rval += sizeof(*pip);
 
 	/* accept IP unicast and broadcast */
-	if ( p->ip.dst != pd->ipaddr && ! (isbcst = ISBCST(p->ip.dst, pd->nmask)) )
+	if ( pip->dst != pd->ipaddr && ! (isbcst = ISBCST(pip->dst, pd->nmask)) )
 		return rval;
 
 #ifdef DEBUG
-	if ( (lanIpDebug & DEBUG_IP) && p->ip.dst == pd->ipaddr ) {
-		printf("accepting IP unicast, proto %i\n", p->ip.prot);
+	if ( (lanIpDebug & DEBUG_IP) && pip->dst == pd->ipaddr ) {
+		printf("accepting IP unicast, proto %i\n", pip->prot);
 	}
 #endif
 
 	/* reject non-trivial headers (version != 4, header length > 5, fragmented,
      * i.e., MF (more fragments) or the offset are set
 	 */
-	if ( p->ip.vhl != 0x45 || ntohs(p->ip.off) & 0x9fff ) {
+	if ( pip->vhl != 0x45 || ntohs(pip->off) & 0x9fff ) {
 #ifdef DEBUG
 		if ( (lanIpDebug & DEBUG_IP) )
-			printf("dropping IP packet, vhl %i, off %i\n", p->ip.vhl, ntohs(p->ip.off));
+			printf("dropping IP packet, vhl %i, off %i\n", pip->vhl, ntohs(pip->off));
 #endif
 		return rval;
 	}
 
-	nbytes = ntohs(p->ip.len);
-	l = ((nbytes - sizeof(p->ip)) + 3) & ~3;
-	switch ( p->ip.prot ) {
+	nbytes = ntohs(pip->len);
+	l = ((nbytes - sizeof(*pip)) + 3) & ~3;
+	switch ( pip->prot ) {
 		case 1 /* ICMP */:
-		if ( sizeof(p)-sizeof(p->ip) - sizeof(p->ll) >= l ) {
-			NETDRV_READ_INCREMENTAL(pd, &p->p_u.icmp_s, l);
-			rval += l;
-			if ( p->p_u.icmp_s.hdr.type == 8 /* ICMP REQUEST */ && p->p_u.icmp_s.hdr.code == 0 ) {
+		{
+		IcmpHeaderRec *picmp = &lpkt_icmp(p);
+
+			if ( sizeof(*p)-sizeof(*pip) - sizeof(EtherHeaderRec) >= l ) {
+				NETDRV_READ_INCREMENTAL(pd, picmp, l);
+				rval += l;
+				if ( picmp->type == 8 /* ICMP REQUEST */ && picmp->code == 0 ) {
 #ifdef DEBUG
-				if ( lanIpDebug & DEBUG_ICMP )
-					printf("handling ICMP ECHO request\n");
+					if ( lanIpDebug & DEBUG_ICMP )
+						printf("handling ICMP ECHO request\n");
 #endif
-				p->p_u.icmp_s.hdr.type = 0; /* ICMP REPLY */
-				p->p_u.icmp_s.hdr.csum = 0;
+					picmp->type = 0; /* ICMP REPLY */
+					picmp->csum = 0;
 
-				p->ll.type = htons(0x800); /* IP */
+					lpkt_eth(p).type = htons(0x800); /* IP */
 
-				/* refresh peer's ARP entry */
-				if ( lanIpBasicAutoRefreshARP ) {
-					arpPutEntry(pd, p->ip.src, p->ll.src, 0);
+					/* refresh peer's ARP entry */
+					if ( lanIpBasicAutoRefreshARP ) {
+						arpPutEntry(pd, lpkt_ip(p).src, lpkt_eth(p).src, 0);
+					}
+
+					src2dstIp(&lpkt_iphdr(p));
+					fillinSrcCsumIp(pd, &lpkt_iphdr(p));
+
+					NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EtherHeaderRec) + nbytes);
 				}
-
-				src2dstIp(p);
-				fillinSrcCsumIp(pd, p);
-
-				NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EtherHeaderRec) + nbytes);
 			}
 		}
 		break;
 
 		case 17 /* UDP */:
+		{
+		LanUdpHeader pudp = &lpkt_udphdr(p);
+
 			/* UDP header is word aligned -> OK */
-			NETDRV_READ_INCREMENTAL(pd, &p->p_u.udp_s, sizeof(p->p_u.udp_s.hdr));
-			rval += sizeof(p->p_u.udp_s.hdr);
-			l    -= sizeof(p->p_u.udp_s.hdr);
-			dport = ntohs(p->p_u.udp_s.hdr.dport);
+			NETDRV_READ_INCREMENTAL(pd, &pudp->udp, sizeof(pudp->udp));
+			rval += sizeof(pudp->udp);
+			l    -= sizeof(pudp->udp);
+			dport = ntohs(pudp->udp.dport);
 #ifdef DEBUG
 			if ( lanIpDebug & DEBUG_UDP ) {
 				char buf[INET_ADDRSTRLEN];
 				printf("handling UDP packet (dport %i%s)\n", dport, isbcst ? ", BCST":"");
-				inet_ntop(AF_INET, &p->ip.src, buf, INET_ADDRSTRLEN);
+				inet_ntop(AF_INET, &pudp->hdr.ip.src, buf, INET_ADDRSTRLEN);
 				buf[INET_ADDRSTRLEN-1]=0;
-				printf("from %s:%i ...", buf, ntohs(p->p_u.udp_s.hdr.sport));
+				printf("from %s:%i ...", buf, ntohs(pudp->udp.sport));
 			}
 #endif
 			_Thread_Disable_dispatch();
@@ -718,8 +716,8 @@ int			isbcst = 0;
 					UdpSockPeer pp;
 					if ( (pp = socks[i].peer) ) {
 						/* filter source IP and port */
-						if (    pp->hdr.udp.dport != p->p_u.udp_s.hdr.sport
-							|| (pp->hdr.ip.dst    != p->ip.src && ! ISBCST(pp->hdr.ip.dst, pp->intrf->nmask)) ) {
+						if (    pp->pkt.udp.dport  != pudp->udp.sport
+							|| (pp->pkt.hdr.ip.dst != pudp->hdr.ip.src && ! ISBCST(pp->pkt.hdr.ip.dst, pp->intrf->nmask)) ) {
 							_Thread_Enable_dispatch();
 #ifdef DEBUG
 							if ( lanIpDebug & DEBUG_UDP ) {
@@ -731,12 +729,12 @@ int			isbcst = 0;
 					}
 					_Thread_Enable_dispatch();
 					/* slurp data */
-					NETDRV_READ_INCREMENTAL(pd, p->p_u.udp_s.pld, l);
+					NETDRV_READ_INCREMENTAL(pd, pudp->pld, l);
 					rval += l;
 
 					/* Refresh peer's ARP entry */
 					if ( lanIpBasicAutoRefreshARP ) {
-						arpPutEntry(pd, p->ip.src, p->ll.src, 0);
+						arpPutEntry(pd, pudp->hdr.ip.src, pudp->hdr.ll.src, 0);
 					}
 
 					_Thread_Disable_dispatch();
@@ -755,6 +753,7 @@ int			isbcst = 0;
 			if ( lanIpDebug & DEBUG_UDP )
 				printf("%s\n", *ppbuf ? "DROPPED" : "ACCEPTED [passed to socket queue]");
 #endif			
+		}
 		break;
 
 		default:
@@ -777,12 +776,13 @@ int			isbcst = 0;
 int
 lanIpProcessBuffer(IpCbData pd, rbuf_t **pprb, int len)
 {
-rbuf_t *prb = *pprb;
+rbuf_t         *prb = *pprb;
+EtherHeaderRec *pll = &lpkt_eth(prb);
 
-	NETDRV_READ_INCREMENTAL(pd, prb, sizeof((prb)->ll));
-	len -= sizeof((prb)->ll);
+	NETDRV_READ_INCREMENTAL(pd, prb, sizeof(*pll));
+	len -= sizeof(*pll);
 
-	switch ( prb->ll.type ) {
+	switch ( pll->type ) {
 		case htons(0x806) /* ARP */:
 			len -= handleArp(pprb, pd);
 			break;
@@ -794,7 +794,7 @@ rbuf_t *prb = *pprb;
 		default:
 #ifdef DEBUG
 			if (lanIpDebug & DEBUG_IP)
-				printf("Ethernet: dropping 0x%04x\n", ntohs(prb->ll.type));
+				printf("Ethernet: dropping 0x%04x\n", ntohs(pll->type));
 #endif
 			break;
 	}
@@ -942,52 +942,52 @@ uint32_t s = 0;
 #endif
 
 void
-udpSockHdrsSetlen(LanIpPacket p, int payload_len)
+udpSockHdrsSetlen(LanUdpHeader p, int payload_len)
 {
-	p->ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
-	p->ip.csum  = 0;
+	p->hdr.ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
+	p->hdr.ip.csum  = 0;
 	
-	p->ip.csum  = htons(in_cksum_hdr((void*)&p->ip));
+	p->hdr.ip.csum  = htons(in_cksum_hdr((void*)&p->hdr.ip));
 
-	p->p_u.udp_s.hdr.len   = htons(payload_len + sizeof(UdpHeaderRec));
+	p->udp.len  = htons(payload_len + sizeof(UdpHeaderRec));
 }
 
 int
-udpSockHdrsInit(int sd, LanIpPacket p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
+udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
 {
 int rval = 0;
 
 	if ( dipaddr ) 
-		rval = arpLookup(intrf, dipaddr, p->ll.dst, 0);
+		rval = arpLookup(intrf, dipaddr, p->hdr.ll.dst, 0);
 	else /* they want to leave it blank */
-		memset(p->ll.dst,0,6);
+		memset(p->hdr.ll.dst,0,6);
 
-	p->ll.type  = htons(0x0800);	/* IP */
+	p->hdr.ll.type  = htons(0x0800);	/* IP */
 
-	p->ip.vhl   = 0x45;	/* version 4, 5words length */
-	p->ip.tos   = 0x30; 	/* priority, minimize delay */
-	p->ip.len   = 0;
-	p->ip.id    = htons(ip_id);/* ? */
-	p->ip.off   = htons(0);
-	p->ip.ttl   = 4;
-	p->ip.prot  = 17;	/* UDP */
-	p->ip.dst   = dipaddr;
+	p->hdr.ip.vhl   = 0x45;	/* version 4, 5words length */
+	p->hdr.ip.tos   = 0x30; 	/* priority, minimize delay */
+	p->hdr.ip.len   = 0;
+	p->hdr.ip.id    = htons(ip_id);/* ? */
+	p->hdr.ip.off   = htons(0);
+	p->hdr.ip.ttl   = 4;
+	p->hdr.ip.prot  = 17;	/* UDP */
+	p->hdr.ip.dst   = dipaddr;
 
-	p->p_u.udp_s.hdr.dport = htons(dport);
-	p->p_u.udp_s.hdr.len   = 0;
+	p->udp.dport = htons(dport);
+	p->udp.len   = 0;
 
-	fillinSrcCsumUdp(intrf,p, sd >= 0 ? socks[sd].port : 0);
+	fillinSrcCsumUdp(intrf, p, sd >= 0 ? socks[sd].port : 0);
 
 	/* reset checksum; length is not correct yet */
-	p->ip.csum  = 0;
+	p->hdr.ip.csum  = 0;
 
 	return rval;
 }
 
 void
-udpSockHdrsReflect(LanIpPacket p)
+udpSockHdrsReflect(LanUdpHeader p)
 {
-uint16_t port = p->p_u.udp_s.hdr.dport;
+uint16_t  port = p->udp.dport;
 	src2dstUdp(p);
 	fillinSrcCsumUdp(intrf, p, port);
 }
@@ -1162,7 +1162,7 @@ int rval      = -1;
 		goto egress;
 	}
 
-	if ( udpSockHdrsInit(sd, (LanIpPacket)&p->hdr, dipaddr, dport, 0) ) {
+	if ( udpSockHdrsInit(sd, &p->pkt, dipaddr, dport, 0) ) {
 		/* ARP lookup failure */
 		rval = -ENOTCONN;
 		goto egress;
@@ -1220,14 +1220,14 @@ UdpSockPeer p;
 		return -ENOTCONN;
 	}
 
-	if ( arpLookup(p->intrf, p->hdr.ip.dst, p->hdr.ll.dst, 0) ) {
+	if ( arpLookup(p->intrf, p->pkt.hdr.ip.dst, p->pkt.hdr.ll.dst, 0) ) {
 		SOCKUNLOCK( &socks[sd] );
 		return -ENOTCONN;
 	}
 
-	udpSockHdrsSetlen((LanIpPacket)&socks[sd].peer->hdr, payload_len);
+	udpSockHdrsSetlen(&socks[sd].peer->pkt, payload_len);
 
-	rval = NETDRV_SND_PACKET( p->intrf->drv_p, &p->hdr, sizeof(p->hdr), payload, payload_len );
+	rval = NETDRV_SND_PACKET( p->intrf->drv_p, &p->pkt, sizeof(p->pkt), payload, payload_len );
 
 	SOCKUNLOCK( &socks[sd] );
 
@@ -1256,7 +1256,7 @@ udpSockSendBufRaw(LanIpPacket buf_p, int len)
 int
 udpSockSendBufRawIp(LanIpPacket buf_p)
 {
-int len = ntohs(buf_p->ip.len) + sizeof(EtherHeaderRec);
+int len = ntohs(lpkt_ip(buf_p).len) + sizeof(EtherHeaderRec);
 	NETDRV_ENQ_BUFFER(intrf, buf_p,  len);
 	return len;
 }
@@ -1273,7 +1273,7 @@ uint16_t port;
 	if ( !(port = socks[sd].port) )
 		return -1;
 	
-	fillinSrcCsumUdp(intrf, buf_p, port);
+	fillinSrcCsumUdp(intrf, &lpkt_udphdr(buf_p), port);
 
 	return udpSockSendBufRawIp(buf_p);
 }

@@ -165,6 +165,8 @@ volatile int keeprunning =  1;
 
 /* bounce a UDP packet back to the caller */
 
+typedef uint32_t echodata[2];
+
 int
 udpSocketEcho(int sd, int raw, int idx, int timeout)
 {
@@ -173,10 +175,13 @@ uint16_t    tmp;
 int         len = -1, rval;
 uint32_t	now, then;
 
-static LanIpPacketRec dummy = {{{0}}};
+static LanIpPacketRec dummy = {{{{{0}}}}};
 
-	if ( !dummy.ip.src ) {
-		if ( (rval = udpSockHdrsInit(sd, &dummy, 0, 0, 0)) ) {
+	if ( idx < 0 || idx >= sizeof(echodata)/sizeof((*(echodata*)0)[0]) )
+		return -1;
+
+	if ( !lpkt_ip(&dummy).src ) {
+		if ( (rval = udpSockHdrsInit(sd, &lpkt_udphdr(&dummy), 0, 0, 0)) ) {
 			fprintf(stderr,"udpSocketEcho - Unable to initialize headers: %s\n", strerror(-rval));
 			return rval;
 		}
@@ -188,37 +193,36 @@ static LanIpPacketRec dummy = {{{0}}};
 
 		if ( raw ) {
 			/* user manages headers */
-			memcpy(p->ll.dst, p->ll.src, sizeof(p->ll.dst));
-			p->ip.dst              = p->ip.src;	
-			p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
+			memcpy(lpkt_eth(p).dst, lpkt_eth(p).src, sizeof(lpkt_eth(p).dst));
+			lpkt_ip(p).dst    = lpkt_ip(p).src;	
+			lpkt_udp(p).dport = lpkt_udp(p).sport;
 			{
 				/* fill source ll address, IP address and UDP port */
-				memcpy(p->ll.src, &dummy.ll.src, sizeof(dummy.ll.src));
-				p->ip.src              = dummy.ip.src;
+				memcpy(lpkt_eth(p).src, lpkt_eth(&dummy).src, sizeof(lpkt_eth(&dummy).src));
+				lpkt_ip(p).src    = lpkt_ip(&dummy).src;
 
-				tmp                    = p->p_u.udp_s.hdr.dport;
-				p->p_u.udp_s.hdr.dport = p->p_u.udp_s.hdr.sport;
-				p->p_u.udp_s.hdr.sport = tmp;
+				tmp               = lpkt_udp(p).dport;
+				lpkt_udp(p).dport = lpkt_udp(p).sport;
+				lpkt_udp(p).sport = tmp;
 
-				p->ip.csum             = 0;
+				lpkt_ip(p).csum   = 0;
 				/*
-				   p->ip.csum             = htons(in_cksum_hdr((void*)&p->ip));
+				lpkt_ip(p).csum   = htons(in_cksum_hdr((void*)&lpkt_ip(p)));
 				 */
 
-				p->p_u.udp_s.hdr.csum = 0;
+				lpkt_udp(p).csum = 0;
 
 			}
 			now  = READ_TIMER();
-			then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
-			((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
+			then = lpkt_udp_pld(p,echodata)[idx];
+			lpkt_udp_pld(p,echodata)[idx] = now;
 			len = udpSockSendBufRawIp(p);
-
 		} else {
 			now  = READ_TIMER();
-			then = ((uint32_t*)p->p_u.udp_s.pld)[idx];
-			((uint32_t*)p->p_u.udp_s.pld)[idx] = now;
-			len = ntohs(p->p_u.udp_s.hdr.len) - sizeof(UdpHeaderRec);
-			udpSockSend(sd, &p->p_u.udp_s.pld, len);
+			then = lpkt_udp_pld(p,echodata)[idx];
+			lpkt_udp_pld(p,echodata)[idx] = now;
+			len = ntohs(lpkt_udp(p).len) - sizeof(UdpHeaderRec);
+			udpSockSend(sd, &lpkt_udp_pld(p,echodata), len);
 			udpSockFreeBuf(p);
 		}
 
@@ -262,17 +266,17 @@ int         err = -1;
 			}
 			if ( raw ) {
 				/* fillin headers */
-				udpSockHdrsInit(udpsd, p, dipaddr, dport, 0);
-				udpSockHdrsSetlen(p, PAYLDLEN);
+				udpSockHdrsInit(udpsd, &lpkt_udphdr(p), dipaddr, dport, 0);
+				udpSockHdrsSetlen(&lpkt_udphdr(p), PAYLDLEN);
 
 				/* initialize timestamps */
-				((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
-				((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
+				lpkt_udp_pld(p,echodata)[0] = 0;
+				lpkt_udp_pld(p,echodata)[1] = READ_TIMER();
 				udpSockSendBufRawIp(p);
 			} else {
 				/* initialize timestamps */
-				((uint32_t*)p->p_u.udp_s.pld)[0] = 0;
-				((uint32_t*)p->p_u.udp_s.pld)[1] = READ_TIMER();
+				lpkt_udp_pld(p,echodata)[0] = 0;
+				lpkt_udp_pld(p,echodata)[1] = READ_TIMER();
 				udpSockSend(udpsd, p, PAYLDLEN);
 				udpSockFreeBuf(p);
 			}

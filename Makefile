@@ -9,7 +9,7 @@
 C_PIECES_uC5282=drvLan9118 drvLan9118IpBasic padProto padStream bpmsim
 DEFINES_uC5282 = -DDRVLAN9118
 
-C_PIECES_beatnik=drvMveIpBasic
+C_PIECES_beatnik=drvMveIpBasic padProto
 DEFINES_beatnik= -DDRVMVE
 
 C_PIECES=$(C_PIECES_$(RTEMS_BSP)) lanIpBasicTest
@@ -64,7 +64,7 @@ include $(RTEMS_ROOT)/make/leaf.cfg
 
 DEFINES  += $(DEFINES_$(RTEMS_BSP))
 CPPFLAGS += -I.
-CFLAGS   += 
+CFLAGS   += -Wstrict-aliasing=2
 
 #
 # CFLAGS_DEBUG_V are used when the `make debug' target is built.

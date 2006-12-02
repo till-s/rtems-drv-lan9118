@@ -16,6 +16,13 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.16  2006/11/07 08:34:57  strauman
+		 - added ARP routines to header and added descriptions
+		 - added ARP cache scavenger, dump and flush routines
+		 - added optional refreshing of cache entries whenever
+		   a packet to a UDP socket (or an ICMP echo req.) arrives.
+		 - added more ARP debugging and did some testing
+		
 		Revision 1.15  2006-11-05 02:12:40  till
 		 - added missing headers
 
@@ -552,7 +559,7 @@ static inline uint32_t byterev(uint32_t x)
  *          fifos.
  */
 #define BYTEREV_REG(x) (x)
-#define BYTEREV_BUF(x) byterev(x)
+#define BYTEREV_BUF(x) (CopyItem_u)byterev((x).u)
 #else
 /* We must byte-swap register accesses but buffers are now correct */
 #define BYTEREV_REG(x) byterev(x)
@@ -646,11 +653,17 @@ uint32_t v = wNr | MII_ACC_PHY_SET(0x01) | MII_ACC_MIIRIND_SET(addr) | MII_ACC_M
 		/* poll */;
 }
 
+/* Introduce union containing a char for sake of ISOC99 aliasing rule */
+typedef union {
+	char		c;
+	uint32_t	u;
+} CopyItem_u;
+
 void
 drvLan9118FifoRd(DrvLan9118_tps plan_ps, void *buf_pa, int n_bytes)
 {
-uint32_t                   *ibuf_p = buf_pa;
-register volatile uint32_t *src_p  = (void*)(plan_ps->base + FIFO_ALIAS);
+register          CopyItem_u *ibuf_p = buf_pa;
+register volatile CopyItem_u *src_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 
 	assert( ((uint32_t)buf_pa & 3) == 0 );
 	assert( (n_bytes & 3)          == 0 );
@@ -675,8 +688,8 @@ register volatile uint32_t *src_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 void
 drvLan9118FifoWr(DrvLan9118_tps plan_ps, const void *buf_pa, int n_bytes)
 {
-register const uint32_t    *ibuf_p = buf_pa;
-register volatile uint32_t *dst_p  = (void*)(plan_ps->base + FIFO_ALIAS);
+register const CopyItem_u    *ibuf_p = buf_pa;
+register volatile CopyItem_u *dst_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 
 	assert( ((uint32_t)buf_pa & 3) == 0 );
 	assert( (n_bytes & 3)       == 0 );
@@ -1247,12 +1260,13 @@ uint32_t flags;
 #endif
 
 void
-drvLan9118BufRev(uint32_t *buf_pa, int nwords)
+drvLan9118BufRev(uint32_t *data, int nwords)
 {
 register int i;
+CopyItem_u *buf_pa = (CopyItem_u *)data;
 
 	for (i=0; i<nwords; i++)
-		buf_pa[i] = byterev(buf_pa[i]);
+		buf_pa[i] = (CopyItem_u)byterev(buf_pa[i].u);
 }
  
 /* To be called from TX thread ONLY */
@@ -1700,7 +1714,7 @@ drvLan9118E2PErase(DrvLan9118_tps plan_ps)
 int
 drvLan9118DumpHeaderRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *closure_p)
 {
-UdpPacketRec	udph;
+LanUdpHeaderRec	udph;
 FILE			*f_p = (FILE*)closure_p;
 int				tmp;
 char			ipbuf_a[20];
@@ -1709,56 +1723,56 @@ struct in_addr	sa;
 	if ( !f_p )
 		f_p = stdout;
 
-	if ( len < sizeof(udph.eh) ) {
+	if ( len < sizeof(udph.hdr.ll) ) {
 		fprintf(f_p,"Packet shorter than an ethernet header ???\n");
 		goto bail;
 	}
-	memcpy(&udph.eh, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.eh));
+	memcpy(&udph.hdr.ll, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.hdr.ll));
 #if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
-	drvLan9118BufRev((uint32_t*)&udph.eh, sizeof(udph.eh)/4);
+	drvLan9118BufRev((void*)&udph.hdr.ll, sizeof(udph.hdr.ll)/4);
 #endif
-	len -= sizeof(udph.eh);
-	prether(f_p,udph.eh.src); fprintf(f_p," -> "); prether(f_p,udph.eh.dst);
-	if ( 0x800 != (tmp = (unsigned short)ntohs(udph.eh.type)) ) {
+	len -= sizeof(udph.hdr.ll);
+	prether(f_p,udph.hdr.ll.src); fprintf(f_p," -> "); prether(f_p,udph.hdr.ll.dst);
+	if ( 0x800 != (tmp = (unsigned short)ntohs(udph.hdr.ll.type)) ) {
 		fprintf(f_p," Ethernet type/lenght %#x\n", tmp);
 	} else {
 		fprintf(f_p," (IP)\n");
-		if ( len < sizeof(udph.ih) ) {
+		if ( len < sizeof(udph.hdr.ip) ) {
 			fprintf(f_p,"  Packet shorter than an IP header ???\n");
 			goto bail;
 		}
-		memcpy(&udph.ih, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.ih));
+		memcpy(&udph.hdr.ip, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.hdr.ip));
 #if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
-		drvLan9118BufRev((uint32_t*)&udph.ih, sizeof(udph.ih)/4);
+		drvLan9118BufRev((void*)&udph.hdr.ip, sizeof(udph.hdr.ip)/4);
 #endif
-		len -= sizeof(udph.ih);
-		if ( udph.ih.vhl >> 4 != 4 ) {
+		len -= sizeof(udph.hdr.ip);
+		if ( udph.hdr.ip.vhl >> 4 != 4 ) {
 			fprintf(f_p,"  IP header not version 4 ???\n");
 			goto bail;
 		}
-		sa.s_addr = udph.ih.src;
+		sa.s_addr = udph.hdr.ip.src;
 		ipbuf_a[0]=0;
 		inet_ntop(AF_INET, &sa, ipbuf_a, sizeof(ipbuf_a));
 		fprintf(f_p,"  IP -- src %s -> ",ipbuf_a);
-		sa.s_addr = udph.ih.dst;
+		sa.s_addr = udph.hdr.ip.dst;
 		ipbuf_a[0]=0;
 		inet_ntop(AF_INET, &sa, ipbuf_a, sizeof(ipbuf_a));
 		fprintf(f_p,"%s PROTO ",ipbuf_a);
-		if ( 17 == udph.ih.prot ) {
+		if ( 17 == udph.hdr.ip.prot ) {
 			fprintf(f_p,"UDP\n");
-			if ( len < sizeof(udph.uh) ) {
+			if ( len < sizeof(udph.udp) ) {
 				fprintf(f_p,"    Packet shorter than UDP header ???\n");
 				goto bail;
 			}
-			memcpy(&udph.uh, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.uh));
+			memcpy(&udph.udp, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.udp));
 #if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
-			drvLan9118BufRev((void*)&udph.uh, sizeof(udph.uh)/4);
+			drvLan9118BufRev((void*)&udph.udp, sizeof(udph.udp)/4);
 #endif
-			len -= sizeof(udph.uh);
+			len -= sizeof(udph.udp);
 			fprintf(f_p,"    UDP -- SPORT: %u -> DPORT: %u; payload %lu bytes\n",
-				ntohs(udph.uh.sport), ntohs(udph.uh.dport), ntohs(udph.uh.len) - sizeof(udph.uh));
+				ntohs(udph.udp.sport), ntohs(udph.udp.dport), ntohs(udph.udp.len) - sizeof(udph.udp));
 		} else {
-			fprintf(f_p,"%u LEN %u\n", udph.ih.prot, ntohs(udph.ih.len));
+			fprintf(f_p,"%u LEN %u\n", udph.hdr.ip.prot, ntohs(udph.hdr.ip.len));
 		}
 	}
 bail:
