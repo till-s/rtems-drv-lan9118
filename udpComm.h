@@ -125,6 +125,18 @@ udpCommReturnPacket(int sd, UdpCommPkt p, int len)
 }
 
 #ifndef BSDSOCKET
+
+static __inline__ int ms2ticks(int ms)
+{
+	if ( ms > 0 ) {
+		rtems_interval rate;
+		rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &rate);
+		ms *= rate;
+		if ( 0 == (ms /= 1000) )
+			ms = 1;
+	}
+	return ms;
+}
 /* Inline implementation for udpSocks */
 static __inline__ int
 udpCommSocket(int port)
@@ -135,18 +147,14 @@ udpCommSocket(int port)
 static __inline__ UdpCommPkt
 udpCommRecv(int sd, int timeout_ms)
 {
-	if ( ! (timeout_ms/=20) )
-		timeout_ms = 1;
-	return udpSockRecv(sd, timeout_ms/20); /* FIXME: use system clock rate */
+	return udpSockRecv(sd, ms2ticks(timeout_ms));
 }
 
 STATICINLINE UdpCommPkt
 udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
 {
 UdpCommPkt rval;
-	if ( ! (timeout_ms/=20) )
-		timeout_ms = 1;
-	rval = udpSockRecv(sd, timeout_ms/20); /* FIXME: use system clock rate */
+	rval = udpSockRecv(sd, ms2ticks(timeout_ms));
 	if ( rval ) {
 		if ( ppeerip )
 			*ppeerip = lpkt_ip((LanIpPacket)rval).src;
