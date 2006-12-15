@@ -16,6 +16,11 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.17  2006/12/02 03:03:40  strauman
+		 - redefined declarations of networking headers
+		 - (hopefully) the new declarations and macros to access payloads
+		   make this 'alias-safe' to meet ISOC99 alias rule.
+		
 		Revision 1.16  2006/11/07 08:34:57  strauman
 		 - added ARP routines to header and added descriptions
 		 - added ARP cache scavenger, dump and flush routines
@@ -130,6 +135,8 @@
  * expansion -- this tells me that whoever wrote those was maybe a novice...
  */
 #include <mcf5282/mcf5282.h>
+
+#include <bsp.h>
 
 #include <rtems/rtems/cache.h>
 #include <rtems/bspIo.h>
@@ -474,7 +481,6 @@ typedef struct DrvLan9118_ts_ {
 	rtems_id			tmutx;
 	rtems_id			tid;
 	rtems_id			txq;
-	rtems_isr_entry		oh;
 	DrvLan9118CB_tpf	rx_cb_pf;
 	void				*rx_cb_arg_p;
 	DrvLan9118CB_tpf	tx_cb_pf;
@@ -857,8 +863,8 @@ uint32_t base = plan_ps->base;
 	return 0;
 }
 
-static rtems_isr
-lan9118isr( rtems_vector_number v )
+static void
+lan9118isr(void *uarg, rtems_vector_number v )
 {
 	drvLan9118IrqDisable();
 	rtems_event_send(theLan9118_s.tid, IRQ_EVENT);
@@ -921,9 +927,6 @@ unsigned long key;
 	MCF5282_EPORT_EPPAR |=  (MCF5282_EPORT_EPPAR_EPPA1_LEVEL<<(2*(LAN9118_PIN-1)));
 
 	MCF5282_EPORT_EPDDR &= ~MCF5282_EPORT_EPDDR_EPDD(LAN9118_PIN);
-
-	/* Unmask associated interrupt */
-	MCF5282_INTC0_IMRL &= ~((MCF5282_INTC_IMRL_INT1<<(LAN9118_PIN-1)) | MCF5282_INTC_IMRL_MASKALL);
 
 	/* !!! DISABLE BUFFERED WRITES !!!
 	 *
@@ -1048,7 +1051,7 @@ rtems_status_code sc;
 		plan_ps->phy_cb_pf		= 0;
 		plan_ps->phy_cb_arg_p	= 0;
 
-		rtems_interrupt_catch( lan9118isr, LAN9118_VECTOR, &plan_ps->oh );
+		BSP_installVME_isr( LAN9118_VECTOR, lan9118isr, 0 );
 
 		/* configure IRQ output as push-pull, enable interrupts */
 		wr9118Reg(plan_ps->base, IRQ_CFG, IRQ_CFG_BITS | IRQ_CFG_IRQ_EN);
@@ -1196,8 +1199,7 @@ drvLan9118Shutdown(DrvLan9118_tps plan_ps)
 	if ( plan_ps->txq )
 		rtems_message_queue_delete(plan_ps->txq);
 	plan_ps->txq  = 0;
-	rtems_interrupt_catch( plan_ps->oh, LAN9118_VECTOR, &plan_ps->oh );
-	plan_ps->oh = 0;
+	BSP_removeVME_isr( LAN9118_VECTOR, lan9118isr, 0 );
 }
 
 int
@@ -1404,6 +1406,7 @@ uint32_t base = plan_ps->base;
 #ifdef DEBUG
 volatile uint32_t maxFFDDelay = 0;
 #endif
+volatile uint32_t drvLan9118RxIntBase = 0;
 
 void
 drvLan9118Daemon(rtems_task_argument arg)
@@ -1424,6 +1427,7 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 
 		if ( RSFL_INT & int_sts ) {
 		/* skip */
+		drvLan9118RxIntBase = Read_timer();
 		while ( RX_FIFO_INF_RXSUSED_GET(rd9118Reg(base, RX_FIFO_INF)) > 0 ) {
 			int left;
 
