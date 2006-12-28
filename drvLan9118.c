@@ -16,6 +16,12 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.18  2006-12-15 04:13:33  till
+		 - replaced 'rtems_interrupt_catch' by BSP_installVME_isr() API. Using the
+		   latter we get BSP magic necessary for setting up the interrupt controller
+		   [in addition to enabling the IRQ there a 'level' and 'priority' must also
+		   be configured].
+
 		Revision 1.17  2006/12/02 03:03:40  strauman
 		 - redefined declarations of networking headers
 		 - (hopefully) the new declarations and macros to access payloads
@@ -64,7 +70,6 @@
  */
 
 /* #define HW_BYTES_NOT_SWAPPED */
-#define HW_BYTES_NOT_SWAPPED
 
 /* ENDIANNESS NOTES
  * ----------------
@@ -555,6 +560,20 @@ static inline uint32_t byterev(uint32_t x)
 #else
 #if BYTE_ORDER == BIG_ENDIAN
 
+#ifdef __GNUC__
+
+typedef uint32_t CopyItem_u __attribute__((__may_alias__));
+#define UINTOF(item) (item)
+
+#else
+/* Introduce union containing a char for sake of ISOC99 aliasing rule */
+typedef union {
+	char		c;
+	uint32_t	u;
+} CopyItem_u;
+#define UINTOF(item) (item).u
+#endif
+
 #ifdef HW_BYTES_NOT_SWAPPED
 /* Bigendian CPU with wires going straight to the chip (which is little endian).
  * We can access registers w/o byte swapping (using the 'endian' register to
@@ -565,7 +584,7 @@ static inline uint32_t byterev(uint32_t x)
  *          fifos.
  */
 #define BYTEREV_REG(x) (x)
-#define BYTEREV_BUF(x) (CopyItem_u)byterev((x).u)
+#define BYTEREV_BUF(x) (CopyItem_u)byterev(UINTOF(x))
 #else
 /* We must byte-swap register accesses but buffers are now correct */
 #define BYTEREV_REG(x) byterev(x)
@@ -658,12 +677,6 @@ uint32_t v = wNr | MII_ACC_PHY_SET(0x01) | MII_ACC_MIIRIND_SET(addr) | MII_ACC_M
 	while ( MII_ACC_MIIBSY & macCsrRead(plan_ps, MII_ACC) )
 		/* poll */;
 }
-
-/* Introduce union containing a char for sake of ISOC99 aliasing rule */
-typedef union {
-	char		c;
-	uint32_t	u;
-} CopyItem_u;
 
 void
 drvLan9118FifoRd(DrvLan9118_tps plan_ps, void *buf_pa, int n_bytes)
@@ -1268,7 +1281,7 @@ register int i;
 CopyItem_u *buf_pa = (CopyItem_u *)data;
 
 	for (i=0; i<nwords; i++)
-		buf_pa[i] = (CopyItem_u)byterev(buf_pa[i].u);
+		buf_pa[i] = (CopyItem_u)byterev(UINTOF(buf_pa[i]));
 }
  
 /* To be called from TX thread ONLY */
