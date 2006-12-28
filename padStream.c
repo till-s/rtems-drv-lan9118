@@ -236,6 +236,14 @@ static unsigned long noise = 1;
 	return packetBuffer;
 }
 
+uint32_t maxStreamSendDelay1 = 0;
+uint32_t maxStreamSendDelay2 = 0;
+
+#ifdef __mcf5200__
+extern uint32_t drvLan9118RxIntBase;
+extern uint32_t Read_timer();
+#endif
+
 int
 padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int endianLittle, int colMajor, void *uarg), int idx, void *uarg)
 {
@@ -244,9 +252,16 @@ PadReply       rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
 DrvLan9118_tps plan = lanIpCbDataGetDrv(intrf);
 int            len;
 void          *data_p;
+uint32_t       now;
 
 	if ( idx != 0 )
 		return -ENOTSUP;	/* not supported yet */
+
+#ifdef __mcf5200__
+	now = Read_timer() - drvLan9118RxIntBase;
+	if ( now > maxStreamSendDelay1 )
+		maxStreamSendDelay1 = now;
+#endif
 
 	LOCK();
 
@@ -288,6 +303,12 @@ void          *data_p;
 	drvLan9118TxUnlock(plan);
 
 	UNLOCK();
+
+#ifdef __mcf5200__
+	now = Read_timer() - drvLan9118RxIntBase;
+	if ( now > maxStreamSendDelay2 )
+		maxStreamSendDelay2 = now;
+#endif
 
 	return 0;
 }
