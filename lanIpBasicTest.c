@@ -238,7 +238,7 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 			/* avgtrip = (127*avgtrip + now)/128;
              * 128 * a = 127 * a + n = 127/128 * (128*a) + n
              */
-            avgtrip128 = (avgtrip128 * 127)/128 + now;
+            avgtrip128 += (now - (avgtrip128>>7));
 			/* When reading avgtrip it must be divided by 128 */
 		}
 	}
