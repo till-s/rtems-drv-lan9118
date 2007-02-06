@@ -117,7 +117,7 @@ lanIpTakedown()
 int
 lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 {
-	if ( !ip || !nmsk || !port ) {
+	if ( !ip || !nmsk ) {
 		fprintf(stderr,"Usage: lanIpSetup(char *ip, char *netmask, int port, enaddr)\n");
 		return -1;
 	}
@@ -144,7 +144,7 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		goto egress;
 	}
 
-	if ( (udpsd = udpSockCreate(port)) < 0 ) {
+	if ( port > 0 &&(udpsd = udpSockCreate(port)) < 0 ) {
 		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-udpsd));
 		goto egress;
 	}
