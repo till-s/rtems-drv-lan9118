@@ -149,7 +149,7 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		goto egress;
 	}
 
-	return (udpsd);
+	return 0;
 
 egress:
 	lanIpTakedown();
