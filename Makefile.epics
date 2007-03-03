@@ -22,7 +22,7 @@ USR_CPPFLAGS += -DBSDSOCKET
 
 # The following are compiled and added to the Support library
 udpCommSupport_SRCS += padProto.c
-udpCommSupport_SRCS += udpCommBSD
+udpCommSupport_SRCS += udpCommBSD.c
 
 #===========================
 
