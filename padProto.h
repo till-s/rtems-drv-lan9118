@@ -36,7 +36,7 @@ typedef struct PadCommandRec_ {
 #define PADCMD_STRM_FLAG_CM	2	/* They want column-major  data    */
 
 #define PADRPLY_STRM_FLAG_TYPE_SET(x)	(((x)&7)<<4)
-#define PADRPLY_STRM_FLAG_TYPE_GET(fl)	((fl)>>4)&7)
+#define PADRPLY_STRM_FLAG_TYPE_GET(fl)	(((fl)>>4)&7)
 
 /* Sample size is sizeof(int16_t) */
 #define PADRPLY_STRM_NCHANNELS	4
