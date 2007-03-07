@@ -13,7 +13,9 @@
 #include <string.h>
 #include <unistd.h>
 
-static int verbose  = 0;
+static int verbose    = 0;
+
+static unsigned theChannel = 0;
 
 void
 pdump(UdpCommPkt p)
@@ -59,7 +61,7 @@ union {
 void
 usage(char *nm)
 {
-	fprintf(stderr,"Usage: %s [-hv] [-l port] [-n nsamples] ip:port <msg_type_int>\n",nm);
+	fprintf(stderr,"Usage: %s [-hvec] [-C channel] [-l port] [-n nsamples] ip:port <msg_type_int>\n",nm);
 }
 
 static void
@@ -73,8 +75,7 @@ UdpCommPkt        p = 0;
 		exit(1);
 	}
 
-
-	if ( (err=padRequest(sd, 3, scmd->type, scmd, &p, 100)) ) {
+	if ( (err=padRequest(sd, theChannel, scmd->type, 0xdead, scmd, &p, 1000)) ) {
 		fprintf(stderr,">>> Sending request failed: %s <<<\n",strerror(-err));
 	}
 
@@ -156,7 +157,7 @@ int               nsamples  = 8;
 int               badEndian = 0;
 int               colMajor  = 0;
 
-	while ( (ch = getopt(argc, argv, "vcehl:n:")) > 0 ) {
+	while ( (ch = getopt(argc, argv, "vcehl:n:C:")) > 0 ) {
 		switch (ch) {
 			default:
 				fprintf(stderr,"Unknown option '%c'\n",ch);
@@ -180,12 +181,21 @@ int               colMajor  = 0;
 			case 'c': colMajor  = 1; break;
 			case 'e': badEndian = 1; break;
 
-			case 'n':
-				if ( 1 != sscanf(optarg,"%i",&nsamples) ) {
-					fprintf(stderr,"invalid number of sampes: '%s'\n",optarg);
+			case 'C':
+				if ( 1 != sscanf(optarg,"%i",&theChannel) || theChannel > 255 ) {
+					fprintf(stderr,"invalid channel #: '%s'\n",optarg);
 					usage(argv[0]);
 					exit(1);
 				}
+			break;
+
+			case 'n':
+				if ( 1 != sscanf(optarg,"%i",&nsamples) ) {
+					fprintf(stderr,"invalid number of samples: '%s'\n",optarg);
+					usage(argv[0]);
+					exit(1);
+				}
+			break;
 		}
 	}
 
