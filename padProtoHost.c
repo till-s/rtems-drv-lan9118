@@ -118,6 +118,10 @@ int16_t           *buf;
 
 		/* Dump packet */
 		buf = (int16_t*)rply->data;
+
+		printf("// IDX: %i, TYPE %i\n",
+			rply->strm_cmd_idx,
+			PADRPLY_STRM_FLAG_TYPE_GET(rply->strm_cmd_flags));
 		/* always write out in fortran (scilab) format with
 		 * the samples going down the columns
 		 */
