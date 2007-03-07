@@ -66,6 +66,12 @@ padStreamSim(PadSimCommand scmd);
 int
 padStreamStop(void);
 
+typedef enum {
+	PadDataBpm = 0,
+	PadDataCalRed,
+	PadDataCalGrn
+} PadDataKind;
+
 #ifdef __cplusplus
 }
 #endif
