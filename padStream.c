@@ -12,6 +12,8 @@
 
 #define NCHNS	4	/* channels on a PAD */
 
+#include <padStream.h>
+
 /* Data stream implementation. This could all be done over the
  * udpSock abstraction but less efficiently since we would have
  * to copy the PAD fifo to memory first instead of copying the
@@ -34,11 +36,13 @@ static LanIpPacketRec replyPacket = {{{{{0}}}}};
 static int            nsamples; /* keep value around (lazyness) */
 
 static IpCbData intrf;
+static int (*start_stop_cb)(int start, void *uarg) = 0;
+static void  *cbarg = 0;
 
 static volatile int isup = 0;
 
 int
-padStreamInitialize(IpCbData if_p)
+padStreamInitialize(IpCbData if_p, int (*cb)(int start, void *uarg), void *uarg)
 {
 rtems_status_code sc;
 	
@@ -53,7 +57,9 @@ rtems_status_code sc;
 		mutex = 0;
 		return sc;
 	}
-	intrf = if_p;
+	intrf         = if_p;
+	start_stop_cb = cb;
+	cbarg         = uarg;
 	return 0;
 }
 
@@ -81,6 +87,9 @@ padStreamStart(PadRequest req, PadStrmCommand scmd, int me, uint32_t hostip)
 PadReply        rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
 int             len;
 
+
+	if ( !intrf )
+		return -ENODEV; /* stream has not been initialized yet */
 	
 	if ( (nsamples = ntohl(scmd->nsamples)) > 720/4  ) {
 		/* doesn't fit in one packet */
@@ -111,6 +120,9 @@ int             len;
 		
 		isup                  = 1;
 	UNLOCK();
+
+	if ( start_stop_cb )
+		return start_stop_cb(1, cbarg);
 
 	return 0;
 }
@@ -330,8 +342,18 @@ StripSimValRec strips = { ntohl(scmd->a), ntohl(scmd->b), ntohl(scmd->c), ntohl(
 int
 padStreamStop(void)
 {
-	LOCK();
-	isup = 0;
-	UNLOCK();
-	return 0;
+int rval = 0;
+
+	if ( !intrf )
+		return -ENODEV; /* stream has not been initialized yet */
+
+	if ( start_stop_cb )
+		rval = start_stop_cb(0, cbarg);
+
+	if ( !rval ) {
+		LOCK();
+		isup = 0;
+		UNLOCK();
+	}
+	return rval;
 }
