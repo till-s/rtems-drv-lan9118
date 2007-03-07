@@ -793,8 +793,13 @@ EtherHeaderRec *pll = &lpkt_eth(prb);
 
 		default:
 #ifdef DEBUG
-			if (lanIpDebug & DEBUG_IP)
+			if (lanIpDebug & DEBUG_IP) {
+				int i;
 				printf("Ethernet: dropping 0x%04x\n", ntohs(pll->type));
+				for (i=0; i<20; i++)
+				printf("%02x ", *(((char*)prb)+i));
+				printf("\n");
+			}
 #endif
 			break;
 	}
