@@ -94,7 +94,7 @@ uint32_t t;
 #endif
 
 void           *plan = 0;
-IpCbData       cbdta = 0;
+IpCbData       lanIpIf = 0;
 int			   udpsd = -1;
 
 void
@@ -104,9 +104,9 @@ lanIpTakedown()
 		udpSockDestroy(udpsd);
 		udpsd = -1;
 	}
-	if ( cbdta ) {
-		lanIpCbDataDestroy( cbdta );
-		cbdta = 0;
+	if ( lanIpIf ) {
+		lanIpCbDataDestroy( lanIpIf );
+		lanIpIf = 0;
 	}
 	if ( plan ) {
 		shutdown(plan);
@@ -126,20 +126,20 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		return -1;
 	}
 
-	if ( ! (cbdta = lanIpCbDataCreate()) ) {
+	if ( ! (lanIpIf = lanIpCbDataCreate()) ) {
 		fprintf(stderr,"Unable to create callback data\n");
 		goto egress;
 	}
 
-	plan = setup(cbdta, enaddr);
+	plan = setup(lanIpIf, enaddr);
 
 	if ( !plan )
 		goto egress;
 
-	lanIpCbDataInit(cbdta, plan, ip, nmsk);
+	lanIpCbDataInit(lanIpIf, plan, ip, nmsk);
 
 	/* Start driver */
-	if ( start(plan, cbdta, 0) ) {
+	if ( start(plan, lanIpIf, 0) ) {
 		fprintf(stderr,"Unable to start driver\n");
 		goto egress;
 	}
@@ -317,7 +317,7 @@ egress:
 int
 _cexpModuleFinalize(void* unused)
 {
-	if ( plan || udpsd>=0 || cbdta ) {
+	if ( plan || udpsd>=0 || lanIpIf ) {
 		fprintf(stderr,"Module still in use, use 'lanIpTakedown()'\n");
 		return -1;
 	}
