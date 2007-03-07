@@ -35,6 +35,9 @@ typedef struct PadCommandRec_ {
 #define PADCMD_STRM_FLAG_LE	1	/* They want little-endian data    */
 #define PADCMD_STRM_FLAG_CM	2	/* They want column-major  data    */
 
+#define PADRPLY_STRM_FLAG_TYPE_SET(x)	(((x)&7)<<4)
+#define PADRPLY_STRM_FLAG_TYPE_GET(fl)	((fl)>>4)&7)
+
 /* Sample size is sizeof(int16_t) */
 #define PADRPLY_STRM_NCHANNELS	4
 #define PADRPLY_STRM_NSAMPLES(nbytes) (((nbytes) - sizeof(PadReplyRec))/sizeof(int16_t)/PADRPLY_STRM_NCHANNELS)
@@ -125,23 +128,6 @@ padUdpHandler(int port, int chnl);
  */
 int
 padRequest(int sd, int chnl, int type, uint32_t xid, void *cmdData, UdpCommPkt *wantReply, int timeout_ms);
-
-/* Function that actually starts streaming transfer
- * to a host.
- *        'me': our channel #
- *    'hostip': IP address in network byte order.
- *  'hostport': UDP port on host (*host byte order*).
- */
-int
-padStreamStart(PadRequest req, PadStrmCommand cmd, int me, uint32_t hostip);
-
-/* 'pet' the timestamp and transaction id */
-int
-padStreamPet(PadRequest req);
-
-/* Function that actually stops streaming transfer */
-int
-padStreamStop(void);
 
 #ifdef __cplusplus
 }

@@ -114,8 +114,8 @@ int             len;
 		rply->chnl            = me;
 		rply->nBytes          = htons(len);
 		rply->status          = 0;
-		rply->strm_cmd_flags = scmd->flags;
-		rply->strm_cmd_idx   = 0;
+		rply->strm_cmd_flags  = scmd->flags;
+		rply->strm_cmd_idx    = 0;
 		dopet(req, rply);
 		
 		isup                  = 1;
@@ -257,7 +257,7 @@ extern uint32_t Read_timer();
 #endif
 
 int
-padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int endianLittle, int colMajor, void *uarg), int idx, void *uarg)
+padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int endianLittle, int colMajor, void *uarg), int type, int idx, void *uarg)
 {
 int            rval = 0;
 PadReply       rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
@@ -288,7 +288,9 @@ uint32_t       now;
 		return rval;
 	}
 
-	rply->strm_cmd_idx   = idx;
+	rply->strm_cmd_idx    = idx;
+	rply->strm_cmd_flags &= ~PADRPLY_STRM_FLAG_TYPE_SET(-1);
+	rply->strm_cmd_flags |=  PADRPLY_STRM_FLAG_TYPE_SET(type);
 
 	len = UDPPKTSZ(ntohs(rply->nBytes));
 
@@ -328,7 +330,7 @@ uint32_t       now;
 int
 padStreamTest()
 {
-	return padStreamSend(streamTest,0,0);
+	return padStreamSend(streamTest, 0, 0,0);
 }
 
 int
@@ -336,7 +338,7 @@ padStreamSim(PadSimCommand scmd)
 {
 StripSimValRec strips = { ntohl(scmd->a), ntohl(scmd->b), ntohl(scmd->c), ntohl(scmd->d) };
 
-	return padStreamSend(streamSim, 0, &strips);
+	return padStreamSend(streamSim, 0, 0, &strips);
 }
 
 int

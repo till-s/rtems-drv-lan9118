@@ -42,11 +42,17 @@ padStreamCleanup();
 int
 padStreamPet(PadRequest req);
 
+/* Function that actually starts streaming transfer
+ * to a host.
+ *        'me': our channel #
+ *    'hostip': IP address in network byte order.
+ *  'hostport': UDP port on host (*host byte order*).
+ */
 int
 padStreamStart(PadRequest req, PadStrmCommand scmd, int me, uint32_t hostip);
 
 int
-padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int endianLittle, int colMajor, void *uarg), int idx, void *uarg);
+padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int endianLittle, int colMajor, void *uarg), int type, int idx, void *uarg);
 
 /* execute 'padStreamSend' with test data */
 int
@@ -56,6 +62,7 @@ padStreamTest();
 int
 padStreamSim(PadSimCommand scmd);
 
+/* Function that actually stops streaming transfer */
 int
 padStreamStop(void);
 
