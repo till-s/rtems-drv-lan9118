@@ -59,6 +59,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.20  2007/02/01 04:39:31  guest
+		 - added slac copyright waiver
+		
 		Revision 1.19  2006/12/28 20:00:56  till
 		 - use '__may_alias__' attribute instead of union (if __GNUC__)
 		
@@ -890,6 +893,61 @@ static int lazy_init = 0;
 #endif	
 }
 
+/* Verify that all byte lanes work */
+int
+drvLan9118SanityCheck(DrvLan9118_tps plan_ps)
+{
+int      rval = 0;
+uint32_t z,o;
+uint32_t oendian;
+
+	/* verify that we can read signature from BYTE_TEST */
+	o = rd9118Reg(plan_ps->base, BYTE_TEST);
+	if ( 0x87654321 != o ) {
+		fprintf(stderr,"drvLan9118: probing BYTE_TEST failed -- is there a chip? (read 0x%08lx -- expected 0x87654321)\n", o);
+		rval = -1;
+	}
+
+	/* verify that we can write all zeros and all-ones to ENDIAN */
+
+	oendian = rd9118Reg(plan_ps->base, ENDIAN);
+
+	if ( oendian ) {
+		/* chip would to byte-reversal for us (if register really
+		 * contains all ones
+		 */
+		wr9118Reg(plan_ps->base, ENDIAN, 0);
+		z = rd9118Reg(plan_ps->base, ENDIAN);
+		if ( z != 0xffffffff ) {
+			/* setting register to switch lanes failed */
+			z = byterev(z);		
+		}
+		wr9118Reg(plan_ps->base, ENDIAN, 0xffffffff);
+		o = rd9118Reg(plan_ps->base, ENDIAN);
+		if ( o != 0xffffffff ) {
+			/* setting register to switch lanes failed */
+			o = byterev(o);
+		}
+	} else {
+		/* chip does not do byte reversal */
+		wr9118Reg(plan_ps->base, ENDIAN, 0xffffffff);
+		o = rd9118Reg(plan_ps->base, ENDIAN);
+		wr9118Reg(plan_ps->base, ENDIAN, 0);
+		z = rd9118Reg(plan_ps->base, ENDIAN);
+	}
+	if ( z != 0 ) {
+		fprintf(stderr,"drvLan9118: SANITY CHECK FAILURE -- writing 0x00000000 to  register failed; read back 0x%08lx\n",z);
+		rval = -1;
+	}
+	if ( o != 0xffffffff ) {
+		fprintf(stderr,"drvLan9118: SANITY CHECK FAILURE -- writing 0xffffffff to  register failed; read back 0x%08lx\n",o);
+		rval = -1;
+	}
+
+	return rval;
+}
+
+
 STATIC int
 drvLan9118ResetChip(DrvLan9118_tps plan_ps)
 {
@@ -1053,6 +1111,9 @@ rtems_status_code sc;
 #error "Setup of ENDIAN register not implemented for byte-swapped connection to a little-endian CPU"
 #endif
 #endif
+
+	if ( drvLan9118SanityCheck(plan_ps) )
+		return 0;
 
 	if ( drvLan9118ResetChip(plan_ps) )
 		return 0;
