@@ -2,15 +2,8 @@
 #define PAD_STREAM_H
 /* $Id$ */
 
-#include <udpComm.h>
 #include <padProto.h>
-#include <lanIpBasic.h>
-#include <drvLan9118.h>
-#include <rtems.h>
-#include <errno.h>
-#include <assert.h>
 #include <stdint.h>
-#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,7 +25,7 @@ extern "C" {
  */
 
 int
-padStreamInitialize(IpCbData if_p, int (*cb)(int start, void *uarg), void *uarg);
+padStreamInitialize(void *if_p, int (*cb)(int start, void *uarg), void *uarg);
 
 /* cleanup (for module unloading) */
 int

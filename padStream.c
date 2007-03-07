@@ -42,7 +42,7 @@ static void  *cbarg = 0;
 static volatile int isup = 0;
 
 int
-padStreamInitialize(IpCbData if_p, int (*cb)(int start, void *uarg), void *uarg)
+padStreamInitialize(void *if_p, int (*cb)(int start, void *uarg), void *uarg)
 {
 rtems_status_code sc;
 	
