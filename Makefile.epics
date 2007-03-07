@@ -11,7 +11,7 @@ CROSS_COMPILER_TARGET_ARCHS=RTEMS-uC5282 RTEMS-beatnik
 # Build an IOC support library
 LIBRARY_HOST=udpCommSupport
 
-INC += padProto.h udpComm.h
+INC += padProto.h udpComm.h padStream.h
 
 
 #Indicate that we want to use 'normal' socket implementation
