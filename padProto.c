@@ -283,7 +283,7 @@ PadCommand	cmd = (PadCommand)req->data;
 int			rval;
 UdpCommPkt  p = 0;
 
-	if ( who > 20 )
+	if ( who > 50 )
 		return -EINVAL;
 
 	req->version = PADPROTO_VERSION1;
