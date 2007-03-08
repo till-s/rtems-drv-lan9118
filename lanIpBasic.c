@@ -81,6 +81,58 @@ static int    ravail = NRBUFS;
 
 static rbuf_t *frb = 0; /* free list */
 
+typedef uint16_t __attribute__ ((may_alias)) usa;
+
+static uint16_t
+ipcsum(uint8_t *d, int n)
+{
+register uint32_t s = 0;
+register usa     *p;
+int				  swapped;
+union {
+	uint8_t	b[2];
+	uint16_t s;
+} s_u;
+
+	/* unaligned start */
+	if ( (swapped = ((uint32_t)d & 1)) ) {
+		s_u.b[0] = 0;
+		s_u.b[1] = *d++;
+		s       += s_u.s;
+		n--;
+	}
+
+	p = (usa*)d;
+
+	while ( n >= 16 ) {
+		s += *p++; s += *p++; s += *p++; s += *p++;
+		s += *p++; s += *p++; s += *p++; s += *p++;
+		n -= 16;
+	}
+	while ( n >= 8 ) {
+		s += *p++; s += *p++; s += *p++; s += *p++;
+		n -= 8;
+	}
+	while ( n>1 ) {
+		s += *p++;
+		n-=2;
+	}
+	if ( n ) {
+		s_u.b[0] = *(uint8_t*)p;
+		s_u.b[1] = 0;
+		s       += s_u.s;
+	}
+
+	s  = (s & 0xffff) + (s >> 16);
+	s += s>>16;
+
+	if ( swapped ) {
+		s = (s<<8) | (s>>8);
+	}
+
+	return ~s & 0xffff;
+}
+
 static rbuf_t *getrbuf()
 {
 rbuf_t                *rval;
@@ -675,7 +727,7 @@ int			isbcst = 0;
 #endif
 					picmp->type = 0; /* ICMP REPLY */
 					picmp->csum = 0;
-
+					picmp->csum = htons(ipcsum((uint8_t*)picmp, nbytes-sizeof(*pip)));
 					lpkt_eth(p).type = htons(0x800); /* IP */
 
 					/* refresh peer's ARP entry */
@@ -935,15 +987,7 @@ lanIpCbDataDestroy(IpCbData pd)
 const uint8_t dstenaddr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }; /* { 0x00,0x30,0x65,0xC9,0x9D,0xF8 }; */
 const uint8_t srcenaddr[6] = { 0x08,0x00,0x56,0x00,0x01,0x00 };
 
-uint16_t csum(uint16_t *d, int n)
-{
-uint32_t s = 0;
-	while (n--)
-		s+=*d++;
-	while ( s > 0xffff )
-		s = (s & 0xffff) + (s >> 16);
-	return ~s & 0xffff;
-}
+
 #endif
 
 void
