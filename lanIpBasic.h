@@ -171,7 +171,7 @@ lanIpBscIfDestroy(IpBscIf);
  *        global variable 'lanIpBasicAutoRefreshARP' to zero.
  */
 
-extern int lanIpBasicAutoRefreshARP;
+extern int lanIpBscAutoRefreshARP;
 
 /* 'Manual' maintenance of the ARP cache */
 

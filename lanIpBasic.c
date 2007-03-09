@@ -216,7 +216,7 @@ static ArpEntry arpcache[256] = {0};
 /* Keep an available entry around */
 static ArpEntry	arpScratch    = 0; /* FIXME: should be free()ed when unloading module */
 
-int lanIpBasicAutoRefreshARP  = 1;
+int lanIpBscAutoRefreshARP  = 1;
 
 /* don't bother about MSBs; assume we're on a LAN anyways */
 #define ARPHASH(h,ipaddr)			\
@@ -731,7 +731,7 @@ int			isbcst = 0;
 					lpkt_eth(p).type = htons(0x800); /* IP */
 
 					/* refresh peer's ARP entry */
-					if ( lanIpBasicAutoRefreshARP ) {
+					if ( lanIpBscAutoRefreshARP ) {
 						arpPutEntry(pd, lpkt_ip(p).src, lpkt_eth(p).src, 0);
 					}
 
@@ -785,7 +785,7 @@ int			isbcst = 0;
 					rval += l;
 
 					/* Refresh peer's ARP entry */
-					if ( lanIpBasicAutoRefreshARP ) {
+					if ( lanIpBscAutoRefreshARP ) {
 						arpPutEntry(pd, pudp->hdr.ip.src, pudp->hdr.ll.src, 0);
 					}
 
