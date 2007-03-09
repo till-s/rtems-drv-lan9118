@@ -59,6 +59,10 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.21  2007-03-07 03:18:16  till
+		 - added 'sanity check' to verify that all bits can be read and written.
+		   This should catch hardware/wiring/soldering problems.
+
 		Revision 1.20  2007/02/01 04:39:31  guest
 		 - added slac copyright waiver
 		
@@ -1813,7 +1817,12 @@ int     rval   = doit(plan_ps, E2P_CMD_WRITE, 0, &header, 0, 1);
 
 	if ( rval )
 		return rval;
-	return doit(plan_ps, E2P_CMD_WRITE, 0, enaddr_pa, 1, 6);
+	rval = doit(plan_ps, E2P_CMD_WRITE, 0, enaddr_pa, 1, 6);
+
+	if ( rval )
+		return rval;
+
+	return e2p_cmd_exec(plan_ps, E2P_CMD_RELOAD);
 }
 
 
