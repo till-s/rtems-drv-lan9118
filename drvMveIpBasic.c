@@ -124,7 +124,7 @@ static void
 consume_rxbuf(void *buf, void *closure, int len)
 {
 rbuf_t   *b = buf;
-IpCbData pd = closure;
+IpBscIf pd = closure;
 
 	if ( !buf ) {
 		drvMveIpBasicRxDrop++;
@@ -146,8 +146,8 @@ IpCbData pd = closure;
 void
 drvMveIpBasicTask(rtems_task_argument arg)
 {
-IpCbData				cbd  = (IpCbData)arg;
-mveth_drv				mdrv = lanIpCbDataGetDrv(cbd);
+IpBscIf				ipbif  = (IpBscIf)arg;
+mveth_drv				mdrv = lanIpBscIfGetDrv(ipbif);
 struct mveth_private	*mp = mdrv->mp; 
 rtems_event_set			evs;
 uint32_t				irqs;
@@ -186,7 +186,7 @@ uint32_t				irqs;
 }
 
 rtems_id
-drvMveIpBasicSetup(IpCbData cbd)
+drvMveIpBasicSetup(IpBscIf ipbif)
 {
 int                   unit;
 mveth_drv             mdrv = 0;
@@ -219,9 +219,9 @@ rtems_id              tid  = 0;
 	for ( unit=1; unit < 3; unit++ ) {
 		if ( (mdrv->mp = BSP_mve_setup( unit,
 								tid,
-								cleanup_txbuf, cbd,
+								cleanup_txbuf, ipbif,
 								alloc_rxbuf,
-								consume_rxbuf, cbd,
+								consume_rxbuf, ipbif,
 								RX_RING_SIZE, TX_RING_SIZE,
 								BSP_MVE_IRQ_TX | BSP_MVE_IRQ_RX /* | BSP_MVE_IRQ_LINK */ )) ) {
 			rtems_task_set_note( tid, RTEMS_NOTEPAD_0, (uint32_t)mdrv );

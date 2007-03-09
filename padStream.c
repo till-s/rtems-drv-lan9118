@@ -35,7 +35,7 @@ static rtems_id mutex = 0;
 static LanIpPacketRec replyPacket = {{{{{0}}}}};
 static int            nsamples; /* keep value around (lazyness) */
 
-static IpCbData intrf;
+static IpBscIf intrf;
 static int (*start_stop_cb)(int start, void *uarg) = 0;
 static void  *cbarg = 0;
 
@@ -261,7 +261,7 @@ padStreamSend(void * (*getdata)(void *packBuffer, int idx, int nsamples, int end
 {
 int            rval = 0;
 PadReply       rply = &lpkt_udp_pld(&replyPacket, PadReplyRec);
-DrvLan9118_tps plan = lanIpCbDataGetDrv(intrf);
+DrvLan9118_tps plan = lanIpBscIfGetDrv(intrf);
 int            len;
 void          *data_p;
 uint32_t       now;

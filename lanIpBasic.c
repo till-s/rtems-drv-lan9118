@@ -165,17 +165,17 @@ rtems_interrupt_level key;
 
 #define ISBCST(ip,nm)  (((ip) & ~(nm)) == ~(nm))
 
-typedef struct IpCbDataRec_ {
+typedef struct IpBscIfRec_ {
 	void			*drv_p;
 	rtems_id		mutx;
 	uint32_t		ipaddr;
 	uint32_t		nmask;
 	struct LanArpRec_		arpreq;
 	LanArpRec		arprep;
-} IpCbDataRec;
+} IpBscIfRec;
 
 typedef struct UdpSockPeerRec_ {
-	IpCbData		intrf;
+	IpBscIf			intrf;
 	LanUdpHeaderRec	pkt;
 } UdpSockPeerRec, *UdpSockPeer;
 
@@ -190,7 +190,7 @@ typedef struct UdpSockRec_ {
 #define SOCKUNLOCK(sck) 	assert( RTEMS_SUCCESSFUL == rtems_semaphore_release((sck)->mutx) )
 
 static UdpSockRec	socks[NSOCKS] = {{0}};
-static IpCbData		intrf         = 0;
+static IpBscIf		intrf         = 0;
 
 
 /* Permanent / 'static' flag */
@@ -271,7 +271,7 @@ rtems_interval now;
 }
 
 int
-arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly)
+arpLookup(IpBscIf pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly)
 {
 ArpEntry rval;
 int      i,n;
@@ -316,7 +316,7 @@ uint8_t  h;
 }
 
 int
-arpPutEntry(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int perm)
+arpPutEntry(IpBscIf pd, uint32_t ipaddr, uint8_t *enaddr, int perm)
 {
 ArpEntry rval;
 ArpEntry newe;
@@ -421,7 +421,7 @@ egress:
 }
 
 void
-arpDelEntry(IpCbData pd, uint32_t ipaddr)
+arpDelEntry(IpBscIf pd, uint32_t ipaddr)
 {
 ArpEntry rval, found = 0;
 int      i;
@@ -449,7 +449,7 @@ uint8_t  h;
 }
 
 void
-arpFlushCache(IpCbData pd, int perm_also)
+arpFlushCache(IpBscIf pd, int perm_also)
 {
 int i;
 
@@ -471,7 +471,7 @@ int i;
 }
 
 void
-arpDumpCache(IpCbData pd, FILE *f)
+arpDumpCache(IpBscIf pd, FILE *f)
 {
 ArpEntryRec           abuf;
 rtems_interrupt_level key;
@@ -502,7 +502,7 @@ int                   i;
 }
 
 void
-arpScavenger(IpCbData pd, rtems_interval maxage, rtems_interval period, int nloops)
+arpScavenger(IpBscIf pd, rtems_interval maxage, rtems_interval period, int nloops)
 {
 rtems_interval        ancient,sec,now;
 int                   i;
@@ -577,7 +577,7 @@ ArpEntry              e;
  */
 
 static inline void
-fillinSrcCsumIp(IpCbData ifc, LanIp buf_p)
+fillinSrcCsumIp(IpBscIf ifc, LanIp buf_p)
 {
 	memcpy(buf_p->ll.src, &ifc->arpreq.ll.src, sizeof(buf_p->ll.src));
 	buf_p->ip.src              = ifc->ipaddr;
@@ -587,7 +587,7 @@ fillinSrcCsumIp(IpCbData ifc, LanIp buf_p)
 }
 
 static inline void
-fillinSrcCsumUdp(IpCbData ifc, LanUdpHeader buf_p, int port)
+fillinSrcCsumUdp(IpBscIf ifc, LanUdpHeader buf_p, int port)
 {
 	buf_p->udp.sport = htons(port);
 	buf_p->udp.csum = 0;
@@ -610,7 +610,7 @@ src2dstUdp(LanUdpHeader p)
 }
 
 static int
-handleArp(rbuf_t **ppbuf, IpCbData pd)
+handleArp(rbuf_t **ppbuf, IpBscIf pd)
 {
 int			isreq = 0;
 rbuf_t		*p    = *ppbuf;
@@ -678,7 +678,7 @@ IpArpRec	*pipa = &lpkt_arp(p);
 }
 
 static int
-handleIP(rbuf_t **ppbuf, IpCbData pd)
+handleIP(rbuf_t **ppbuf, IpBscIf pd)
 {
 int         rval = 0, l, nbytes, i;
 rbuf_t		*p = *ppbuf;
@@ -826,7 +826,7 @@ int			isbcst = 0;
  */
 
 int
-lanIpProcessBuffer(IpCbData pd, rbuf_t **pprb, int len)
+lanIpProcessBuffer(IpBscIf pd, rbuf_t **pprb, int len)
 {
 rbuf_t         *prb = *pprb;
 EtherHeaderRec *pll = &lpkt_eth(prb);
@@ -860,10 +860,10 @@ EtherHeaderRec *pll = &lpkt_eth(prb);
 }
 
 
-IpCbData
-lanIpCbDataCreate()
+IpBscIf
+lanIpBscIfCreate()
 {
-IpCbData          		rval = malloc(sizeof(*rval));
+IpBscIf          		rval = malloc(sizeof(*rval));
 rtems_status_code		sc;
 rtems_interrupt_level	key;
 
@@ -902,18 +902,18 @@ rtems_interrupt_level	key;
 }
 
 void
-lanIpCbDataInit(IpCbData cbd_p, void *drv_p, char *ipaddr, char *netmask)
+lanIpBscIfInit(IpBscIf ipbif_p, void *drv_p, char *ipaddr, char *netmask)
 {
 uint8_t		      (*enaddr)[6];
 
-	cbd_p->drv_p  = drv_p;
+	ipbif_p->drv_p  = drv_p;
 
-	cbd_p->ipaddr = inet_addr(ipaddr);
-	cbd_p->nmask  = inet_addr(netmask);
+	ipbif_p->ipaddr = inet_addr(ipaddr);
+	ipbif_p->nmask  = inet_addr(netmask);
 
 
 	/* convenience variable */
-	enaddr = &cbd_p->arpreq.ll.src;
+	enaddr = &ipbif_p->arpreq.ll.src;
 	
 	/* Setup ARP templates for request and reply */
 
@@ -921,38 +921,38 @@ uint8_t		      (*enaddr)[6];
 
 	/* REQUEST */
 		/* DST: bcast address            */
-		memset(&cbd_p->arpreq.ll.dst, 0xff, sizeof(*enaddr));
+		memset(&ipbif_p->arpreq.ll.dst, 0xff, sizeof(*enaddr));
 		/* SRC: drv_p's ethernet address  */
 		NETDRV_READ_ENADDR(drv_p, (uint8_t*)enaddr);
 		/* TYPE/LEN is ARP (0x806)       */
-		cbd_p->arpreq.ll.type = htons(0x806);
+		ipbif_p->arpreq.ll.type = htons(0x806);
 	/* REPLY   */
 		/* DST: ??? filled by daemon     */
 
 		/* SRC: drv_p's ethernet address  */
-		memcpy(cbd_p->arprep.ll.src, enaddr, sizeof(*enaddr));
+		memcpy(ipbif_p->arprep.ll.src, enaddr, sizeof(*enaddr));
 		/* TYPE/LEN is ARP (0x806)       */
-		cbd_p->arprep.ll.type = htons(0x806);
+		ipbif_p->arprep.ll.type = htons(0x806);
 
 	/* ARP PORTION */
 	/* HW and PROTO type for both */
-	cbd_p->arprep.arp.htype = cbd_p->arpreq.arp.htype = htons(1);     /* Ethernet */
-	cbd_p->arprep.arp.ptype = cbd_p->arpreq.arp.ptype = htons(0x800); /* IP       */
-	cbd_p->arprep.arp.hlen  = cbd_p->arpreq.arp.hlen  = 6; 
-	cbd_p->arprep.arp.plen  = cbd_p->arpreq.arp.plen  = 4; 
+	ipbif_p->arprep.arp.htype = ipbif_p->arpreq.arp.htype = htons(1);     /* Ethernet */
+	ipbif_p->arprep.arp.ptype = ipbif_p->arpreq.arp.ptype = htons(0x800); /* IP       */
+	ipbif_p->arprep.arp.hlen  = ipbif_p->arpreq.arp.hlen  = 6; 
+	ipbif_p->arprep.arp.plen  = ipbif_p->arpreq.arp.plen  = 4; 
 
-	cbd_p->arprep.arp.oper  = htons(2); /* ARP REPLY   */
-	cbd_p->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
+	ipbif_p->arprep.arp.oper  = htons(2); /* ARP REPLY   */
+	ipbif_p->arpreq.arp.oper  = htons(1); /* ARP REQUEST */
 
 	/* REQUEST */
 		/* TARGET HW ADDR: bcst                       */ 
-		memset(cbd_p->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
+		memset(ipbif_p->arpreq.arp.tha, 0xff,   sizeof(*enaddr));
 		/* TARGET IP ADDR: ??? (filled by requestor)  */
 
 		/* SOURCE HW ADDR: drv_p's ethernet address    */
-		memcpy(&cbd_p->arpreq.arp.sha, enaddr, sizeof(*enaddr));
+		memcpy(&ipbif_p->arpreq.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
-		memcpy(&cbd_p->arpreq.arp.spa, &cbd_p->ipaddr, 4);
+		memcpy(&ipbif_p->arpreq.arp.spa, &ipbif_p->ipaddr, 4);
 
 	/* REPLY */
 		/* TARGET HW ADDR: ??? (filled by daemon)     */ 
@@ -960,19 +960,19 @@ uint8_t		      (*enaddr)[6];
 		/* TARGET IP ADDR: ??? (filled by daemon)     */
 
 		/* SOURCE HW ADDR: drv_p's ethernet address    */
-		memcpy(cbd_p->arprep.arp.sha, enaddr, sizeof(*enaddr));
+		memcpy(ipbif_p->arprep.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
-		memcpy(cbd_p->arprep.arp.spa, &cbd_p->ipaddr, 4);
+		memcpy(ipbif_p->arprep.arp.spa, &ipbif_p->ipaddr, 4);
 }
 
 void *
-lanIpCbDataGetDrv(IpCbData cbd_p)
+lanIpBscIfGetDrv(IpBscIf ipbif_p)
 {
-	return cbd_p->drv_p;
+	return ipbif_p->drv_p;
 }
 
 void
-lanIpCbDataDestroy(IpCbData pd)
+lanIpBscIfDestroy(IpBscIf pd)
 {
 	if ( pd ) {
 		assert( intrf == pd );

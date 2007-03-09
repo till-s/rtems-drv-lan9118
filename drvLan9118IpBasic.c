@@ -60,7 +60,7 @@ DrvLan9118_tps plan = (DrvLan9118_tps)pdrv;
 int
 drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg)
 {
-IpCbData        pd = arg;
+IpBscIf        pd = arg;
 rbuf_t			*prb;
 
 	if ( ! (prb = getrbuf()) ) {

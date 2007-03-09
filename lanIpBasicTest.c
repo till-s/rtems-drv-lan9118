@@ -1,5 +1,7 @@
 #include <rtems.h>
 #include <lanIpBasic.h>
+#include <lanIpBasicTest.h>
+
 #include <string.h>
 
 #include <netinet/in.h>
@@ -17,16 +19,16 @@ shutdown(void *drv)
 }
 
 static void *
-setup(IpCbData cbd, uint8_t *enaddr)
+setup(IpBscIf ipbif, uint8_t *enaddr)
 {
 	return drvLan9118Setup(enaddr,0);
 }
 
 static int
-start(void *drv, IpCbData cbd, int pri)
+start(void *drv, IpBscIf ipbif, int pri)
 {
 	return drvLan9118Start(drv, pri, 0,
-				drvLan9118IpRxCb, cbd,
+				drvLan9118IpRxCb, ipbif,
 				0, 0,
 				0, 0,
 				0, 0);
@@ -50,15 +52,15 @@ extern void
 drvMveIpBasicTask(rtems_task_argument arg);
 
 extern rtems_id
-drvMveIpBasicSetup(IpCbData cbd);
+drvMveIpBasicSetup(IpBscIf ipbif);
 
 extern void *
 drvMveIpBasicGetDrv(rtems_id tid);
 
 static void *
-setup(IpCbData cbd, uint8_t *enaddr)
+setup(IpBscIf ipbif, uint8_t *enaddr)
 {
-	mve_tid = drvMveIpBasicSetup(cbd);
+	mve_tid = drvMveIpBasicSetup(ipbif);
 	if ( mve_tid ) {
 		return drvMveIpBasicGetDrv(mve_tid);
 	}
@@ -66,13 +68,13 @@ setup(IpCbData cbd, uint8_t *enaddr)
 }
 
 static int
-start(void *drv, IpCbData cbd, int pri)
+start(void *drv, IpBscIf ipbif, int pri)
 {
 rtems_task_priority op;
 
 	if ( pri > 0 )
 		rtems_task_set_priority(mve_tid, (rtems_task_priority)pri, &op);
-	return RTEMS_SUCCESSFUL == rtems_task_start(mve_tid, drvMveIpBasicTask, (rtems_task_argument)cbd) ? 0 : -1;
+	return RTEMS_SUCCESSFUL == rtems_task_start(mve_tid, drvMveIpBasicTask, (rtems_task_argument)ipbif) ? 0 : -1;
 }
 
 static inline void
@@ -93,24 +95,24 @@ uint32_t t;
 #error "unsupported driver"
 #endif
 
-void           *plan = 0;
-IpCbData       lanIpIf = 0;
-int			   udpsd = -1;
+void      *lanIpDrv  =  0;
+IpBscIf   lanIpIf    =  0;
+int		  lanIpUdpsd = -1;
 
 void
 lanIpTakedown()
 {
-	if ( udpsd >= 0 ) {
-		udpSockDestroy(udpsd);
-		udpsd = -1;
+	if ( lanIpUdpsd >= 0 ) {
+		udpSockDestroy(lanIpUdpsd);
+		lanIpUdpsd = -1;
 	}
 	if ( lanIpIf ) {
-		lanIpCbDataDestroy( lanIpIf );
+		lanIpBscIfDestroy( lanIpIf );
 		lanIpIf = 0;
 	}
-	if ( plan ) {
-		shutdown(plan);
-		plan = 0;
+	if ( lanIpDrv ) {
+		shutdown(lanIpDrv);
+		lanIpDrv = 0;
 	}
 }
 
@@ -121,31 +123,31 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		fprintf(stderr,"Usage: lanIpSetup(char *ip, char *netmask, int port, enaddr)\n");
 		return -1;
 	}
-	if ( plan ) {
+	if ( lanIpDrv ) {
 		fprintf(stderr,"Can call setup only once\n");
 		return -1;
 	}
 
-	if ( ! (lanIpIf = lanIpCbDataCreate()) ) {
+	if ( ! (lanIpIf = lanIpBscIfCreate()) ) {
 		fprintf(stderr,"Unable to create callback data\n");
 		goto egress;
 	}
 
-	plan = setup(lanIpIf, enaddr);
+	lanIpDrv = setup(lanIpIf, enaddr);
 
-	if ( !plan )
+	if ( !lanIpDrv )
 		goto egress;
 
-	lanIpCbDataInit(lanIpIf, plan, ip, nmsk);
+	lanIpBscIfInit(lanIpIf, lanIpDrv, ip, nmsk);
 
 	/* Start driver */
-	if ( start(plan, lanIpIf, 0) ) {
+	if ( start(lanIpDrv, lanIpIf, 0) ) {
 		fprintf(stderr,"Unable to start driver\n");
 		goto egress;
 	}
 
-	if ( port > 0 &&(udpsd = udpSockCreate(port)) < 0 ) {
-		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-udpsd));
+	if ( port > 0 &&(lanIpUdpsd = udpSockCreate(port)) < 0 ) {
+		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-lanIpUdpsd));
 		goto egress;
 	}
 
@@ -156,12 +158,12 @@ egress:
 	return -1;
 }
 
-uint32_t mintrip         = -1;
-uint32_t maxtrip         =  0;
-uint32_t avgtrip128      =  0;
-uint32_t pktlost         =  0;
-uint32_t pktsent         =  0;
-volatile int keeprunning =  1;
+uint32_t lanIpTst_mintrip         = -1;
+uint32_t lanIpTst_maxtrip         =  0;
+uint32_t lanIpTst_avgtrip128      =  0;
+uint32_t lanIpTst_pktlost         =  0;
+uint32_t lanIpTst_pktsent         =  0;
+volatile int lanIpTst_keeprunning =  1;
 
 /* bounce a UDP packet back to the caller */
 
@@ -226,19 +228,19 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 			udpSockFreeBuf(p);
 		}
 
-		pktsent++;
+		lanIpTst_pktsent++;
 
 		/* If this was not the first packet then measure roundtrip */
 		if ( then != 0 ) {
 			now-=then;	
-			if ( now < mintrip )
-				mintrip = now;
-			if ( now > maxtrip )
-				maxtrip = now;
+			if ( now < lanIpTst_mintrip )
+				lanIpTst_mintrip = now;
+			if ( now > lanIpTst_maxtrip )
+				lanIpTst_maxtrip = now;
 			/* avgtrip = (127*avgtrip + now)/128;
              * 128 * a = 127 * a + n = 127/128 * (128*a) + n
              */
-            avgtrip128 += (now - (avgtrip128>>7));
+            lanIpTst_avgtrip128 += (now - (lanIpTst_avgtrip128>>7));
 			/* When reading avgtrip it must be divided by 128 */
 		}
 	}
@@ -251,7 +253,7 @@ udpBouncer(int master, int raw, uint32_t dipaddr, uint16_t dport)
 LanIpPacket p;
 int         err = -1;
 	if ( !raw ) {
-		if ( (err=udpSockConnect(udpsd, dipaddr, dport)) ) {
+		if ( (err=udpSockConnect(lanIpUdpsd, dipaddr, dport)) ) {
 			fprintf(stderr,"bouncer: Unable to connect socket: %s\n", strerror(-err));
 			return err;
 		}
@@ -266,7 +268,7 @@ int         err = -1;
 			}
 			if ( raw ) {
 				/* fillin headers */
-				udpSockHdrsInit(udpsd, &lpkt_udphdr(p), dipaddr, dport, 0);
+				udpSockHdrsInit(lanIpUdpsd, &lpkt_udphdr(p), dipaddr, dport, 0);
 				udpSockHdrsSetlen(&lpkt_udphdr(p), PAYLDLEN);
 
 				/* initialize timestamps */
@@ -277,28 +279,28 @@ int         err = -1;
 				/* initialize timestamps */
 				lpkt_udp_pld(p,echodata)[0] = 0;
 				lpkt_udp_pld(p,echodata)[1] = READ_TIMER();
-				udpSockSend(udpsd, p, PAYLDLEN);
+				udpSockSend(lanIpUdpsd, p, PAYLDLEN);
 				udpSockFreeBuf(p);
 			}
 
-			while ( udpSocketEcho(udpsd, raw, 1, 20) > 0 ) {
-				if ( !keeprunning ) {
-					pktlost--;
+			while ( udpSocketEcho(lanIpUdpsd, raw, 1, 20) > 0 ) {
+				if ( !lanIpTst_keeprunning ) {
+					lanIpTst_pktlost--;
 					break;
 				}
 			}
 
-			pktlost++;
+			lanIpTst_pktlost++;
 
-		} while ( keeprunning );
+		} while ( lanIpTst_keeprunning );
 			fprintf(stderr,"Master terminated.\n");
 			/* in case they want to start again */
-			keeprunning=1;
+			lanIpTst_keeprunning=1;
 	} else {
 			/* make sure socket is flushed */
-			while ( (p = udpSockRecv(udpsd,0)) )		
+			while ( (p = udpSockRecv(lanIpUdpsd,0)) )		
 				udpSockFreeBuf(p);
-			while (udpSocketEcho(udpsd, raw, 0, 100) > 0)
+			while (udpSocketEcho(lanIpUdpsd, raw, 0, 100) > 0)
 					;
 			fprintf(stderr,"Slave timed out; terminating\n");
 	}
@@ -306,7 +308,7 @@ int         err = -1;
 
 egress:
 	if ( !raw ) {
-		if ( (err=udpSockConnect(udpsd, 0, 0)) ) {
+		if ( (err=udpSockConnect(lanIpUdpsd, 0, 0)) ) {
 			fprintf(stderr,"bouncer: Unable to disconnect socket: %s\n", strerror(-err));
 		}
 	}
@@ -317,7 +319,7 @@ egress:
 int
 _cexpModuleFinalize(void* unused)
 {
-	if ( plan || udpsd>=0 || lanIpIf ) {
+	if ( lanIpDrv || lanIpUdpsd>=0 || lanIpIf ) {
 		fprintf(stderr,"Module still in use, use 'lanIpTakedown()'\n");
 		return -1;
 	}

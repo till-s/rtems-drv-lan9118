@@ -134,22 +134,22 @@ udpSockHdrsReflect(LanUdpHeader p);
  * RETURNS handle on success, NULL on failure.
  */
 
-typedef struct IpCbDataRec_ *IpCbData;
+typedef struct IpBscIfRec_ *IpBscIf;
 
 /* Create private data */
-IpCbData
-lanIpCbDataCreate(void);
+IpBscIf
+lanIpBscIfCreate(void);
 
 /* Setup private data structure */
 void
-lanIpCbDataInit(IpCbData cbd_p, void *drv_p, char *ipaddr, char *netmask);
+lanIpBscIfInit(IpBscIf ipbif_p, void *drv_p, char *ipaddr, char *netmask);
 
 /* Retrieve the driver handle   */
 void *
-lanIpCbDataGetDrv(IpCbData cbd_p);
+lanIpBscIfGetDrv(IpBscIf ipbif_p);
 
 void
-lanIpCbDataDestroy(IpCbData);
+lanIpBscIfDestroy(IpBscIf);
 
 /* The ARP interface.
  * 
@@ -193,7 +193,7 @@ extern int lanIpBasicAutoRefreshARP;
  */
 
 int
-arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly);
+arpLookup(IpBscIf pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly);
 
 /*
  * Create an ARP cache entry for 'ipaddr' (network byte order) / 'enaddr'.
@@ -203,13 +203,13 @@ arpLookup(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int cacheonly);
  *          permanent entries -- would exhaust the hash table].
  */
 int
-arpPutEntry(IpCbData pd, uint32_t ipaddr, uint8_t *enaddr, int perm);
+arpPutEntry(IpBscIf pd, uint32_t ipaddr, uint8_t *enaddr, int perm);
 
 /*
  * Remove entry from the cache
  */
 void
-arpDelEntry(IpCbData pd, uint32_t ipaddr);
+arpDelEntry(IpBscIf pd, uint32_t ipaddr);
 
 /*
  * Swipe the arp cache and evict all entries older than 'maxage' seconds
@@ -219,17 +219,17 @@ arpDelEntry(IpCbData pd, uint32_t ipaddr);
  */
 
 void
-arpScavenger(IpCbData pd, rtems_interval maxage, rtems_interval period, int nloops);
+arpScavenger(IpBscIf pd, rtems_interval maxage, rtems_interval period, int nloops);
 
 /* Flush the entire arp cache (except for permanent/static entires
  * if 'perm_also' is zero).
  */
 void
-arpFlushCache(IpCbData pd, int perm_also);
+arpFlushCache(IpBscIf pd, int perm_also);
 
 /* Print ARP cache contents to a file (stdout if NULL) */
 void
-arpDumpCache(IpCbData pd, FILE *f);
+arpDumpCache(IpBscIf pd, FILE *f);
 
 #ifdef __cplusplus
 }
