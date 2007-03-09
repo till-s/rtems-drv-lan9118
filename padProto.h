@@ -12,6 +12,19 @@
 extern "C" {
 #endif
 
+/* Hijack (hopefully unused) port numbers...
+ *
+ * hde-lcesrvr-1   14936/tcp  hde-lcesrvr-1
+ * hde-lcesrvr-1   14936/udp  hde-lcesrvr-1
+ * hde-lcesrvr-2   14937/tcp  hde-lcesrvr-2
+ * hde-lcesrvr-2   14937/udp  hde-lcesrvr-2
+ *
+ * However, any port may be used as long
+ * as both partners agree about it.
+ */
+#define PADPROTO_PORT		14936
+#define PADPROTO_STRM_PORT	14937
+
 #define PADCMD_RPLY  ((int8_t)(1<<7)) 	/* reply ORs request with msb      */
 #define PADCMD_QUIET ((int8_t)(1<<6))	/* requestor doesn't want a reply  */
 
