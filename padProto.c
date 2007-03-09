@@ -11,7 +11,7 @@
 #define DEBUG_PROTOHDL 1
 #define DEBUG_REPLYCHK 2
 
-#define DEBUG (DEBUG_PROTOHDL | DEBUG_REPLYCHK)
+#define DEBUG 0
 
 #ifdef DEBUG
 int padProtoDebug = DEBUG;

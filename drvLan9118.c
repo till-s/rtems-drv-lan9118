@@ -59,6 +59,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.22  2007-03-09 00:32:01  till
+		 - need to reload MAC address after reburning eeprom.
+
 		Revision 1.21  2007-03-07 03:18:16  till
 		 - added 'sanity check' to verify that all bits can be read and written.
 		   This should catch hardware/wiring/soldering problems.
@@ -258,7 +261,18 @@ extern const char *getbenv(const char *);
 #define DEBUG_IRQ	(1<<1)
 #define DEBUG_TXSTS (1<<2)
 
-#define DEBUG 		DEBUG_IP
+/* If DEBUG is undefined all code is removed.
+ *
+ * If DEBUG is defined code is compiled in
+ * and the drvLan9118Debug variable is initialized
+ * to DEBUG.
+ *
+ * ==> in order to have debugging but let the
+ *     driver be quiet define DEBUG to 0.
+ *     Debug messages can then be enabled at
+ *     run-time.
+ */
+#define DEBUG		DEBUG_TXSTS
 
 
 /* Which RTEMS events to use to signal the driver task that service is needed */ 
@@ -287,7 +301,7 @@ extern const char *getbenv(const char *);
 
 #ifdef DEBUG
 #define STATIC
-int drvLan9118Debug = DEBUG_TXSTS;
+int drvLan9118Debug = DEBUG;
 #else
 #define STATIC static
 #endif

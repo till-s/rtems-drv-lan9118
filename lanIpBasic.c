@@ -38,7 +38,7 @@
 #define DEBUG_UDP	8
 #define DEBUG_TASK	16
 
-#define DEBUG		DEBUG_ARP
+#define DEBUG		0
 
 #ifdef DEBUG
 int	lanIpDebug = DEBUG;
