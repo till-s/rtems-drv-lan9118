@@ -173,7 +173,7 @@ int               colMajor  = 0;
 				exit(0);
 
 			case 'l':
-				if ( 1!= sscanf(optarg,"%i",&port) || port <= 0 || port > 65535 ) {
+				if ( 1!= sscanf(optarg,"%i",&port) || port < 0 || port > 65535 ) {
 					fprintf(stderr,"invalid port number: '%s'\n", optarg);
 					usage(argv[0]);
 					exit(1);
@@ -211,6 +211,9 @@ int               colMajor  = 0;
 	}
 
 	
+	if ( 0 == port )
+		port = PADPROTO_PORT;
+
 	sd = udpCommSocket(port);
 
 	if ( sd < 0 ) {
@@ -223,7 +226,7 @@ int               colMajor  = 0;
 	} else {
 		if ( PADCMD_STRM == (scmd.type = type) ) {
 			scmd.flags    = (!isbe() ^ (badEndian == 1)) ? PADCMD_STRM_FLAG_LE : 0;
-			scmd.port     = htons(port+1);
+			scmd.port     = htons(port+1); /* should be PADPROTO_STRM_PORT */
 			scmd.nsamples = htonl(nsamples);
 
 			if ( colMajor )

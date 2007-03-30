@@ -118,6 +118,9 @@ padProtoHandler(PadRequest req_p, int me, int *killed_p, uint32_t peerip);
 /* Handle padProto requests on 'port' for channel/slot 'chnl' until an error
  * occurs or a KILL command is received.
  *
+ * If the port number is zero, then the predefined port PADPROTO_PORT
+ * (padProto.h) will be used.
+ *
  * RETURNS: 0 on success -errno on error
  */
 int

@@ -239,6 +239,9 @@ int         sd;
 UdpCommPkt  p;
 uint32_t	peerip;
 
+	if ( 0 == port )
+		port = PADPROTO_PORT;
+
 	if ( (sd = udpCommSocket(port)) < 0 ) {
 		return sd;
 	}
