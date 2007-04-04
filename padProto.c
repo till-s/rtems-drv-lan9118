@@ -83,7 +83,7 @@ int32_t			err  = 0;
 	if ( n <= 0 ) {
 		/* address individual channels or broadcast */
 		if ( PADREQ_BCST != n && -n != chnl )
-			return -2;
+			return 0;
 		chnl = 0; /* first slot */
 	}
 #ifdef DEBUG
