@@ -63,7 +63,7 @@ include $(RTEMS_ROOT)/make/leaf.cfg
 #
 
 DEFINES  += $(DEFINES_$(RTEMS_BSP))
-CPPFLAGS += -I.
+CPPFLAGS := -I. $(CPPFLAGS)
 CFLAGS   += -Wstrict-aliasing=2
 
 #
