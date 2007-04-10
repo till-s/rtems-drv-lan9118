@@ -1,5 +1,11 @@
 TOP=..
 
+ifeq ("$(wildcard $(TOP)/configure/CONFIG)xx","xx")
+# TOP/configure/CONFIG doesn't exist. Use RTEMS Makefile
+include Makefile.rtems
+else
+# we're inside EPICS
+
 include $(TOP)/configure/CONFIG
 
 CROSS_COMPILER_TARGET_ARCHS=RTEMS-uC5282 RTEMS-beatnik
@@ -27,5 +33,8 @@ udpCommSupport_SRCS += udpCommBSD.c
 #===========================
 
 include $(TOP)/configure/RULES
+
 #----------------------------------------
 #  ADD RULES AFTER THIS LINE
+
+endif 
