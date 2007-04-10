@@ -130,7 +130,7 @@ udpSockHdrsReflect(LanUdpHeader p);
 
 /* Create private data (pass as rx callback closure pointer to drvLan9118Start)
  * 
- * This can be thought of (and should better be called) as an 'interface handle'.
+ * This can be thought of as (and should better be called) an 'interface handle'.
  * RETURNS handle on success, NULL on failure.
  */
 
