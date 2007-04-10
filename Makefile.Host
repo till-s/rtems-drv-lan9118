@@ -1,3 +1,5 @@
+# Makefile for building a test program on a
+# host computer using the ordinary network stack
 OBJS =  padProtoHost.o udpCommBSD.o padProto.o
 
 padProtoHost: $(OBJS)
