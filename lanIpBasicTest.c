@@ -12,6 +12,13 @@
 
 #include <drvLan9118.h>
 
+static uint8_t eeprom_shadow[100];
+static int     shadow_len = 0;
+
+#define SHADOW    eeprom_shadow
+#define SHADOWLEN shadow_len
+#define THE_SHADOWLEN (sizeof(eeprom_shadow)/sizeof(eeprom_shadow[0]))
+
 static inline void
 shutdown(void *drv)
 {
@@ -21,7 +28,20 @@ shutdown(void *drv)
 static void *
 setup(IpBscIf ipbif, uint8_t *enaddr)
 {
-	return drvLan9118Setup(enaddr,0);
+void *rval = drvLan9118Setup(enaddr,0);
+int   err;
+
+	if ( rval ) {
+		/* Cannot read eeprom once the driver is up -- therefore
+		 * we read it's contents into memory...
+		 */
+		if ( (err = drvLan9118E2PRead(rval, eeprom_shadow, 0, THE_SHADOWLEN)) ) {
+			fprintf(stderr,"Unable to read 9118 EEPROM: %s\n", strerror(-err));
+		} else {
+			SHADOWLEN = THE_SHADOWLEN;
+		}
+	}
+	return rval;
 }
 
 static int
@@ -42,6 +62,9 @@ extern uint32_t Read_timer();
 #elif defined(DRVMVE)
 
 #include <bsp/if_mve_pub.h>
+
+#define SHADOW    0
+#define SHADOWLEN 0
 
 static rtems_id mve_tid = 0;
 
@@ -98,6 +121,16 @@ uint32_t t;
 void      *lanIpDrv  =  0;
 IpBscIf   lanIpIf    =  0;
 int		  lanIpUdpsd = -1;
+
+const uint8_t * const lanIpEEPROMShadow = SHADOW;
+
+/* Length of shadow area */
+
+int      
+lanIpEEPROMShadowLength()
+{
+	return SHADOWLEN;
+}
 
 void
 lanIpTakedown()

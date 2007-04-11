@@ -9,6 +9,11 @@
 extern "C" {
 #endif
 
+/* Copy of an optional ethernet chip EEPROM */
+extern const uint8_t * const lanIpEEPROMShadow;
+/* Obtain Length of shadow area */
+int lanIpEEPROMShadowLength();
+
 
 /* Driver handle     */
 extern void  *lanIpDrv;
