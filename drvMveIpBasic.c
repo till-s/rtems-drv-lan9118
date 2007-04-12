@@ -51,6 +51,27 @@ NETDRV_READ_ENADDR(mveth_drv drvhdl, uint8_t *buf);
  */
 #define RBUF_ALIGNMENT	32
 
+/* Configure enough resources for a large application
+ *
+ * RX_RING_SIZE > number of 'simultaneously' arriving packets.
+ *                Set to the number of satellite devices we
+ *                receive data from plus some overhead.
+ * NRBUFS         - the ring needs bufs
+ *                - an application might keep some RX data around.
+ *                  Configure enough bufs so that 20 packets per
+ *                  satellite device could be kept.
+ *
+ * Configure for 20 satellites...
+ */
+
+#define N_SATELLITES (20)
+#define RX_RING_SIZE (N_SATELLITES+(N_SATELLITES)/4 + 1)
+
+#define NRBUFS (RX_RING_SIZE + RX_RING_SIZE*20 + 20)
+
+#define TX_RING_SIZE (N_SATELLITES/4 + 1)
+
+
 #include "lanIpBasic.c"
 
 typedef struct mveth_drv_s_ {
@@ -140,8 +161,7 @@ IpBscIf pd = closure;
 
 #define KILL_EVENT RTEMS_EVENT_4
 #define ALL_EVENTS (RTEMS_EVENT_0 | RTEMS_EVENT_1 | KILL_EVENT)
-#define RX_RING_SIZE	20
-#define TX_RING_SIZE	4
+
 
 void
 drvMveIpBasicTask(rtems_task_argument arg)
