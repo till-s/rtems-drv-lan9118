@@ -5,6 +5,7 @@
 #include <lanIpBasic.h>
 #include <drvLan9118.h>
 #include <rtems.h>
+#include <rtems/timerdrv.h>
 #include <errno.h>
 #include <assert.h>
 #include <stdint.h>
@@ -13,6 +14,18 @@
 #define NCHNS	4	/* channels on a PAD */
 
 #include <padStream.h>
+
+#if defined(__PPC__) && defined(__rtems__)
+extern uint64_t Read_long_timer();
+
+static inline uint32_t my_Read_timer()
+{
+	return Read_long_timer()/(uint64_t)1000;
+}
+#define Read_timer my_Read_timer
+#endif
+
+int padStreamDebug = 0;
 
 /* Data stream implementation. This could all be done over the
  * udpSock abstraction but less efficiently since we would have
@@ -253,7 +266,6 @@ uint32_t maxStreamSendDelay2 = 0;
 
 #ifdef __mcf5200__
 extern uint32_t drvLan9118RxIntBase;
-extern uint32_t Read_timer();
 #endif
 
 int
@@ -286,6 +298,11 @@ uint32_t       now;
 	if ( (rval = arpLookup(intrf, lpkt_ip(&replyPacket).dst, lpkt_eth(&replyPacket).dst, 1)) ) {
 		UNLOCK();
 		return rval;
+	}
+
+	if ( padStreamDebug & 1 ) {
+		/* hack timestamp; tag with our us clock */
+		rply->timestampLo = htonl(Read_timer());
 	}
 
 	rply->strm_cmd_idx    = idx;
