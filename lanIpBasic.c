@@ -78,6 +78,7 @@ __attribute__ ((aligned(RBUF_ALIGNMENT)))
 
 /* lazy init of tbuf facility */
 static int    ravail = NRBUFS;
+volatile int  lanIpBufAvail = NRBUFS;
 
 static rbuf_t *frb = 0; /* free list */
 
@@ -147,6 +148,8 @@ rtems_interrupt_level key;
 			rval = &rbufs[--ravail];
 		}
 	}
+	if ( lanIpBufAvail )
+		lanIpBufAvail--;
 	rtems_interrupt_enable(key);
 	return rval;
 }
@@ -159,6 +162,7 @@ rtems_interrupt_level key;
 		rtems_interrupt_disable(key);
 			*(rbuf_t**)b = frb;
 			frb = b;
+			lanIpBufAvail++;
 		rtems_interrupt_enable(key);
 	}
 }
