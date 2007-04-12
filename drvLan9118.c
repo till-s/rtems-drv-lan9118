@@ -59,6 +59,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.23  2007-03-09 01:19:25  till
+		 - silenced all debugging
+
 		Revision 1.22  2007-03-09 00:32:01  till
 		 - need to reload MAC address after reburning eeprom.
 
@@ -1343,9 +1346,12 @@ drvLan9118Shutdown(DrvLan9118_tps plan_ps)
 int
 drvLan9118DumpStats(DrvLan9118_tps plan_ps, FILE *f_p)
 {
+uint8_t ena[6];
 	if ( !f_p )
 		f_p = stdout;
-	fprintf(f_p,"DrvLan9118_tps interface statistics:\n");
+	drvLan9118ReadEnaddr(plan_ps, ena);
+	fprintf(f_p,"DrvLan9118_tps interface [%02X:%02X:%02X:%02X:%02X:%02X] statistics:\n",
+		ena[0], ena[1], ena[2], ena[3], ena[4], ena[5]);
 	fprintf(f_p,"  Packets received: %lu\n", plan_ps->stats_s.rxp);
 	fprintf(f_p,"  Packets sent    : %lu\n", plan_ps->stats_s.txp);
 	fprintf(f_p,"  Oversized packets received (RX watchdog timout): %lu\n", plan_ps->stats_s.rwt);
