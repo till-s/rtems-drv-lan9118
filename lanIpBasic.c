@@ -283,9 +283,20 @@ uint8_t  hh;
 uint8_t  h;
 
 		if ( ISBCST(ipaddr, pd->nmask) ) {
-			memset(enaddr, 0xff, 6);
+			if ( enaddr )
+				memset(enaddr, 0xff, 6);
 			return 0;
 		}
+
+		if ( !enaddr ) {
+			/* They just want to send a lookup. If we (eventually)
+			 * receive an answer then a cache entry will be created
+			 * or updated (asynchronously).
+			 */
+			NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr);
+			return 0;
+		}
+
 
 		ARPHASH(h, ipaddr);
 

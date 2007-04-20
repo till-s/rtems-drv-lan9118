@@ -190,6 +190,19 @@ extern int lanIpBscAutoRefreshARP;
  * 'cacheonly': only consult the cache - no network lookup is done.
  *
  * RETURNS: 0 on success,  -errno on error.
+ *
+ * NOTE: 'enaddr' may be NULL. In this case an ARP request for
+ *       'ipaddr' is broadcast (w/o waiting for a reply).
+ *       This feature can be used to asynchronously update a
+ *       cache entry: E.g, if we want to stream data to a peer
+ *       then we can every couple of minutes do a
+ *
+ *         arpLookup(if, peer, 0, 0)
+ *
+ *       to make sure every once in a while a new lookup occurs
+ *       w/o having to flush the cache. If the peer HW address
+ *       changes (HW swap) then the cache entry is updated.
+ *       ('cacheonly' is meaningless if 'enaddr' == NULL)
  */
 
 int
