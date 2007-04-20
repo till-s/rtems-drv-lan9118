@@ -111,27 +111,31 @@ int             len;
 
 	LOCK();
 
-		/* Avoid ARP lookup, don't provide destination IP yet */
-		udpSockHdrsInit(-1, &lpkt_udphdr(&replyPacket), 0, ntohs(scmd->port), 0); 	
+		if ( !isup ) {
+			/* Avoid ARP lookup, don't provide destination IP yet */
+			udpSockHdrsInit(-1, &lpkt_udphdr(&replyPacket), 0, ntohs(scmd->port), 0); 	
 
-		/* Add missing bits: destination IP , source port */
-		lpkt_ip(&replyPacket).dst     = hostip;
-		lpkt_udp(&replyPacket).sport  = scmd->port;
+			/* Add missing bits: destination IP , source port */
+			lpkt_ip(&replyPacket).dst     = hostip;
+			lpkt_udp(&replyPacket).sport  = scmd->port;
 
-		len = nsamples*sizeof(int16_t)*NCHNS + sizeof(*rply);
-		/* Fill in length and IP header checksum etc */
-		udpSockHdrsSetlen(&lpkt_udphdr(&replyPacket), len);
-		/* Setup Reply */
-		rply->version         = req->version;
-		rply->type            = PADCMD_STRM | PADCMD_RPLY;
-		rply->chnl            = me;
-		rply->nBytes          = htons(len);
-		rply->status          = 0;
-		rply->strm_cmd_flags  = scmd->flags;
-		rply->strm_cmd_idx    = 0;
+			len = nsamples*sizeof(int16_t)*NCHNS + sizeof(*rply);
+			/* Fill in length and IP header checksum etc */
+			udpSockHdrsSetlen(&lpkt_udphdr(&replyPacket), len);
+			/* Setup Reply */
+			rply->version         = req->version;
+			rply->type            = PADCMD_STRM | PADCMD_RPLY;
+			rply->chnl            = me;
+			rply->nBytes          = htons(len);
+			rply->status          = 0;
+			rply->strm_cmd_flags  = scmd->flags;
+			rply->strm_cmd_idx    = 0;
+
+			isup                  = 1;
+		}
+
 		dopet(req, rply);
-		
-		isup                  = 1;
+
 	UNLOCK();
 
 	if ( start_stop_cb )
