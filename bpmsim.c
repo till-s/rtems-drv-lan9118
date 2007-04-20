@@ -82,6 +82,16 @@ bswap(int16_t x)
 	return (x<<8) | (((uint16_t)x)>>8);
 }
 
+/* simulate PAD overflow signalization (LSB == OVR) */
+static inline int16_t lmt(int v)
+{
+int16_t rval;
+	rval = v & 0x0000fffe;
+
+	if ( v & 0xffff0000 ) rval |= 1;
+	return rval;
+}
+
 unsigned
 iir2_bpmsim(int16_t *pf, int nloops, int ini, unsigned long *pn, int swp, int stride)
 {
@@ -100,11 +110,11 @@ int         ini1 = ini;
 	 * at the output but we probably wouldn't have time to make it gaussian
 	 */
 	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini1,(FiltNumber)(n>>(8-IBNOISEBITS)),CN0,CN1,CN2,CD1,CD2);
-	*pf = ysa[0] + ysb[0]; *pf1 = ysa[1] + ysb[1];
+	*pf = lmt(ysa[0] + ysb[0]); *pf1 = lmt(ysa[1] + ysb[1]);
 	if ( swp ) {
-		*pf = bswap(ysa[0] + ysb[0]); *pf1 = bswap(ysa[1] + ysb[1]);
+		*pf = bswap(lmt(ysa[0] + ysb[0])); *pf1 = bswap(lmt(ysa[1] + ysb[1]));
 	} else {
-		*pf = (ysa[0] + ysb[0]);      *pf1 = (ysa[1] + ysb[1]);
+		*pf = lmt(ysa[0] + ysb[0]);      *pf1 = lmt(ysa[1] + ysb[1]);
 	}
 	pf  = pf1 + stride;
 	pf1 = pf  + stride;
@@ -117,11 +127,11 @@ int         ini1 = ini;
 	ini1 += ((int)*pn)>>(32-IBNOISEBITS);
 	n     = (signed char)(*pn)>>24;
 	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini1,(FiltNumber)0,CN0,CN1,CN2,CD1,CD2);
-	*pf = ysa[0] + ysb[0]; *pf1 = ysa[1] + ysb[1];
+	*pf = lmt(ysa[0] + ysb[0]); *pf1 = lmt(ysa[1] + ysb[1]);
 	if ( swp ) {
-		*pf = bswap(ysa[0] + ysb[0]); *pf1 = bswap(ysa[1] + ysb[1]);
+		*pf = bswap(lmt(ysa[0] + ysb[0])); *pf1 = bswap(lmt(ysa[1] + ysb[1]));
 	} else {
-		*pf = (ysa[0] + ysb[0]);      *pf1 = (ysa[1] + ysb[1]);
+		*pf = lmt(ysa[0] + ysb[0]);      *pf1 = lmt(ysa[1] + ysb[1]);
 	}
 	pf  = pf1 + stride;
 	pf1 = pf  + stride;
@@ -134,8 +144,8 @@ int         ini1 = ini;
 			ini = ((int)*pn)>>(32-IBNOISEBITS);
 			n   = (signed char)(*pn)>>24;
 			IIRBP2(ysa,ysb,xsa,(FiltNumber)ini,n>>(8-IBNOISEBITS),CN0,CN1,CN2,CD1,CD2);
-			*pf  = bswap(ysa[0] + ysb[0]);
-			*pf1 = bswap(ysa[1] + ysb[1]);
+			*pf  = bswap(lmt(ysa[0] + ysb[0]));
+			*pf1 = bswap(lmt(ysa[1] + ysb[1]));
 			pf  = pf1 + stride;
 			pf1 = pf  + stride;
 			nloops-=2;
@@ -146,8 +156,8 @@ int         ini1 = ini;
 			ini = ((int)*pn)>>(32-IBNOISEBITS);
 			n   = (signed char)(*pn)>>24;
 			IIRBP2(ysa,ysb,xsa,(FiltNumber)ini,n>>(8-IBNOISEBITS),CN0,CN1,CN2,CD1,CD2);
-			*pf  = (ysa[0] + ysb[0]);
-			*pf1 = (ysa[1] + ysb[1]);
+			*pf  = lmt(ysa[0] + ysb[0]);
+			*pf1 = lmt(ysa[1] + ysb[1]);
 			pf  = pf1 + stride;
 			pf1 = pf  + stride;
 			nloops-=2;
