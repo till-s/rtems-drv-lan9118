@@ -223,6 +223,8 @@ typedef struct StripSimValRec_ {
 	int32_t	a,b,c,d;
 } StripSimValRec, *StripSimVal;
 
+static StripSimValRec strips;
+
 extern unsigned
 iir2_bpmsim(
 	int16_t *pf,
@@ -357,9 +359,23 @@ padStreamTest()
 int
 padStreamSim(PadSimCommand scmd)
 {
-StripSimValRec strips = { ntohl(scmd->a), ntohl(scmd->b), ntohl(scmd->c), ntohl(scmd->d) };
+int dosend = 1;
 
-	return padStreamSend(streamSim, 0, 0, &strips);
+	if ( !intrf )
+		return -ENODEV; /* stream has not been initialized yet */
+
+	if ( scmd ) {
+		LOCK();
+			strips.a = ntohl(scmd->a);
+			strips.b = ntohl(scmd->b);
+			strips.c = ntohl(scmd->c);
+			strips.d = ntohl(scmd->d);
+		UNLOCK();
+		dosend =  ! (PADCMD_SIM_FLAG_NOSEND & scmd.sim_cmd_flags );
+	}
+
+
+	return  dosend ? padStreamSend(streamSim,0, 0, &strips) : 0;
 }
 
 int

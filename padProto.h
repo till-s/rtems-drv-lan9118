@@ -48,6 +48,8 @@ typedef struct PadCommandRec_ {
 #define PADCMD_STRM_FLAG_LE	1	/* They want little-endian data    */
 #define PADCMD_STRM_FLAG_CM	2	/* They want column-major  data    */
 
+#define PADCMD_SIM_FLAG_NOSEND 1 /* Don't send simulated waveform; just save requested amplitudes */
+
 #define PADRPLY_STRM_FLAG_TYPE_SET(x)	(((x)&7)<<4)
 #define PADRPLY_STRM_FLAG_TYPE_GET(fl)	(((fl)>>4)&7)
 
@@ -102,6 +104,8 @@ typedef struct PadReplyRec_ {
 
 #define strm_cmd_flags	spec[0]
 #define strm_cmd_idx    spec[1]
+
+#define sim_cmd_flags	spec[0]
 
 /* Handle Protocol Request
  *    'req_p': The request. This may be modified by this routine to form a reply.
