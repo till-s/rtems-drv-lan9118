@@ -371,7 +371,7 @@ int dosend = 1;
 			strips.c = ntohl(scmd->c);
 			strips.d = ntohl(scmd->d);
 		UNLOCK();
-		dosend =  ! (PADCMD_SIM_FLAG_NOSEND & scmd.sim_cmd_flags );
+		dosend =  ! (PADCMD_SIM_FLAG_NOSEND & scmd->flags );
 	}
 
 

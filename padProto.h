@@ -66,7 +66,8 @@ typedef struct PadStrmCommandRec_ {
 
 typedef struct PadSimCommandRec_ {
 	int8_t		type;
-	int8_t		sdata[3];
+	int8_t		flags;
+	int8_t		sdata[2];
 	int32_t		a,b,c,d;
 } PadSimCommandRec, *PadSimCommand;
 
@@ -104,8 +105,6 @@ typedef struct PadReplyRec_ {
 
 #define strm_cmd_flags	spec[0]
 #define strm_cmd_idx    spec[1]
-
-#define sim_cmd_flags	spec[0]
 
 /* Handle Protocol Request
  *    'req_p': The request. This may be modified by this routine to form a reply.

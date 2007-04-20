@@ -301,11 +301,11 @@ drvLan9118FifoWr(DrvLan9118_tps plan_ps, const void *buf_p, int n_bytes);
  *        * DONT use this feature of the driver. Use drvLan9118FifoWr().
  *          unless you know exactly what you are doing.
  *
- *        * 'endianBig' indicates that the LSB of a 32-bit word
- *          goes
+ *        * 'endianBig' indicates that the MSB of a 32-bit word
+ *          goes on the wire first.
  */
 volatile uint32_t *
-drvLan9118FifoAddr(DrvLan9118_tps plan_ps, int *endianBig)
+drvLan9118FifoAddr(DrvLan9118_tps plan_ps, int *endianBig);
 
 /* Unlock the Transmitter; Intended use:
  * 

@@ -59,6 +59,10 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.25  2007-04-20 22:03:37  till
+		 - Makefile: beautification
+		 - added public interface to lan9118 FIFO (hack)
+
 		Revision 1.24  2007-04-12 02:16:15  strauman
 		 - print MAC address from DumpStats routine.
 
@@ -811,8 +815,18 @@ register volatile CopyItem_u *dst_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 }
 
 volatile uint32_t *
-drvLan9118FifoAddr(DrvLan9118_tps plan_ps)
+drvLan9118FifoAddr(DrvLan9118_tps plan_ps, int *endianBig)
 {
+/* FIXME: I'm not sure the *endianBig value is computed correctly */
+	if ( endianBig )
+		*endianBig = 
+#if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
+		0
+#else
+		1
+#endif
+		;
+
 	return (volatile uint32_t*)(plan_ps->base + FIFO_ALIAS);
 }
 
