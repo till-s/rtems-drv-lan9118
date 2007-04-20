@@ -290,6 +290,23 @@ drvLan9118TxPacket(DrvLan9118_tps plan_ps, const void *buf_p, int nbytes, unsign
 void
 drvLan9118FifoWr(DrvLan9118_tps plan_ps, const void *buf_p, int n_bytes);
 
+/* Obtain address of the FIFO (drivers who might want to do
+ * perform their own low-level accesses
+ *
+ * NOTES: * Driver must be locked/unlocked around FIFO access
+ *          (TX: see drvLan9118TxUnlock(); RX: call from RX callback
+ *          context)
+ *
+ *        * Access MUST be in by 32-bit words.
+ *        * DONT use this feature of the driver. Use drvLan9118FifoWr().
+ *          unless you know exactly what you are doing.
+ *
+ *        * 'endianBig' indicates that the LSB of a 32-bit word
+ *          goes
+ */
+volatile uint32_t *
+drvLan9118FifoAddr(DrvLan9118_tps plan_ps, int *endianBig)
+
 /* Unlock the Transmitter; Intended use:
  * 
  *  1) prepare packet with drvLan9118TxPacket() passing a NULL buffer (length must still be known)

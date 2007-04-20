@@ -59,9 +59,12 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.24  2007-04-12 02:16:15  strauman
+		 - print MAC address from DumpStats routine.
+
 		Revision 1.23  2007-03-09 01:19:25  till
 		 - silenced all debugging
-
+		
 		Revision 1.22  2007-03-09 00:32:01  till
 		 - need to reload MAC address after reburning eeprom.
 
@@ -805,6 +808,12 @@ register volatile CopyItem_u *dst_p  = (void*)(plan_ps->base + FIFO_ALIAS);
 #endif
 	memcpy( (void*)(plan_ps->base + FIFO_ALIAS), buf, n_bytes);
 #endif
+}
+
+volatile uint32_t *
+drvLan9118FifoAddr(DrvLan9118_tps plan_ps)
+{
+	return (volatile uint32_t*)(plan_ps->base + FIFO_ALIAS);
 }
 
 /* busy wait for the EEPROM controller to be ready */

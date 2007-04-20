@@ -1,8 +1,10 @@
 TOP=..
 
 ifeq ("$(wildcard $(TOP)/configure/CONFIG)xx","xx")
+
 # TOP/configure/CONFIG doesn't exist. Use RTEMS Makefile
 include Makefile.rtems
+
 else
 # we're inside EPICS
 
