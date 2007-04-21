@@ -88,7 +88,7 @@ static inline int16_t lmt(int v)
 int16_t rval;
 	rval = v & 0x0000fffe;
 
-	if ( v & 0xffff0000 ) rval |= 1;
+	if ( v > 32767 || v < -32768 ) rval |= 1;
 	return rval;
 }
 
