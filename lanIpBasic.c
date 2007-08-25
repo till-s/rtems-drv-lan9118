@@ -624,30 +624,30 @@ src2dstUdp(LanUdpHeader p)
 	p->udp.dport = p->udp.sport;
 }
 
+typedef uint32_t uint32_a_t __attribute__ ((may_alias));
+
 static int
 handleArp(rbuf_t **ppbuf, IpBscIf pd)
 {
 int			isreq = 0;
 rbuf_t		*p    = *ppbuf;
 IpArpRec	*pipa = &lpkt_arp(p);
+uint32_t    xx;
 
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
 	NETDRV_READ_INCREMENTAL(pd, pipa, 8);
-	if ( ntohl(0x00010800) != *(uint32_t*)pipa )
+	if ( htonl(0x00010800) != *(uint32_a_t*)pipa )
 		return 8;
 
+	xx = * ( (uint32_a_t *) pipa + 1 );
 
-	switch ( *(((uint32_t*)pipa) + 1) ) {
-		default:
-			return 8;
-
-		/* 0x06 hw addr len, 0x04 proto len, 0x0001 ARP REQUEST */
-		case ntohl(0x06040001):
-			isreq = 1;
-		/* 0x06 hw addr len, 0x04 proto len, 0x0002 ARP REPLY   */
-		case ntohl(0x06040002):
-			break;
+	/* 0x06 hw addr len, 0x04 proto len, 0x0001 ARP REQUEST */
+	if        ( htonl(0x06040001) == xx ) {
+		isreq = 1;
+	/* 0x06 hw addr len, 0x04 proto len, 0x0002 ARP REPLY   */
+	} else if ( htonl(0x06040002) != xx ) {
+		return 8;
 	}
 
 	/* Fill rest of ARP packet            */
@@ -658,7 +658,7 @@ IpArpRec	*pipa = &lpkt_arp(p);
 		if ( lanIpDebug & DEBUG_ARP )
 			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
 #endif
-		if ( *(uint32_t*)pipa->tpa != pd->ipaddr )
+		if ( *(uint32_a_t*)pipa->tpa != pd->ipaddr )
 			return sizeof(*pipa);
 
 		/* they mean us; send reply */
@@ -686,7 +686,7 @@ IpArpRec	*pipa = &lpkt_arp(p);
 			printf("\n");
 		}
 #endif
-		arpPutEntry(pd, *(uint32_t*)pipa->spa, pipa->sha, 0);
+		arpPutEntry(pd, *(uint32_a_t*)pipa->spa, pipa->sha, 0);
 	}
 
 	return sizeof(*pipa);
@@ -845,20 +845,19 @@ lanIpProcessBuffer(IpBscIf pd, rbuf_t **pprb, int len)
 {
 rbuf_t         *prb = *pprb;
 EtherHeaderRec *pll = &lpkt_eth(prb);
+uint16_t        tt;
 
 	NETDRV_READ_INCREMENTAL(pd, prb, sizeof(*pll));
 	len -= sizeof(*pll);
 
-	switch ( pll->type ) {
-		case htons(0x806) /* ARP */:
-			len -= handleArp(pprb, pd);
-			break;
-
-		case htons(0x800) /* IP  */:
-			len -= handleIP(pprb, pd);
-			break;
-
-		default:
+	tt = pll->type;
+	if ( htons(0x806) == tt ) {
+		/* ARP */
+		len -= handleArp(pprb, pd);
+	} else if ( htons(0x800) == tt ) {
+		/* IP  */
+		len -= handleIP(pprb, pd);
+	} else {
 #ifdef DEBUG
 			if (lanIpDebug & DEBUG_IP) {
 				int i;
@@ -868,7 +867,6 @@ EtherHeaderRec *pll = &lpkt_eth(prb);
 				printf("\n");
 			}
 #endif
-			break;
 	}
 
 	return len;
@@ -1169,8 +1167,8 @@ void     *p = 0;
 
 	if (q) {
 		/* drain queue */
-		void     *p;
-		uint32_t sz;
+		void   *p;
+		size_t sz;
 		while ( RTEMS_SUCCESSFUL == rtems_message_queue_receive(
 										q,
 										&p,
@@ -1246,8 +1244,8 @@ egress:
 LanIpPacketRec *
 udpSockRecv(int sd, int timeout_ticks)
 {
-LanIpPacketRec *rval = 0;
-uint32_t		sz = sizeof(rval);
+LanIpPacketRec    *rval = 0;
+size_t		      sz = sizeof(rval);
 rtems_status_code sc;
 	if ( sd < 0 || sd >= NSOCKS ) {
 		return 0;
