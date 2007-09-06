@@ -32,7 +32,11 @@ udpCommSocket(int port);
 static __inline__ int
 udpCommClose(int sd);
 
-/* Connect socket to a peer */
+/* Connect socket to a peer
+ *
+ * NOTE: 'dipaddr' is the peer's IP address in *network* byte order
+ *       'port'    is the peer's port number in *host*   byte order
+ */
 STATICINLINE int
 udpCommConnect(int sd, uint32_t diaddr, int port);
 
@@ -64,8 +68,8 @@ udpCommSend(int sd, void *buf, int len);
  * this interface exists for efficiency reasons
  * [coldfire/lan9118]).
  */
-static __inline__ void
-udpCommReturnPacket(int sd, UdpCommPkt p, int len);
+STATICINLINE void
+udpCommReturnPacket(UdpCommPkt p, int len);
 
 /* Inline implementations for both BSD and udpSocks */
 static __inline__ int
@@ -105,22 +109,6 @@ udpCommSend(int sd, void *buf, int len)
 	return send(sd, buf, len, 0);
 #else
 	return udpSockSend(sd, buf, len);
-#endif
-}
-
-static __inline__ void
-udpCommReturnPacket(int sd, UdpCommPkt p, int len)
-{
-#ifdef BSDSOCKET
-	/* Subtle differences exist between sending to the peer
-     * and just swapping the headers around (as done for
-     * udpSocks) -- guaranteed no ARP is necessary in the
-     * latter case. For BSDSOCKET we don't care about ARP.
-     */
-	send(sd, p, len, 0);
-#else
-	udpSockHdrsReflect(p);	/* point headers back to sender */
-	udpSockSendBufRawIp(p); /* send off                     */
 #endif
 }
 
@@ -169,6 +157,14 @@ udpCommConnect(int sd, uint32_t diaddr, int port)
 {
 	return udpSockConnect(sd, diaddr, port);
 }
+
+static __inline__ void
+udpCommReturnPacket(UdpCommPkt p, int len)
+{
+	udpSockHdrsReflect(p);	/* point headers back to sender */
+	udpSockSendBufRawIp(p); /* send off                     */
+}
+
 
 #endif
 
