@@ -52,9 +52,9 @@ DrvLan9118_tps plan = (DrvLan9118_tps)pdrv;
 		drvLan9118FifoWr(plan, phdr, hdrsz);
 		drvLan9118FifoWr(plan, data, dtasz);
 		drvLan9118TxUnlock(plan);
-		return hdrsz + dtasz;
+		return dtasz;
 	}
-	return drvLan9118TxPacket(plan, data, dtasz, 0);
+	return drvLan9118TxPacket(plan, data, dtasz, 0) ? -ENOSPC : dtasz;
 }
 
 int

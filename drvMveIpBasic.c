@@ -114,7 +114,7 @@ char                 *p;
 				relrbuf((rbuf_t*)b_);
 				return -ENOSPC;
 			}
-			return hdrsz + dtasz;
+			return dtasz;
 		}
 		return -ENOMEM;
 }

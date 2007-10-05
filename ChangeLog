@@ -1,2 +1,5 @@
+2007/10/4 (TS):
+ - udpSockSend() return value was inconsistent with BSD semantics
+   (thanks to Stephen Norum) because it also counted the header bytes.
 2007/9/6 (TS):
  - eliminated 'sd' argument from udpCommReturnPacket().
