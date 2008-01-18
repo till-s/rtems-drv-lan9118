@@ -1,4 +1,5 @@
 #include <rtems.h>
+#include <rtems/error.h>
 #include <lanIpBasic.h>
 #include <lanIpBasicTest.h>
 
@@ -114,6 +115,65 @@ uint32_t t;
 	return t;
 }
 
+#elif defined(DRVAMD)
+
+#define SHADOW    0
+#define SHADOWLEN 0
+
+extern void
+drvAmdIpBasicShutdown(void *drv);
+
+extern void
+drvAmdIpBasicTask(rtems_task_argument arg);
+
+extern void *
+drvAmdIpBasicSetup(IpBscIf ipbif);
+
+static void *
+setup(IpBscIf ipbif, uint8_t *enaddr)
+{
+	return drvAmdIpBasicSetup(ipbif);
+}
+
+static int
+start(void *drv, IpBscIf ipbif, int pri)
+{
+rtems_status_code sc;
+rtems_id          tid;
+
+	if ( pri <= 0 )
+		pri = 20;
+
+	sc = rtems_task_create(
+				rtems_build_name('i','p','b','d'),
+				pri,	/* can be changed later */
+				10000,
+				RTEMS_DEFAULT_MODES,
+				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
+				&tid);
+
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "creating drvAmdIpBasicTask\n");
+		return -1;
+	}
+
+	sc = rtems_task_start( tid, drvAmdIpBasicTask, (rtems_task_argument)ipbif );
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "starting drvAmdIpBasicTask\n");
+		rtems_task_delete( tid );
+		return -1;
+	}
+	return 0;
+}
+
+static inline void
+shutdown(void *drv)
+{
+	drvAmdIpBasicShutdown(drv);
+}
+
+#define READ_TIMER()	(0xdeadbeef)
+
 #else
 #error "unsupported driver"
 #endif
@@ -139,13 +199,13 @@ lanIpTakedown()
 		udpSockDestroy(lanIpUdpsd);
 		lanIpUdpsd = -1;
 	}
-	if ( lanIpIf ) {
-		lanIpBscIfDestroy( lanIpIf );
-		lanIpIf = 0;
-	}
 	if ( lanIpDrv ) {
 		shutdown(lanIpDrv);
 		lanIpDrv = 0;
+	}
+	if ( lanIpIf ) {
+		lanIpBscIfDestroy( lanIpIf );
+		lanIpIf = 0;
 	}
 }
 

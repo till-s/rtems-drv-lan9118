@@ -59,6 +59,10 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.26  2007-04-20 22:58:57  till
+		 - added 'NOSEND' option  to simulator
+		 - fixed typos with drvLan9118FifoAddr() routine
+
 		Revision 1.25  2007-04-20 22:03:37  till
 		 - Makefile: beautification
 		 - added public interface to lan9118 FIFO (hack)
@@ -571,7 +575,7 @@ typedef struct DrvLan9118_ts_ {
 	void				*err_cb_arg_p;
 	DrvLan9118CB_tpf	phy_cb_pf;
 	void				*phy_cb_arg_p;
-	EtherHeaderRec		ebcst_s;
+	EthHeaderRec		ebcst_s;
 	struct {
 		uint32_t	rxp;
 		uint32_t	txp;

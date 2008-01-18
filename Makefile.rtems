@@ -12,7 +12,11 @@ DEFINES_uC5282 = -DDRVLAN9118
 C_PIECES_beatnik=drvMveIpBasic padProto
 DEFINES_beatnik= -DDRVMVE
 
-C_PIECES=$(C_PIECES_$(RTEMS_BSP)) lanIpBasicTest
+# not a good thing; the AMD driver can be built for PPC BSPs, too
+C_PIECES_pc386=drvAmdEthIpBasic
+DEFINES_pc386= -DDRVAMD
+
+C_PIECES=$(C_PIECES_$(RTEMS_BSP_FAMILY)) lanIpBasicTest
 
 C_FILES=$(C_PIECES:%=%.c)
 C_O_FILES=$(C_PIECES:%=${ARCH}/%.o)
@@ -62,7 +66,7 @@ include $(RTEMS_ROOT)/make/leaf.cfg
 # (OPTIONAL) Add local stuff here using +=
 #
 
-DEFINES  += $(DEFINES_$(RTEMS_BSP))
+DEFINES  += $(DEFINES_$(RTEMS_BSP_FAMILY))
 CPPFLAGS := -I. $(CPPFLAGS)
 CFLAGS   += -Wstrict-aliasing=2
 

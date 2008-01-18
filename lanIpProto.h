@@ -12,12 +12,12 @@
 #define EH_PAD_BYTES 2
 
 /* uint32_t aligned ethernet header */
-typedef struct EtherHeaderRec_ {
+typedef struct EthHeaderRec_ {
 	uint8_t		pad[EH_PAD_BYTES];
 	uint8_t		dst[6];
 	uint8_t		src[6];
 	uint16_t	type;
-} EtherHeaderRec;
+} EthHeaderRec;
 
 typedef struct IpHeaderRec_ {
 	uint8_t		vhl;
@@ -64,22 +64,22 @@ typedef struct IcmpHeaderRec_ {
  */
 #define LANPKTMAX			1536
 
-#define IPPAYLOADSIZE		(LANPKTMAX - sizeof(EtherHeaderRec) - sizeof(IpHeaderRec))
+#define IPPAYLOADSIZE		(LANPKTMAX - sizeof(EthHeaderRec) - sizeof(IpHeaderRec))
 #define UDPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(UdpHeaderRec))
 #define ICMPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(IcmpHeaderRec))
 
 typedef struct LanEtherRec_ {
-	EtherHeaderRec  ll;
+	EthHeaderRec    ll;
 	uint8_t			pld[];
 } LanEtherRec, *LanEther;
 
 typedef struct LanArpRec_ {
-	EtherHeaderRec	ll;
+	EthHeaderRec    ll;
 	IpArpRec		arp;
 } LanArpRec, *LanArp;
 
 typedef struct LanIpRec_ {
-	EtherHeaderRec	ll;
+	EthHeaderRec    ll;
 	IpHeaderRec     ip;
 } LanIpRec, *LanIp;
 
@@ -127,7 +127,7 @@ typedef union LanIpPacketRec_ {
 #define lpkt_ip_pld(p,type)	    (((union { char c[sizeof(type)]; type x; } *)(p)->p_u.ip_S.pld)->x)
 #define lpkt_udp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.udp_S.pld)->x)
 
-#define ETHPKTSZ(eth_payload_sz)	((eth_payload_sz) + sizeof(EtherHeaderRec))
+#define ETHPKTSZ(eth_payload_sz)	((eth_payload_sz) + sizeof(EthHeaderRec))
 #define IPPKTSZ(ip_payload_sz)      ETHPKTSZ((ip_payload_sz) + sizeof(IpHeaderRec))
 #define	UDPPKTSZ(udp_payload_sz)	IPPKTSZ((udp_payload_sz) + sizeof(UdpHeaderRec))
 

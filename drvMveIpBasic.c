@@ -6,8 +6,8 @@
 
 typedef struct mveth_drv_s_ *mveth_drv;
 
-#define ETHERPADSZ sizeof(((EtherHeaderRec*)0)->pad)
-#define ETHERHDRSZ (sizeof(EtherHeaderRec) - ETHERPADSZ) 
+#define ETHERPADSZ sizeof(((EthHeaderRec*)0)->pad)
+#define ETHERHDRSZ (sizeof(EthHeaderRec) - ETHERPADSZ) 
 
 #define NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr)								\
 	do {																	\

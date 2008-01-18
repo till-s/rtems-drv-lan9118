@@ -732,7 +732,7 @@ int			isbcst = 0;
 		{
 		IcmpHeaderRec *picmp = &lpkt_icmp(p);
 
-			if ( sizeof(*p)-sizeof(*pip) - sizeof(EtherHeaderRec) >= l ) {
+			if ( sizeof(*p)-sizeof(*pip) - sizeof(EthHeaderRec) >= l ) {
 				NETDRV_READ_INCREMENTAL(pd, picmp, l);
 				rval += l;
 				if ( picmp->type == 8 /* ICMP REQUEST */ && picmp->code == 0 ) {
@@ -742,7 +742,7 @@ int			isbcst = 0;
 #endif
 					picmp->type = 0; /* ICMP REPLY */
 					picmp->csum = 0;
-					picmp->csum = htons(ipcsum((uint8_t*)picmp, nbytes-sizeof(*pip)));
+					picmp->csum = ipcsum((uint8_t*)picmp, nbytes-sizeof(*pip));
 					lpkt_eth(p).type = htons(0x800); /* IP */
 
 					/* refresh peer's ARP entry */
@@ -753,7 +753,7 @@ int			isbcst = 0;
 					src2dstIp(&lpkt_iphdr(p));
 					fillinSrcCsumIp(pd, &lpkt_iphdr(p));
 
-					NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EtherHeaderRec) + nbytes);
+					NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EthHeaderRec) + nbytes);
 				}
 			}
 		}
@@ -844,7 +844,7 @@ int
 lanIpProcessBuffer(IpBscIf pd, rbuf_t **pprb, int len)
 {
 rbuf_t         *prb = *pprb;
-EtherHeaderRec *pll = &lpkt_eth(prb);
+EthHeaderRec   *pll = &lpkt_eth(prb);
 uint16_t        tt;
 
 	NETDRV_READ_INCREMENTAL(pd, prb, sizeof(*pll));
@@ -1009,7 +1009,7 @@ udpSockHdrsSetlen(LanUdpHeader p, int payload_len)
 	p->hdr.ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
 	p->hdr.ip.csum  = 0;
 	
-	p->hdr.ip.csum  = htons(in_cksum_hdr((void*)&p->hdr.ip));
+	p->hdr.ip.csum  = in_cksum_hdr((void*)&p->hdr.ip);
 
 	p->udp.len  = htons(payload_len + sizeof(UdpHeaderRec));
 }
@@ -1317,7 +1317,7 @@ udpSockSendBufRaw(LanIpPacket buf_p, int len)
 int
 udpSockSendBufRawIp(LanIpPacket buf_p)
 {
-int len = ntohs(lpkt_ip(buf_p).len) + sizeof(EtherHeaderRec);
+int len = ntohs(lpkt_ip(buf_p).len) + sizeof(EthHeaderRec);
 	NETDRV_ENQ_BUFFER(intrf, buf_p,  len);
 	return len;
 }

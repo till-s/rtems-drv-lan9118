@@ -1,3 +1,11 @@
+2008/1/17 (TS):
+ - renamed EtherHeader -> EthHeader; there was a name conflict with
+   SPEAR software / the AMD pcnet32 driver for which I wanted to add
+   support.
+ - added support for AMD 79c97x chips (PMC card which is handy; the
+   ultimate goal is using udpComm for a GDB connection.
+ - FIXED: endian-ness bug: IP checksums must not be converted to network
+   byte-order.
 2007/10/4 (TS):
  - udpSockSend() return value was inconsistent with BSD semantics
    (thanks to Stephen Norum) because it also counted the header bytes.
