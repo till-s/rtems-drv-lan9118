@@ -1,3 +1,6 @@
+2008/1/18 (TS):
+ - added 'drvUdpSock' - a simple driver to provide std. filesystem
+   I/O over lanIpBasic/UDP 'sockets'.
 2008/1/17 (TS):
  - renamed EtherHeader -> EthHeader; there was a name conflict with
    SPEAR software / the AMD pcnet32 driver for which I wanted to add
