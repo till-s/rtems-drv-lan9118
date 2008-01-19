@@ -65,7 +65,7 @@ int	lanIpDebug = DEBUG;
 #define NSOCKS		5
 #endif
 #ifndef QDEPTH
-#define QDEPTH		10	/* RX socket queue depth      */
+#define QDEPTH		20	/* RX socket queue depth      */
 #endif
 
 typedef LanIpPacketRec rbuf_t;
@@ -178,22 +178,28 @@ typedef struct IpBscIfRec_ {
 	LanArpRec		arprep;
 } IpBscIfRec;
 
-typedef struct UdpSockPeerRec_ {
-	IpBscIf			intrf;
-	LanUdpHeaderRec	pkt;
-} UdpSockPeerRec, *UdpSockPeer;
+#define FLG_ISCONN	1
 
 typedef struct UdpSockRec_ {
-	volatile int	port;	/* host byte order */
-	rtems_id		msgq;
-	rtems_id		mutx;
-	UdpSockPeer		peer;
+	IpBscIf			  intrf;
+	volatile int	  port;	/* host byte order */
+	rtems_id		  msgq;
+	rtems_id		  mutx;
+	unsigned          flags;
+	LanUdpHeaderRec   hdr;    /* a header for 'sendto' */
+	volatile unsigned nbytes; /* count bytes queued for supporting FIONREAD */
 } UdpSockRec, *UdpSock;
+
+typedef struct UdpSockMsgRec_ {
+	LanIpPacketRec        *pkt;
+	int                   len;
+} UdpSockMsgRec, *UdpSockMsg;
 
 #define SOCKLOCK(sck)		assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain((sck)->mutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
 #define SOCKUNLOCK(sck) 	assert( RTEMS_SUCCESSFUL == rtems_semaphore_release((sck)->mutx) )
 
 static UdpSockRec	socks[NSOCKS] = {{0}};
+static int         nsocks         = 0;
 static IpBscIf		intrf         = 0;
 
 
@@ -695,11 +701,12 @@ uint32_t    xx;
 static int
 handleIP(rbuf_t **ppbuf, IpBscIf pd)
 {
-int         rval = 0, l, nbytes, i;
-rbuf_t		*p = *ppbuf;
-IpHeaderRec *pip = &lpkt_ip(p);
-uint16_t	dport;
-int			isbcst = 0;
+int          rval = 0, l, nbytes, i;
+rbuf_t		 *p = *ppbuf;
+IpHeaderRec  *pip = &lpkt_ip(p);
+uint16_t	 dport;
+int			 isbcst = 0;
+LanUdpHeader hdr;
 
 	NETDRV_READ_INCREMENTAL(pd, pip, sizeof(*pip));
 	rval += sizeof(*pip);
@@ -780,11 +787,11 @@ int			isbcst = 0;
 			_Thread_Disable_dispatch();
 			for ( i=0; i<NSOCKS; i++ ) {
 				if ( socks[i].port == dport ) {
-					UdpSockPeer pp;
-					if ( (pp = socks[i].peer) ) {
+					if ( FLG_ISCONN & socks[i].flags ) {
+						hdr = &socks[i].hdr;
 						/* filter source IP and port */
-						if (    pp->pkt.udp.dport  != pudp->udp.sport
-							|| (pp->pkt.hdr.ip.dst != pudp->hdr.ip.src && ! ISBCST(pp->pkt.hdr.ip.dst, pp->intrf->nmask)) ) {
+						if (    hdr->udp.dport  != pudp->udp.sport
+							|| (hdr->hdr.ip.dst != pudp->hdr.ip.src && ! ISBCST(hdr->hdr.ip.dst, socks[i].intrf->nmask)) ) {
 							_Thread_Enable_dispatch();
 #ifdef DEBUG
 							if ( lanIpDebug & DEBUG_UDP ) {
@@ -807,7 +814,11 @@ int			isbcst = 0;
 					_Thread_Disable_dispatch();
 					/* see if socket is still alive */
 					if ( socks[i].port == dport ) {
-						if ( RTEMS_SUCCESSFUL == rtems_message_queue_send(socks[i].msgq, &p, sizeof(p)) ) {
+						UdpSockMsgRec msg;
+						msg.pkt = p;
+						msg.len = nbytes - sizeof(IpHeaderRec) - sizeof(UdpHeaderRec);
+						if ( RTEMS_SUCCESSFUL == rtems_message_queue_send(socks[i].msgq, &msg, sizeof(msg)) ) {
+							socks[i].nbytes += msg.len;
 							/* they now own the buffer */
 							*ppbuf = 0;
 						}
@@ -988,6 +999,7 @@ void
 lanIpBscIfDestroy(IpBscIf pd)
 {
 	if ( pd ) {
+		assert( nsocks == 0 );
 		assert( intrf == pd );
 		intrf = 0;
 		arpFlushCache(pd,1);
@@ -1020,7 +1032,7 @@ udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16
 int rval = 0;
 
 	if ( dipaddr ) 
-		rval = arpLookup(intrf, dipaddr, p->hdr.ll.dst, 0);
+		rval = arpLookup(socks[sd].intrf, dipaddr, p->hdr.ll.dst, 0);
 	else /* they want to leave it blank */
 		memset(p->hdr.ll.dst,0,6);
 
@@ -1038,7 +1050,7 @@ int rval = 0;
 	p->udp.dport = htons(dport);
 	p->udp.len   = 0;
 
-	fillinSrcCsumUdp(intrf, p, sd >= 0 ? socks[sd].port : 0);
+	fillinSrcCsumUdp(socks[sd].intrf, p, sd >= 0 ? socks[sd].port : 0);
 
 	/* reset checksum; length is not correct yet */
 	p->hdr.ip.csum  = 0;
@@ -1086,7 +1098,7 @@ rtems_id  m = 0;
 	if ( RTEMS_SUCCESSFUL != rtems_message_queue_create(
 			rtems_build_name('u','d','p','q'),
 			QDEPTH,
-			sizeof(rbuf_t*),
+			sizeof(UdpSockMsgRec),
 			RTEMS_FIFO | RTEMS_LOCAL,
 			&q) ) {
 		q    =  0;
@@ -1122,12 +1134,19 @@ rtems_id  m = 0;
 	}
 
 	/* everything OK */
-	socks[rval].port = port;
-	socks[rval].msgq = q;
-	socks[rval].mutx = m;
-	socks[rval].peer = 0;
+	socks[rval].port   = port;
+
+	nsocks++;
 
 	_Thread_Enable_dispatch();
+
+	socks[rval].intrf  = intrf;
+	socks[rval].msgq   = q;
+	socks[rval].mutx   = m;
+	socks[rval].flags  = 0;
+	socks[rval].nbytes = 0;
+
+	udpSockHdrsInit(rval, &socks[rval].hdr, 0, 0, 0);
 
 	q             = 0;
 	m             = 0;
@@ -1144,38 +1163,36 @@ egress:
 int
 udpSockDestroy(int sd)
 {
-rtems_id  q = 0;
-rtems_id  m = 0;
-void     *p = 0;
+rtems_id         q = 0;
+rtems_id         m = 0;
 
 	if ( sd < 0 || sd >= NSOCKS )
 		return -EBADF;
 
 	_Thread_Disable_dispatch();
 		if (socks[sd].port) {
+			socks[sd].intrf = 0;
 			socks[sd].port = 0;
 			q = socks[sd].msgq;
 			socks[sd].msgq = 0;
-			p = socks[sd].peer;
-			socks[sd].peer = 0;
 			m = socks[sd].mutx;
 			socks[sd].mutx = 0;
+			
+			nsocks--;
 		}
 	_Thread_Enable_dispatch();
 
-	free(p);
-
 	if (q) {
 		/* drain queue */
-		void   *p;
-		size_t sz;
+		UdpSockMsgRec msg;
+		size_t sz = sizeof(msg);
 		while ( RTEMS_SUCCESSFUL == rtems_message_queue_receive(
 										q,
-										&p,
+										&msg,
 										&sz,
 										RTEMS_NO_WAIT,
 										0) ) {
-			relrbuf(p);
+			relrbuf(msg.pkt);
 		}
 		rtems_message_queue_delete(q);
 		return 0;
@@ -1190,7 +1207,6 @@ void     *p = 0;
 int
 udpSockConnect(int sd, uint32_t dipaddr, int dport)
 {
-UdpSockPeer p = 0;
 int rval      = -1;
 
 	if ( sd < 0 || sd >= NSOCKS )
@@ -1199,74 +1215,112 @@ int rval      = -1;
 	if ( 0 == socks[sd].port )
 		return -EBADF;
 
+	SOCKLOCK( & socks[sd] );
+
 	if ( 0 == dipaddr && 0 == dport ) {
 		/* disconnect */
-		if ( ! socks[sd].peer ) {
-			return -ENOTCONN;
+		if ( ! (FLG_ISCONN & socks[sd].flags) ) {
+			rval = -ENOTCONN;
+			goto egress;
 		}
-		_Thread_Disable_dispatch();
-		p = socks[sd].peer;
-		socks[sd].peer = 0;
-		_Thread_Enable_dispatch();
-		free(p);
-		return 0;
+
+		socks[sd].flags &= ~FLG_ISCONN;
+
+	} else {
+
+		if ( dport <= 0 || dport >= 1<<16 ) {
+			rval = -EINVAL;
+			goto egress;
+		}
+
+		if ( (FLG_ISCONN & socks[sd].flags) ) {
+			rval = -EISCONN;
+			goto egress;
+		}
+
+		if ( udpSockHdrsInit(sd, &socks[sd].hdr, dipaddr, dport, 0) ) {
+			/* ARP lookup failure */
+			rval = -ENOTCONN;
+			goto egress;
+		}
+
+		/* !!! Assume this operation is atomic !!! */
+		asm volatile(""::"m"(socks[sd].flags));
+		socks[sd].flags |= FLG_ISCONN;
 	}
 
-	if ( dport <= 0 || dport >= 1<<16 )
-		return -EINVAL;
-
-	if ( socks[sd].peer )
-		return -EISCONN;
-
-	if ( !(p=malloc(sizeof(*p))) ) {
-		rval =  -ENOMEM;
-		goto egress;
-	}
-
-	if ( udpSockHdrsInit(sd, &p->pkt, dipaddr, dport, 0) ) {
-		/* ARP lookup failure */
-		rval = -ENOTCONN;
-		goto egress;
-	}
-	p->intrf = intrf;
-
-	/* !!! Assume this operation is atomic !!! */
-	asm volatile(""::"m"(*p));
-	socks[sd].peer = p;
-	p    = 0;
 	rval = 0;
 
 egress:
-	free(p);
+	SOCKUNLOCK( &socks[sd] );
 	return rval;
 }
 
 LanIpPacketRec *
 udpSockRecv(int sd, int timeout_ticks)
 {
-LanIpPacketRec    *rval = 0;
-size_t		      sz = sizeof(rval);
+UdpSockMsgRec     msg;
+size_t		      sz = sizeof(msg);
 rtems_status_code sc;
 	if ( sd < 0 || sd >= NSOCKS ) {
 		return 0;
 	}
 	if ( RTEMS_SUCCESSFUL != (sc=rtems_message_queue_receive(
 								socks[sd].msgq,
-								&rval,
+								&msg,
 								&sz,
 								timeout_ticks ? RTEMS_WAIT : RTEMS_NO_WAIT,
 								timeout_ticks < 0 ? RTEMS_NO_TIMEOUT : timeout_ticks)) ) {
 		return 0;
 	}
+	_Thread_Disable_dispatch();
+	socks[sd].nbytes -= msg.len;
+	_Thread_Enable_dispatch();
+	return msg.pkt;
+}
+
+
+/* 
+ * Note that there is a race condition if 
+ * udpSockRecv() and udpSockNRead() are used
+ * from different thread contexts.
+ * One thread could have dequeued a packet
+ * and be put to sleep before it has
+ * a chance to decrease 'nbytes' so that
+ * a second thread calling udpSockNRead
+ * would believe that the 'nbytes' are still
+ * in the queue.
+ * However, in such an environment the user
+ * must implement locking anyways since
+ * a sequence of
+ *   udpSockNRead()
+ *   udpSockRecv()
+ * would not be atomic.
+ *
+ * Several threads just using udpSockRecv() can
+ * safely share a socket.
+ *
+ */
+int
+udpSockNRead(int sd)
+{
+int rval;
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	_Thread_Disable_dispatch();
+	rval = ( 0 == socks[sd].port ) ? -EBADF : socks[sd].nbytes;
+	_Thread_Enable_dispatch();
 
 	return rval;
 }
 
+
 int
 udpSockSend(int sd, void *payload, int payload_len)
 {
-int         rval;
-UdpSockPeer p;
+int          rval;
+LanUdpHeader h;
 
 	if ( sd < 0 || sd >= NSOCKS )
 		return -EBADF;
@@ -1276,24 +1330,71 @@ UdpSockPeer p;
 
 	SOCKLOCK( &socks[sd] );
 
-	if ( ! (p = socks[sd].peer) ) {
+	if ( ! (FLG_ISCONN & socks[sd].flags) ) {
 		SOCKUNLOCK( &socks[sd] );
 		return -ENOTCONN;
 	}
 
-	if ( arpLookup(p->intrf, p->pkt.hdr.ip.dst, p->pkt.hdr.ll.dst, 0) ) {
+	h = &socks[sd].hdr;
+
+	if ( arpLookup(socks[sd].intrf, h->hdr.ip.dst, h->hdr.ll.dst, 0) ) {
 		SOCKUNLOCK( &socks[sd] );
 		return -ENOTCONN;
 	}
 
-	udpSockHdrsSetlen(&socks[sd].peer->pkt, payload_len);
+	udpSockHdrsSetlen(h, payload_len);
 
-	rval = NETDRV_SND_PACKET( p->intrf->drv_p, &p->pkt, sizeof(p->pkt), payload, payload_len );
+	rval = NETDRV_SND_PACKET( socks[sd].intrf->drv_p, h, sizeof(*h), payload, payload_len );
 
 	SOCKUNLOCK( &socks[sd] );
 
 	return rval;
 }
+
+int
+udpSockSendTo(int sd, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport)
+{
+int          rval;
+LanUdpHeader h;
+
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	if ( 0 == socks[sd].port )
+		return -EBADF;
+
+	SOCKLOCK( &socks[sd] );
+
+	h = &socks[sd].hdr;
+
+	/* if the socket is already connected only allow sending to peer */
+	if ( (FLG_ISCONN & socks[sd].flags) ) {
+		if (   h->hdr.ip.dst == ipaddr
+			&& (unsigned short)ntohs( h->udp.dport ) == dport )
+			rval = udpSockSend(sd, payload, payload_len);
+		else
+			rval = -EISCONN;
+		SOCKUNLOCK( &socks[sd] );
+		return rval;
+	}
+
+	h->hdr.ip.dst = ipaddr;
+	h->udp.dport  = htons((unsigned short)dport);
+
+	if ( arpLookup(socks[sd].intrf, h->hdr.ip.dst, h->hdr.ll.dst, 0) ) {
+		SOCKUNLOCK( &socks[sd] );
+		return -ENOTCONN;
+	}
+
+	udpSockHdrsSetlen(h, payload_len);
+
+	rval = NETDRV_SND_PACKET( socks[sd].intrf->drv_p, h, sizeof(*h), payload, payload_len );
+
+	SOCKUNLOCK( &socks[sd] );
+
+	return rval;
+}
+
 
 void
 udpSockFreeBuf(LanIpPacketRec *b)

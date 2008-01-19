@@ -204,17 +204,10 @@ typedef struct {
 		d->off = lpkt_udphdr(d->pkt).pld;
 		d->avl = ((unsigned short)ntohs(lpkt_udp(d->pkt).len)) - sizeof(UdpHeaderRec);
 
-		/* Automatically connect to the sender if we are not
-		 * connected already.
-		 */
+		/* Remember the sender if we are not connected. */
 		if ( ! (SOCK_ISCONN & d->flags) ) {
-			/* 'peer' is not valid if not qualified by flags & SOCK_ISCONN */
 			d->peer.ipaddr = lpkt_ip(d->pkt).src;
 			d->peer.port   = (unsigned short)ntohs( lpkt_udp(d->pkt).sport );
-
-			if ( 0 == udpSockConnect( SOCK_SD(d->flags), d->peer.ipaddr, d->peer.port ) ) {
-				d->flags |= SOCK_ISCONN;
-			}
 		}
 	}
 
@@ -268,11 +261,16 @@ typedef struct {
 	args.bytes_moved = 0; // to be set by driver
  */
 
-	if ( ! (SOCK_ISCONN & d->flags) )
+	if ( !d->peer.ipaddr || !d->peer.port )
 		return RTEMS_NOT_OWNER_OF_RESOURCE;
 
 	n = argp->count > LANPKTMAX ? LANPKTMAX : argp->count;
-	n =	udpSockSend( SOCK_SD(d->flags), argp->buffer, n );
+
+	if ( SOCK_ISCONN & d->flags ) {
+		n =	udpSockSend( SOCK_SD(d->flags), argp->buffer, n );
+	} else {
+		n = udpSockSendTo( SOCK_SD(d->flags), argp->buffer, n, d->peer.ipaddr, d->peer.port );
+	}
 
 	if ( n < 0 ) {
 		switch (n) {
@@ -355,7 +353,7 @@ typedef struct {
 		case FIONREAD:
 			if ( (nbytes = udpSockNRead( SOCK_SD(d->flags) )) < 0 )
 				sc = RTEMS_INVALID_NAME;
-			*(int*)argp->buffer = nbytes;
+			*(int*)argp->buffer = nbytes + d->avl;
 		break;
 
 		default:	sc = RTEMS_INVALID_NAME;

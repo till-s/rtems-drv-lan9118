@@ -28,6 +28,34 @@ udpSockCreate(int port);
 int
 udpSockDestroy(int sd);
 
+/* Query number of bytes queued on a socket (UDP payload only)
+ *
+ * Note that there is a race condition if 
+ * udpSockRecv() and udpSockNRead() are used
+ * from different thread contexts.
+ * One thread could have dequeued a packet
+ * and be put to sleep before it has
+ * a chance to decrease 'nbytes' so that
+ * a second thread calling udpSockNRead
+ * would believe that the 'nbytes' are still
+ * in the queue.
+ * However, in such an environment the user
+ * must implement locking anyways since
+ * a sequence of
+ *   udpSockNRead()
+ *   udpSockRecv()
+ * would not be atomic.
+ *
+ * Several threads just using udpSockRecv() can
+ * safely share a socket.
+ *
+ * RETURNS: Total number of bytes available on socket
+ *          or a value < 0 if there was an error.
+ *
+ */
+int
+udpSockNRead(int sd);
+
 /* Alloc and free buffers */
 LanIpPacketRec *
 udpSockGetBuf();
@@ -74,6 +102,19 @@ udpSockConnect(int sd, uint32_t dipaddr, int dport);
  */
 int
 udpSockSend(int sd, void *payload, int payload_len);
+
+/* Send data to arbitrary destination.
+ *
+ * RETURNS: number of bytes sent or -errno.
+ *
+ * NOTES: - payload buffer is *not* taken over by the
+ *          stack but copied.
+ *        - use udpSendTo() when using a 'connected'
+ *          socket (except if 'dipaddr'/'dport' match
+ *          the peer).
+ */
+int
+udpSockSendTo(int sd, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport);
 
 /* Send a buffer; EVERYTHING (all headers + payload must have been filled in)
  * len: total length (including all headers and initial 2-byte padding).

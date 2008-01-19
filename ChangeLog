@@ -1,4 +1,17 @@
 2008/1/18 (TS):
+ - lanIpBasic:
+     - added udpSockNRead() to find number of bytes in RX queue available
+	   for reading
+	 - eliminated 'Peer' struct. Moved 'interface' to socket (where it
+	   belongs).
+	   The socket now holds a UDP header and a flag to indicate if
+	   the socket is 'connected'. If 'connected' the UDP header
+	   holds the peer information. If not connected the header can
+	   be reused by udpSockSendTo() for various destinations.
+	 - added udpSockSendTo() for communication over unconnected sockets.
+	 - lock socket while in udpSockConnect()
+ - drvUdpSock:
+     - buffer leftover chars from a received packet for subsequent read.
  - added 'drvUdpSock' - a simple driver to provide std. filesystem
    I/O over lanIpBasic/UDP 'sockets'.
 2008/1/17 (TS):

@@ -16,7 +16,7 @@ DEFINES_beatnik= -DDRVMVE
 C_PIECES_pc386=drvAmdEthIpBasic
 DEFINES_pc386= -DDRVAMD
 
-C_PIECES=$(C_PIECES_$(RTEMS_BSP_FAMILY)) lanIpBasicTest
+C_PIECES=$(C_PIECES_$(RTEMS_BSP_FAMILY)) lanIpBasicTest drvUdpSock
 
 C_FILES=$(C_PIECES:%=%.c)
 C_O_FILES=$(C_PIECES:%=${ARCH}/%.o)
@@ -26,8 +26,8 @@ CC_PIECES=
 CC_FILES=$(CC_PIECES:%=%.cc)
 CC_O_FILES=$(CC_PIECES:%=${ARCH}/%.o)
 
-H_FILES= drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h  padStream.h lanIpBasicTest.h
-INST_HEADERS= drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h padStream.h lanIpBasicTest.h
+H_FILES= drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h  padStream.h lanIpBasicTest.h drvUdpSock.h
+INST_HEADERS= drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h padStream.h lanIpBasicTest.h drvUdpSock.h
 
 # Assembly source names, if any, go here -- minus the .S
 S_PIECES=
