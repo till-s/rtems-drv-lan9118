@@ -9,13 +9,37 @@
  * Connection management:
  *
  *   - device minor number of filesystem node gives local
- *     port number the UDP 'socket' is bound to.
- *   - open creates a local UDP 'socket'
+ *     port number the UdpSock is bound to.
+ *   - open creates a local UdpSock.
  *   - read/write 
- *   - ioctl can be used to connect 'socket' to a peer.
- *     If, on the first read operation the 'socket' is
- *     unconnected then the 'socket' is connected to the
- *     peer (read data source).
+ *   - ioctl can be used to connect UdpSock to a peer.
+ *
+ * NOTE the difference between 'connected' and 'unconnected'
+ *      UdpSocks:
+ *
+ *        'unconnected':  Cannot use udpSockSend() (because destination
+ *                        is unknown); udpSockSendTo() can be used to
+ *                        specify destination which may be different
+ *                        for every udpSockSendTo() operation.
+ *
+ *                        Incoming traffic from any host/port is accepted.
+ *
+ *        'connected':    Cannot use udpSockSendTo() (unless destination
+ *                        is the peer).
+ *
+ *                        Incoming traffic from non-matching host/port
+ *                        is rejected.
+ *
+ *      By default (or after using ioctl( UDPSIOC_SETPEER, 0 ) with a 
+ *      zero destination) the UdpSocks created by this driver are
+ *      unconnected. This means that a new UdpSock cannot be written to
+ *      (because no destination is known). However, after every
+ *      successful read() operation the source of the data (host/port)
+ *      is remembered and used by subsequent write()s.
+ *
+ *      A UdpSock device can be converted into a connected one
+ *      by using ioctl( UDPSIOC_SETPEER ) with a non-zero destination
+ *      host/port pair.
  *
  * Usage:
  *
@@ -35,7 +59,7 @@
  *     driver slots configured.
  *
  *  3) Create device nodes; one for each port you want to
- *     use sockets on (udpSocks are only created when the
+ *     use UdpSocks on (udpSocks are only created when the
  *     device file is opened). The device minor number
  *     holds the UDP port number (of your box).
  *     E.g., create a device to be used by the GDB stub
@@ -45,8 +69,8 @@
  *
  *     Note that the device name is completely arbitrary.
  *
- *  4) You now can transparently create sockets and read/write
- *     from them:
+ *  4) You now can transparently create UdpSocks and read/write
+ *     from/to them:
  *
  *       int sd = open("/dev/udp-xxx", O_RDWR);
  *       // may read w/o 'connecting'; the peer address/port is remembered
@@ -83,7 +107,15 @@ typedef struct {
 	uint16_t	port;   /* **host**  byte order */
 } DrvUdpSockPeer;
 
+/* 'Connect' UDP device to a peer; the peer ipaddr=0/port=0
+ * may be used to destroy the connection and make the underlying
+ * UdpSock a 'unconnected' one.
+ */
 #define UDPSIOC_SETPEER	_IOW( 'u', 0, DrvUdpSockPeer )
+
+/* Get peer address of UDP device; note that
+ * this works for 'connected' and 'unconnected' devices.
+ */
 #define UDPSIOC_GETPEER	_IOR( 'u', 0, DrvUdpSockPeer )
 
 /*

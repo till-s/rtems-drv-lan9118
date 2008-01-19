@@ -216,6 +216,7 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		fprintf(stderr,"Usage: lanIpSetup(char *ip, char *netmask, int port, enaddr)\n");
 		return -1;
 	}
+
 	if ( lanIpDrv ) {
 		fprintf(stderr,"Can call setup only once\n");
 		return -1;
@@ -239,7 +240,7 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		goto egress;
 	}
 
-	if ( port > 0 &&(lanIpUdpsd = udpSockCreate(port)) < 0 ) {
+	if ( port > 0 && (lanIpUdpsd = udpSockCreate(port)) < 0 ) {
 		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-lanIpUdpsd));
 		goto egress;
 	}

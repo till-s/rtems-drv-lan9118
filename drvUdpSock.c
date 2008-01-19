@@ -1,18 +1,8 @@
 /* $Id$ */
 
-/* Simple driver providing access to 'udpSock' via the file
+/*
+ * Simple driver providing access to 'udpSock' via the file
  * system (read/write).
- *
- * Connection management:
- *
- *   - device minor number of filesystem node gives local
- *     port number the UDP 'socket' is bound to.
- *   - open creates a local UDP 'socket'
- *   - read/write 
- *   - ioctl can be used to connect 'socket' to a peer.
- *     If, on the first read operation the 'socket' is
- *     unconnected then the 'socket' is connected to the
- *     peer (read data source).
  */
 
 #include <rtems.h>
@@ -329,14 +319,21 @@ typedef struct {
 			}
 
 			peer    = argp->buffer;
-			d->peer = *peer;
 
-			if ( peer->ipaddr && peer->port ) {
-				if ( 0 == udpSockConnect( SOCK_SD(d->flags), peer->ipaddr, peer->port) ) {
-					d->flags |= SOCK_ISCONN;
-				} else {
-					sc = RTEMS_IO_ERROR;
+			/* allow NULL buffer; semantics are to disconnect */
+			if ( peer ) {
+				d->peer = *peer;
+
+				if ( peer->ipaddr && peer->port ) {
+					if ( 0 == udpSockConnect( SOCK_SD(d->flags), peer->ipaddr, peer->port) ) {
+						d->flags |= SOCK_ISCONN;
+					} else {
+						sc = RTEMS_IO_ERROR;
+					}
 				}
+			} else {
+				d->peer.ipaddr = (uint32_t)htonl(0);
+				d->peer.port   = 0;
 			}
 		break;
 
