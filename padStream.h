@@ -62,7 +62,8 @@ padStreamStop(void);
 typedef enum {
 	PadDataBpm = 0,
 	PadDataCalRed,
-	PadDataCalGrn
+	PadDataCalGrn,
+	PadDataCavity
 } PadDataKind;
 
 #ifdef __cplusplus
