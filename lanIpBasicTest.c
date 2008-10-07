@@ -13,6 +13,8 @@
 
 #include <drvLan9118.h>
 
+#include "hwtmr.h"
+
 static uint8_t eeprom_shadow[100];
 static int     shadow_len = 0;
 
@@ -54,11 +56,6 @@ start(void *drv, IpBscIf ipbif, int pri)
 				0, 0,
 				0, 0);
 }
-
-/* Must be initialized! */
-extern uint32_t Read_timer();
-
-#define READ_TIMER()	Read_timer()
 
 #elif defined(DRVMVE)
 
@@ -106,13 +103,6 @@ shutdown(void *drv)
 {
 	drvMveIpBasicShutdown(mve_tid);
 	mve_tid = 0;
-}
-
-static inline uint32_t READ_TIMER()
-{
-uint32_t t;
-	asm volatile("mftb %0":"=r"(t));
-	return t;
 }
 
 #elif defined(DRVAMD)
@@ -171,8 +161,6 @@ shutdown(void *drv)
 {
 	drvAmdIpBasicShutdown(drv);
 }
-
-#define READ_TIMER()	(0xdeadbeef)
 
 #else
 #error "unsupported driver"
@@ -309,12 +297,12 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 				lpkt_udp(p).csum = 0;
 
 			}
-			now  = READ_TIMER();
+			now  = Read_hwtimer();
 			then = lpkt_udp_pld(p,echodata)[idx];
 			lpkt_udp_pld(p,echodata)[idx] = now;
 			len = udpSockSendBufRawIp(p);
 		} else {
-			now  = READ_TIMER();
+			now  = Read_hwtimer();
 			then = lpkt_udp_pld(p,echodata)[idx];
 			lpkt_udp_pld(p,echodata)[idx] = now;
 			len = ntohs(lpkt_udp(p).len) - sizeof(UdpHeaderRec);
@@ -367,12 +355,12 @@ int         err = -1;
 
 				/* initialize timestamps */
 				lpkt_udp_pld(p,echodata)[0] = 0;
-				lpkt_udp_pld(p,echodata)[1] = READ_TIMER();
+				lpkt_udp_pld(p,echodata)[1] = Read_hwtimer();
 				udpSockSendBufRawIp(p);
 			} else {
 				/* initialize timestamps */
 				lpkt_udp_pld(p,echodata)[0] = 0;
-				lpkt_udp_pld(p,echodata)[1] = READ_TIMER();
+				lpkt_udp_pld(p,echodata)[1] = Read_hwtimer();
 				udpSockSend(lanIpUdpsd, p, PAYLDLEN);
 				udpSockFreeBuf(p);
 			}

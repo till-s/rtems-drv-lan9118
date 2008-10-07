@@ -7,6 +7,7 @@
 #include <string.h>
 #include <errno.h>
 
+#include "hwtmr.h"
 
 #define DEBUG_PROTOHDL 1
 #define DEBUG_REPLYCHK 2
@@ -227,9 +228,6 @@ int32_t			err  = 0;
 
 volatile int padudpkilled = 0;
 
-#ifdef BSDSOCKET
-__inline__ uint32_t Read_timer() { return 0xdeadbeef; }
-#endif
 
 int
 padUdpHandler(int port, int me)
@@ -308,9 +306,8 @@ UdpCommPkt  p = 0;
 	}
 #else	/* FIXME: this should test for the uc5282 BSP */
 	{
-		extern uint32_t Read_timer();
 		req->timestampHi = htonl(0);
-		req->timestampLo = htonl(Read_timer());
+		req->timestampLo = htonl(Read_hwtimer());
 	}
 #endif
 

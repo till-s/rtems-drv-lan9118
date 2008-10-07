@@ -15,15 +15,7 @@
 
 #include <padStream.h>
 
-#if defined(__PPC__) && defined(__rtems__)
-extern uint64_t Read_long_timer();
-
-static inline uint32_t my_Read_timer()
-{
-	return Read_long_timer()/(uint64_t)1000;
-}
-#define Read_timer my_Read_timer
-#endif
+#include "hwtmr.h"
 
 int padStreamDebug = 0;
 
@@ -288,7 +280,7 @@ uint32_t       now;
 		return -ENOTSUP;	/* not supported yet */
 
 #ifdef __mcf5200__
-	now = Read_timer() - drvLan9118RxIntBase;
+	now = Read_hwtimer() - drvLan9118RxIntBase;
 	if ( now > maxStreamSendDelay1 )
 		maxStreamSendDelay1 = now;
 #endif
@@ -308,7 +300,7 @@ uint32_t       now;
 
 	if ( padStreamDebug & 1 ) {
 		/* hack timestamp; tag with our us clock */
-		rply->timestampLo = htonl(Read_timer());
+		rply->timestampLo = htonl(Read_hwtimer());
 	}
 
 	rply->strm_cmd_idx    = idx;
@@ -342,7 +334,7 @@ uint32_t       now;
 	UNLOCK();
 
 #ifdef __mcf5200__
-	now = Read_timer() - drvLan9118RxIntBase;
+	now = Read_hwtimer() - drvLan9118RxIntBase;
 	if ( now > maxStreamSendDelay2 )
 		maxStreamSendDelay2 = now;
 #endif

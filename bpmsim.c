@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdint.h>
 
+#include "hwtmr.h"
+
 /* coldfire uc5282 has no FPU */
 typedef int FiltNumber;
 
@@ -74,8 +76,6 @@ struct Iir2Stat_ {
 #define CD1 FNUM(0.2361611)
 #define CD2 FNUM(0.8311936)
 
-unsigned Read_timer();
-
 static inline int16_t
 bswap(int16_t x)
 {
@@ -95,7 +95,7 @@ int16_t rval;
 unsigned
 iir2_bpmsim(int16_t *pf, int nloops, int ini, unsigned long *pn, int swp, int stride)
 {
-unsigned then = Read_timer();
+unsigned then = Read_hwtimer();
 FiltNumber ysa[2] = { FNUM(0.), FNUM(0.) }, xsa[2] = { FNUM(0.), FNUM(0.)};
 FiltNumber ysb[2] = { FNUM(0.), FNUM(0.) };
 signed char n;
@@ -163,12 +163,12 @@ int         ini1 = ini;
 			nloops-=2;
 		}
 	}
-	return Read_timer() - then;
+	return Read_hwtimer() - then;
 }
 
 #ifdef MAIN
 
-unsigned Read_timer() { return 0; }
+unsigned Read_hwtimer() { return 0; }
 
 int
 main(int argc, char **argv)
