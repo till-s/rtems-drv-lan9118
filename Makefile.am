@@ -36,8 +36,8 @@ liblanIpBasic_a_DEPENDENCIES   = $(liblanIpBasic_a_LIBADD)
 
 bin_PROGRAMS                   = lanIpBasic
 lanIpBasic_SOURCES             =
-lanIpBasic_LDADD               = $(liblanIpBasic_a_OBJECTS)
-lanIpBasic_DEPENDENCIES        = $(liblanIpBasic_a_OBJECTS)
+lanIpBasic_LDADD               = $(liblanIpBasic_a_OBJECTS) $(liblanIpBasic_a_LIBADD)
+lanIpBasic_DEPENDENCIES        = $(lanIpBasic_LDADD)
 lanIpBasic_LINK                = $(OBJLINK)
 
 include $(top_srcdir)/rtems.am
