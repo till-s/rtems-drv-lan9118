@@ -59,6 +59,15 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.27  2008/01/18 06:44:27  till
+		 - renamed EtherHeader -> EthHeader; there was a name conflict with
+		   SPEAR software / the AMD pcnet32 driver for which I wanted to add
+		   support.
+		 - added support for AMD 79c97x chips (PMC card which is handy; the
+		   ultimate goal is using udpComm for a GDB connection.
+		 - FIXED: endian-ness bug: IP checksums must not be converted to network
+		   byte-order.
+		
 		Revision 1.26  2007-04-20 22:58:57  till
 		 - added 'NOSEND' option  to simulator
 		 - fixed typos with drvLan9118FifoAddr() routine
@@ -251,6 +260,8 @@
 #include "drvLan9118.h"
 
 #include <lanIpProto.h>
+
+#include "hwtmr.h"
 
 /* Get environment var from the flash; implemented by GeSys/uC5282 */
 extern const char *getbenv(const char *);
@@ -599,8 +610,6 @@ typedef struct DrvLan9118_ts_ {
 
 /* Forward and extern decl. */
 void drvLan9118Daemon(rtems_task_argument);
-extern void Timer_initialize();
-extern uint32_t Read_timer();
 
 
 /* TX buffer command words */
@@ -632,7 +641,7 @@ DrvLan9118_ts	theLan9118_s;
 
 static inline uint32_t byterev(uint32_t x)
 {
-	asm volatile("byterev %0":"+r"(x));
+	asm volatile("byterev %0":"+d"(x));
 	return x;
 }
 
@@ -1539,25 +1548,25 @@ uint32_t base = plan_ps->base;
 	which &= TX_CFG_TXS_DUMP | TX_CFG_TXD_DUMP;
 	if ( !which )
 		return -1;
-	then = Read_timer();
+	then = Read_hwtimer();
 	wr9118Reg(base, TX_CFG, which | rd9118Reg(base, TX_CFG));
 	DELAY45ns();
 	while ( which & rd9118Reg(base, TX_CFG) )
 		/* poll */;
-	return Read_timer() - then;	
+	return Read_hwtimer() - then;	
 }
 
 uint32_t
 drvLan9118RxFlush(DrvLan9118_tps plan_ps)
 {
-uint32_t then = Read_timer();
+uint32_t then = Read_hwtimer();
 uint32_t base = plan_ps->base;
 
 	wr9118Reg(base, RX_CFG, rd9118Reg(base, RX_CFG) | RX_CFG_RX_DUMP);
 	DELAY45ns();
 	while ( RX_CFG_RX_DUMP & rd9118Reg(base, RX_CFG) )
 		/* poll */;
-	return Read_timer() - then;	
+	return Read_hwtimer() - then;	
 }
 
 static uint32_t
@@ -1566,12 +1575,12 @@ skipPacket(DrvLan9118_tps plan_ps)
 uint32_t then;
 uint32_t base = plan_ps->base;
 
-	then = Read_timer();
+	then = Read_hwtimer();
 	wr9118Reg(base, RX_DP_CTL, RX_DP_CTL_FFWD);
 	DELAY45ns();
 	while ( RX_DP_CTL_FFWD & rd9118Reg(base, RX_DP_CTL) )
 		/* wait */;
-	return Read_timer() - then;
+	return Read_hwtimer() - then;
 }
 
 #ifdef DEBUG
@@ -1598,7 +1607,7 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 
 		if ( RSFL_INT & int_sts ) {
 		/* skip */
-		drvLan9118RxIntBase = Read_timer();
+		drvLan9118RxIntBase = Read_hwtimer();
 		while ( RX_FIFO_INF_RXSUSED_GET(rd9118Reg(base, RX_FIFO_INF)) > 0 ) {
 			int left;
 
@@ -1634,12 +1643,12 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 					uint32_t dly;
 					if ( left < 16 && left > 0 ) {
 						/* must do it manually */
-						dly = Read_timer();
+						dly = Read_hwtimer();
 						while ( left > 0 ) {
 							rd9118Reg(base, RX_DATA_FIFO);
 							left-=4;
 						}
-						dly = Read_timer() - dly;
+						dly = Read_hwtimer() - dly;
 					} else {
 						dly = skipPacket(plan_ps);
 					}
