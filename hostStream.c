@@ -157,7 +157,6 @@ padStreamStop()
 #ifdef MAIN
 int main()
 {
-StripSimValRec      v = {1000,2000,3000,4000};
 PadStrmCommandRec cmd;
 int               chan = 0;
 
@@ -168,6 +167,6 @@ int               chan = 0;
 
 	padStreamStart(0, &cmd, chan, inet_addr("127.0.0.1"));
 
-	padStream(rply, &v);
+	padStream(1000,2000,3000,4000);
 }
 #endif
