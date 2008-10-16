@@ -183,7 +183,7 @@ int32_t			err  = 0;
 			}
 #ifdef DEBUG
 			if ( padProtoDebug & DEBUG_PROTOHDL ) {
-				printf("padProtoHandler: STOP command\n");
+				printf("padProtoHandler: STOP command (err = %i)\n", err);
 			}
 #endif
 			break;	
