@@ -168,8 +168,6 @@ int         ini1 = ini;
 
 #ifdef MAIN
 
-unsigned Read_hwtimer() { return 0; }
-
 int
 main(int argc, char **argv)
 {
