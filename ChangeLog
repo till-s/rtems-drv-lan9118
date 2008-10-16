@@ -1,3 +1,8 @@
+2008/10/16 (TS):
+ - padProtoHost.c: added 'server' mode which can stream (simulated) data
+   to a client.
+ - padStream.c: bugfix; streamSim() used wrong stride in col-major mode;
+   has to be 4 (n-channels) not nsamples.
 2008/1/18 (TS):
  - lanIpBasic:
      - added udpSockNRead() to find number of bytes in RX queue available
