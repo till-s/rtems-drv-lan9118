@@ -68,6 +68,10 @@ int	lanIpDebug = DEBUG;
 #define QDEPTH		20	/* RX socket queue depth      */
 #endif
 
+#ifndef DEFLT_PORT
+#define DEFLT_PORT  31110
+#endif
+
 typedef LanIpPacketRec rbuf_t;
 
 static rbuf_t		rbufs[NRBUFS]
@@ -1087,12 +1091,11 @@ int i;
 int
 udpSockCreate(int port)
 {
-int       rval = -1, i;
+int       rval = -1, i, scan_for_port;
 rtems_id  q = 0;
 rtems_id  m = 0;
 
-	/* 0 is invalid (we use it as a marker) */
-	if ( port <= 0 || port >= 1<<16 )
+	if ( port < 0 || port >= 1<<16 )
 		return -EINVAL;
 
 	if ( RTEMS_SUCCESSFUL != rtems_message_queue_create(
@@ -1123,13 +1126,25 @@ rtems_id  m = 0;
 		goto egress;
 	}
 
-	/* found free slot, array is locked */
+	if (  (scan_for_port = (0 == port)) ) {
+		/* assign an unused port number */
+		port = DEFLT_PORT;
+	}
+
+again:
 	for ( i=0; i<NSOCKS; i++ ) {
 		if ( socks[i].port == port ) {
-			/* duplicate port */
-			_Thread_Enable_dispatch();
-			rval = -EADDRINUSE;
-			goto egress;
+			if ( scan_for_port ) {
+				port++;
+				goto again;
+			} else {
+				/* they want to use a fixed port number
+				 * but it is already used
+				 */
+				_Thread_Enable_dispatch();
+				rval = -EADDRINUSE;
+				goto egress;
+			}
 		}
 	}
 
@@ -1233,13 +1248,17 @@ int rval      = -1;
 			goto egress;
 		}
 
+#if 0 /* BSD sockets can be re-associated on the fly; follow these semantics */
 		if ( (FLG_ISCONN & socks[sd].flags) ) {
 			rval = -EISCONN;
 			goto egress;
 		}
+#endif
 
 		if ( udpSockHdrsInit(sd, &socks[sd].hdr, dipaddr, dport, 0) ) {
-			/* ARP lookup failure */
+			/* ARP lookup failure; BSD sockets probably would not
+			 * fail here...
+			 */
 			rval = -ENOTCONN;
 			goto egress;
 		}

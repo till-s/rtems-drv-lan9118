@@ -1,4 +1,10 @@
 2008/10/16 (TS):
+ - lanIpBasic.c, lanIpBasic.h, udpComm.h: socket 'connection' may now
+   be changed on the fly (w/o disconnecting first). Again, IIRC we simply
+   follow BSD semantics.
+ - lanIpBasic.c, lanIpBasic.h, udpComm.h: socket creation may now be
+   passed a zero port number which lets the library pick an available
+   port (following BSD socket semantics).
  - padProtoHost.c: added 'server' mode which can stream (simulated) data
    to a client.
  - padStream.c: bugfix; streamSim() used wrong stride in col-major mode;

@@ -15,7 +15,9 @@ extern "C" {
 /* Create a socket listening on a UDP port
  * RETURNS: descriptor (>=0) on success, < 0 on error
  *
- * NOTE: port is in *host* byte order.
+ * NOTES: - port is in *host* byte order.
+ *        - submitting port == 0 lets the library
+ *          assign an available port #
  */
 int
 udpSockCreate(int port);
@@ -87,8 +89,12 @@ udpSockRecv(int sd, int timeout_ticks);
  *
  * RETURNS: 0 on success -errno on error.
  *
- * NOTE:    'dipaddr' == 0 and 'dport' == 0 may be passed
+ * NOTES: - 'dipaddr' == 0 and 'dport' == 0 may be passed
  *          to 'disconnect' the socket.
+ *
+ *        - call fails if ARP lookup of 'dipaddr' fails
+ *          (this is unlike BSD 'connect' for UDP sockets 
+ *          IIRC).
  */
 int
 udpSockConnect(int sd, uint32_t dipaddr, int dport);
