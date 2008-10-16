@@ -15,7 +15,7 @@ Read_hwtimer()
 
 #elif (defined(__powerpc__) || defined(__PPC__)) && defined(__rtems__)
 
-#include <rtems.h> PPC_Get_timebase_register
+#include <rtems.h> /*PPC_Get_timebase_register*/
 
 static __inline__ uint32_t 
 Read_hwtimer()
