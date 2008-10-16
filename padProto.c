@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <inttypes.h>
 
 #include "hwtmr.h"
 
@@ -183,7 +184,7 @@ int32_t			err  = 0;
 			}
 #ifdef DEBUG
 			if ( padProtoDebug & DEBUG_PROTOHDL ) {
-				printf("padProtoHandler: STOP command (err = %i)\n", err);
+				printf("padProtoHandler: STOP command (err = %"PRIi32")\n", err);
 			}
 #endif
 			break;	
