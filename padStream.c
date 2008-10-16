@@ -242,10 +242,10 @@ static unsigned long noise = 1;
 	swp    = ( bigEndian() != !little_endian );
 
 	if ( column_major ) {
-		iir2_bpmsim(buf++, nsamples, ini->a,  &noise, swp, nsamples);
-		iir2_bpmsim(buf++, nsamples, ini->b,  &noise, swp, nsamples);
-		iir2_bpmsim(buf++, nsamples, ini->c,  &noise, swp, nsamples);
-		iir2_bpmsim(buf++, nsamples, ini->d,  &noise, swp, nsamples);
+		iir2_bpmsim(buf++, nsamples, ini->a,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->b,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->c,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->d,  &noise, swp, NCHNS);
 	} else {
 		iir2_bpmsim(buf, nsamples, ini->a,  &noise, swp, 1);
 		buf += nsamples;
