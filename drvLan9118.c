@@ -59,6 +59,13 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.28  2008/10/07 03:50:49  strauman
+		 - rtems 4.9.0 renamed Timer_initialize/Read_timer -> benchmark_timer_initialize/
+		   benchmark_timer_read :-(. All timer-related inlines were moved into
+		   a new 'hwtmr.h' header which provides primitive implementations for
+		   uC5282 and PPC (timebase).
+		 - BUGFIX: byterev constraint must be a 'd' register, not any 'r'.
+		
 		Revision 1.27  2008/01/18 06:44:27  till
 		 - renamed EtherHeader -> EthHeader; there was a name conflict with
 		   SPEAR software / the AMD pcnet32 driver for which I wanted to add
@@ -1352,6 +1359,10 @@ rtems_status_code 	sc;
 void
 drvLan9118Shutdown(DrvLan9118_tps plan_ps)
 {
+
+	if ( !plan_ps )
+		return;
+
 	drvLan9118IrqDisable();
 
 	if ( plan_ps->tid )
