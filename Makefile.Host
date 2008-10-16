@@ -1,13 +1,25 @@
 # Makefile for building a test program on a
 # host computer using the ordinary network stack
-OBJS =  padProtoHost.o udpCommBSD.o padProto.o
+OBJS  =  padProtoHost.o udpCommBSD.o padProto.o hostStream.o bpmsim.o
+OBJS1 =  hostStreamMain.o udpCommBSD.o bpmsim.o
+
+CFLAGS = -O2
+
+all: padProtoHost 
 
 padProtoHost: $(OBJS)
-	$(CC)  -O2 -DBSDSOCKET -o $@ $^
+	$(CC)  $(CFLAGS) -DBSDSOCKET -o $@ $^
+
+hostStreamMain.o: hostStream.c
+	$(CC) -I. -c $(CFLAGS) -DMAIN -DBSDSOCKET -o $@ $<
+
+# test program only
+hostStream: $(OBJS1)
+	$(CC)  $(CFLAGS) -DBSDSOCKET -o $@ $^
 
 %.o:%.c
-	$(CC) -I. -c -O2 -DBSDSOCKET -o $@ $<
+	$(CC) -I. -c $(CFLAGS) -DBSDSOCKET -o $@ $<
 
 clean:
-	$(RM) padProtoHost
-	$(RM) $(OBJS)
+	$(RM) padProtoHost hostStream
+	$(RM) $(OBJS) $(OBJS1)
