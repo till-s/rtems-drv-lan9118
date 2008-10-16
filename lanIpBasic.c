@@ -1244,8 +1244,6 @@ int rval      = -1;
 			goto egress;
 		}
 
-		/* !!! Assume this operation is atomic !!! */
-		asm volatile(""::"m"(socks[sd].flags));
 		socks[sd].flags |= FLG_ISCONN;
 	}
 
