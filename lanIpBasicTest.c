@@ -9,11 +9,11 @@
 
 #define PAYLDLEN 1024
 
+#include "hwtmr.h"
+
 #ifdef DRVLAN9118
 
 #include <drvLan9118.h>
-
-#include "hwtmr.h"
 
 static uint8_t eeprom_shadow[100];
 static int     shadow_len = 0;
