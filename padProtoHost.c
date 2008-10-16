@@ -61,7 +61,7 @@ union {
 void
 usage(char *nm)
 {
-	fprintf(stderr,"Usage: %s [-hvec] [-C channel] [-l port] [-n nsamples] ip:port <msg_type_int>\n",nm);
+	fprintf(stderr,"Usage: %s [-hvec] [-d dbg_flgs] [-s srvr_port] [-C channel] [-l port] [-n nsamples] ip:port <msg_type_int>\n",nm);
 }
 
 static void
@@ -85,6 +85,48 @@ UdpCommPkt        p = 0;
 	udpCommFreePacket(p);
 }
 
+static int padudpkilled = 0;
+
+static int
+server(int port, int chan, int timeout_ms)
+{
+int         err = -1;
+int         sd;
+UdpCommPkt  p;
+uint32_t	peerip;
+
+	if ( (sd = udpCommSocket(port)) < 0 ) {
+		return sd;
+	}
+
+	while ( !padudpkilled ) {
+		if ( (p = udpCommRecvFrom(sd, timeout_ms, &peerip, 0)) ) {
+			err = padProtoHandler((PadRequest)udpCommBufPtr(p), chan, (int*)&padudpkilled, peerip);
+			if ( 0 < err ) {
+				/* OK to send packet */
+				udpCommReturnPacket(p, ntohs(((PadReply)udpCommBufPtr(p))->nBytes));
+			} else {
+				/* release buffer */
+				udpCommFreePacket(p);
+				if ( err < 0 ) {
+					fprintf(stderr,"padProtoHandler returned error %i\n",err);
+				}
+			}
+		} else {
+			extern int padStream(int32_t a, int32_t b, int32_t c, int32_t d);
+			/* timed out; try to send stream */
+			padStream(2000,3000,4000,5000);
+		}
+	}
+
+	padudpkilled = 0;
+	err          = 0;
+	
+	udpCommClose(sd);
+
+	return 0;
+}
+
 static void
 streamdump(int sd)
 {
@@ -94,6 +136,7 @@ int16_t           err;
 int               i;
 int               sz;
 int16_t           *buf;
+
 	while ( (p = udpCommRecv(sd, 1000000000)) ) {
 		rply = (PadReply)p;
 		if ( verbose ) 
@@ -160,8 +203,10 @@ char               *col     = 0;
 int               nsamples  = 8;
 int               badEndian = 0;
 int               colMajor  = 0;
+int               srvrMode  = 0;
+unsigned          dbg       = 0;
 
-	while ( (ch = getopt(argc, argv, "vcehl:n:C:")) > 0 ) {
+	while ( (ch = getopt(argc, argv, "d:vcehl:n:C:s:")) > 0 ) {
 		switch (ch) {
 			default:
 				fprintf(stderr,"Unknown option '%c'\n",ch);
@@ -172,13 +217,25 @@ int               colMajor  = 0;
 				usage(argv[0]);
 				exit(0);
 
+			case 'd':
+				if ( 1!=sscanf(optarg,"%i",&dbg) ) {
+					fprintf(stderr,"invalid 'debug' value: '%s'\n", optarg);
+					usage(argv[0]);
+					exit(1);
+				}
+			break;
+
 			case 'l':
+			case 's':
 				if ( 1!= sscanf(optarg,"%i",&port) || port < 0 || port > 65535 ) {
 					fprintf(stderr,"invalid port number: '%s'\n", optarg);
 					usage(argv[0]);
 					exit(1);
 				}
-				listener = 1;	
+				if ( 'l' == ch )
+					listener = 1;	
+				else
+					srvrMode = 1;
 				break;
 
 			case 'v': verbose   = 1; break;
@@ -200,10 +257,11 @@ int               colMajor  = 0;
 					exit(1);
 				}
 			break;
+
 		}
 	}
 
-	if ( !listener ) {
+	if ( !listener && !srvrMode ) {
 		if ( argc - optind < 2 || !(col=strchr(argv[optind],':')) || (*col++=0, INADDR_NONE == inet_addr(argv[optind])) || 1 != sscanf(col,"%i",&port) || 1 != sscanf(argv[optind+1],"%i",&type) ) {
 			usage(argv[0]);
 			exit(1);
@@ -213,6 +271,15 @@ int               colMajor  = 0;
 	
 	if ( 0 == port )
 		port = PADPROTO_PORT;
+
+	if ( srvrMode ) {
+		extern int padProtoDebug;
+		padProtoDebug = dbg;
+		server(port, theChannel, 1000);
+		/* should never return here */
+		perror("padUdpHandler failed");
+		exit(1);
+	}
 
 	sd = udpCommSocket(port);
 
