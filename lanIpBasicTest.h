@@ -5,6 +5,8 @@
 #include <lanIpBasic.h>
 #include <stdint.h>
 
+/* Note: the name of this file is historic and unfortunate... */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
