@@ -62,8 +62,13 @@ int	lanIpDebug = DEBUG;
 #define ARP_SEND_RETRY	3
 #endif
 
+#if     RBUF_ALIGNMENT < LAN_IP_BASIC_PACKET_ALIGNMENT
+#undef  RBUF_ALIGNMENT
+#define RBUF_ALIGNMENT LAN_IP_BASIC_PACKET_ALIGNMENT
+#endif
+
 /* Trivial RX buffers */
-#if defined(RBUF_ALIGNMENT) && ((RBUF_ALIGNMENT-1) & LANPKTMAX)
+#if ((RBUF_ALIGNMENT-1) & LANPKTMAX)
 #error "LANPKTMAX has insufficient alignment for this chip driver"
 #endif
 

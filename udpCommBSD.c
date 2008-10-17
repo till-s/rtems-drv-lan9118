@@ -10,11 +10,27 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+
+/* to get alignment only */
+#include <lanIpProto.h>
+
+
+#define DO_ALIGN(x,a) (((uintptr_t)(x) + ((a)-1)) & ~((a)-1))
+#define BUFALIGN(x)   DO_ALIGN(x,LAN_IP_BASIC_PACKET_ALIGNMENT)
+
+/* maintain same alignment of data-area 
+ * which is seen when using lanIpBasic.
+ * Pad # of bytes consumed by ethernet, IP
+ * and UDP headers.
+ */
+#define PADSZ         (16+20+8)
 
 typedef struct {
 	char   data[1500];
 	struct sockaddr sender;
 	int             rx_sd;
+	void            *raw_mem;
 } __attribute__((may_alias)) UdpCommBSDPkt;
 
 int
@@ -44,6 +60,7 @@ udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
 struct timeval     tv;
 fd_set             fds;
 UdpCommBSDPkt      *p;
+void               *p_raw;
 struct sockaddr_in __attribute__((may_alias)) *sa;
 socklen_t          len;
 
@@ -54,11 +71,13 @@ socklen_t          len;
 
 	if ( select(sd+1, &fds, 0, 0, &tv) <= 0 )
 		return 0;
-	p   = malloc(sizeof(*p));
-	sa  = (struct sockaddr_in __attribute__((may_alias)) *)&p->sender;
-	len = sizeof( p->sender );
-	if ( recvfrom(sd, p->data, 1500, 0, &p->sender, &len) < 0 ) {
-		free(p);
+	p_raw      = malloc(sizeof(*p) + PADSZ + LAN_IP_BASIC_PACKET_ALIGNMENT-1);
+	p          = (UdpCommBSDPkt*)(BUFALIGN(p_raw) + PADSZ);
+	p->raw_mem = p_raw;
+	sa         = (struct sockaddr_in __attribute__((may_alias)) *)&p->sender;
+	len        = sizeof( p->sender );
+	if ( recvfrom(sd, p->data, sizeof(p->data), 0, &p->sender, &len) < 0 ) {
+		free(p_raw);
 		return 0;
 	} else {
 		if ( ppeerip )
@@ -68,6 +87,13 @@ socklen_t          len;
 	}
 	p->rx_sd = sd;
 	return p;
+}
+
+void
+udpCommFreePacket(UdpCommPkt p)
+{
+	if ( p )
+		free(((UdpCommBSDPkt*)p)->raw_mem);
 }
 
 UdpCommPkt

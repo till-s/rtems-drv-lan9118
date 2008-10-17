@@ -57,7 +57,7 @@ static __inline__ void *
 udpCommBufPtr(UdpCommPkt p);
 
 /* Release packet (obtained from Recv) when done */
-static __inline__ void
+STATICINLINE void
 udpCommFreePacket(UdpCommPkt p);
 
 /* Send packet to connected peer */
@@ -92,15 +92,13 @@ udpCommBufPtr(UdpCommPkt p)
 #endif
 }
 
+#ifndef BSDSOCKET
 static __inline__ void
 udpCommFreePacket(UdpCommPkt p)
 {
-#ifdef BSDSOCKET
-	free(p);
-#else
 	udpSockFreeBuf(p);
-#endif
 }
+#endif
 
 static __inline__ int
 udpCommSend(int sd, void *buf, int len)

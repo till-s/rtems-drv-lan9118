@@ -1,4 +1,9 @@
 2008/10/17 (TS):
+ - define minimal alignment RX packets are guaranteed to have
+   in lanIpProto.h. Made sure the BSD implementation of udpComm
+   maintains the same alignment. This is important accessing when
+   packet contents with a vector-engine or other method that works
+   faster on properly aligned data.
  - renamed lanIpBasicTest.h -> lanIpBasicSetup.h
  - provide helper inlines (lanIpBasic.c) for drivers to manipulate
    unaligned IP addresses in ARP headers.

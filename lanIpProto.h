@@ -11,6 +11,13 @@
 
 #define EH_PAD_BYTES 2
 
+/* Guarantee packet alignment to 32 bytes;
+ * (particular chip driver may have stricter
+ * requirements and the buffer memory will
+ * then be aligned accordingly)
+ */
+#define LAN_IP_BASIC_PACKET_ALIGNMENT 32
+
 /* uint32_t aligned ethernet header */
 typedef struct EthHeaderRec_ {
 	uint8_t		pad[EH_PAD_BYTES];
