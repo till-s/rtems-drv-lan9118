@@ -59,6 +59,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.29  2008/10/16 23:55:51  strauman
+		 - drvLan9118Shutdown(): ignore NULL argument and do nothing.
+		
 		Revision 1.28  2008/10/07 03:50:49  strauman
 		 - rtems 4.9.0 renamed Timer_initialize/Read_timer -> benchmark_timer_initialize/
 		   benchmark_timer_read :-(. All timer-related inlines were moved into
@@ -651,6 +654,11 @@ static inline uint32_t byterev(uint32_t x)
 	asm volatile("byterev %0":"+d"(x));
 	return x;
 }
+
+#define EEPROM_SIZE 256
+
+static uint8_t eeprom_shadow[EEPROM_SIZE];
+
 
 #ifndef BYTE_ORDER
 #error "unknown CPU endianness"
@@ -1338,6 +1346,9 @@ rtems_status_code 	sc;
 		}
 	}
 
+	/* Copy EEPROM contents into shadow buffer   */
+	drvLan9118E2PRead(plan_ps, eeprom_shadow, 0, EEPROM_SIZE);
+
 	/* lock 'tid' against EEPROM access routines */
 	REGLOCK(plan_ps);
 	plan_ps->tid = tid;
@@ -1488,7 +1499,7 @@ uint32_t
 drvLan9118TxPacket(DrvLan9118_tps plan_ps, const void *buf_pa, int nbytes, unsigned short tag)
 {
 uint32_t base = plan_ps->base;
-uint32_t ltot =
+uint32_t ltot;
 
 	/* need 4 byte alignment (implicit TXCMD_A_END_ALIGN_4) */
 	ltot = (nbytes+3) & ~3;
@@ -1802,7 +1813,7 @@ doit(DrvLan9118_tps plan_ps, uint32_t cmd, uint8_t *d_pa, const uint8_t *s_pa, u
 {
 int rval = -1;
 
-	if ( !plan_ps || !len || off + len > 256 )
+	if ( !plan_ps || !len || off + len > EEPROM_SIZE )
 		return -EINVAL;
 
 	REGLOCK(plan_ps);
@@ -1861,6 +1872,14 @@ bail:
 int
 drvLan9118E2PRead(DrvLan9118_tps plan_ps, void *dst_pa, unsigned src, unsigned len)
 {
+	if ( !plan_ps || !len || src + len > EEPROM_SIZE )
+		return -EINVAL;
+
+	if ( plan_ps->tid ) {
+		memcpy(dst_pa, &eeprom_shadow[src], len);
+		return 0;
+	}
+
 	return doit(plan_ps, E2P_CMD_READ, dst_pa, 0, src, len);
 }
 

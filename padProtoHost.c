@@ -15,7 +15,7 @@
 
 static int verbose    = 0;
 
-static unsigned theChannel = 0;
+static int theChannel = 0;
 
 void
 pdump(UdpCommPkt p)
@@ -61,7 +61,25 @@ union {
 void
 usage(char *nm)
 {
-	fprintf(stderr,"Usage: %s [-hvec] [-d dbg_flgs] [-s srvr_port] [-C channel] [-l port] [-n nsamples] ip:port <msg_type_int>\n",nm);
+	fprintf(stderr,"Usage: %s [-bhvec] [-C channel] [-l port] [-n nsamples] [-s srvr_port] [-d dbg_flgs] ip:port <msg_type_int>\n",nm);
+	fprintf(stderr,"          -b bcast to all channels\n");
+	fprintf(stderr,"          -h print this help\n");
+	fprintf(stderr,"          -v be verbose\n");
+	fprintf(stderr,"          -e request wrong endianness (for testing; STRM command only)\n");
+	fprintf(stderr,"          -c request col-major data   (for testing; STRM command only)\n");
+	fprintf(stderr,"          -n <nsamples> request <nsamples> (STRM command only)\n");
+	fprintf(stderr,"          -C <channel>  send to PAD # <channel>\n");
+	fprintf(stderr,"          -l <port>     operate in STRM listener mode on <port>\n");
+	fprintf(stderr,"          -n <port>     operate in STRM listener mode on <port>\n");
+	fprintf(stderr,"          <msg_type_int> (forced to STRM if any of -[nec] options present:\n");
+	fprintf(stderr,"                      0 = NOP\n");
+	fprintf(stderr,"                      1 = ECHO\n");
+	fprintf(stderr,"                      2 = STRM (start stream)\n");
+	fprintf(stderr,"                      3 = SPET (pet stream)\n");
+	fprintf(stderr,"                      4 = STOP (stop stream)\n");
+	fprintf(stderr,"                      5 = SIM  (simulate BPM)\n");
+	fprintf(stderr,"                     15 = KILL (terminate padUdpHandler on target)\n");
+	fprintf(stderr,"          -s srvr_port  run as a padProto server\n");
 }
 
 static void
@@ -194,7 +212,7 @@ int
 main(int argc, char **argv)
 {
 int               sd;
-int               type;
+int               type = -1;
 int               ch;
 PadStrmCommandRec scmd;
 int               port      = 0;
@@ -206,7 +224,7 @@ int               colMajor  = 0;
 int               srvrMode  = 0;
 unsigned          dbg       = 0;
 
-	while ( (ch = getopt(argc, argv, "d:vcehl:n:C:s:")) > 0 ) {
+	while ( (ch = getopt(argc, argv, "bvcehl:n:C:s:d:")) > 0 ) {
 		switch (ch) {
 			default:
 				fprintf(stderr,"Unknown option '%c'\n",ch);
@@ -238,12 +256,14 @@ unsigned          dbg       = 0;
 					srvrMode = 1;
 				break;
 
+			case 'b': theChannel = -128; break;
+
 			case 'v': verbose   = 1; break;
-			case 'c': colMajor  = 1; break;
-			case 'e': badEndian = 1; break;
+			case 'c': colMajor  = 1; type = PADCMD_STRM; break;
+			case 'e': badEndian = 1; type = PADCMD_STRM; break;
 
 			case 'C':
-				if ( 1 != sscanf(optarg,"%i",&theChannel) || theChannel > 255 ) {
+				if ( 1 != sscanf(optarg,"%i",&theChannel) || theChannel > 255 || (theChannel < 0 && -128 != theChannel) ) {
 					fprintf(stderr,"invalid channel #: '%s'\n",optarg);
 					usage(argv[0]);
 					exit(1);
@@ -256,13 +276,14 @@ unsigned          dbg       = 0;
 					usage(argv[0]);
 					exit(1);
 				}
+				type = PADCMD_STRM;
 			break;
 
 		}
 	}
 
 	if ( !listener && !srvrMode ) {
-		if ( argc - optind < 2 || !(col=strchr(argv[optind],':')) || (*col++=0, INADDR_NONE == inet_addr(argv[optind])) || 1 != sscanf(col,"%i",&port) || 1 != sscanf(argv[optind+1],"%i",&type) ) {
+		if ( argc - optind < 2 || !(col=strchr(argv[optind],':')) || (*col++=0, INADDR_NONE == inet_addr(argv[optind])) || 1 != sscanf(col,"%i",&port) || (-1 == type && 1 != sscanf(argv[optind+1],"%i",&type)) ) {
 			usage(argv[0]);
 			exit(1);
 		}

@@ -29,6 +29,15 @@
 
 #include <lanIpProto.h>
 #include <lanIpBasic.h>
+
+/* Alias helper types */
+typedef uint32_t	uint32_a_t __attribute__((__may_alias__));
+typedef  int32_t	 int32_a_t __attribute__((__may_alias__));
+typedef uint16_t	uint16_a_t __attribute__((__may_alias__));
+typedef   int8_t	  int8_a_t __attribute__((__may_alias__));
+typedef  uint8_t	 uint8_a_t __attribute__((__may_alias__));
+typedef  int16_t	 int16_a_t __attribute__((__may_alias__));
+
 /* include netdriver AFTER defining VIOLATE_KERNEL_VISIBILITY (in case it uses rtems.h already) */
 #include NETDRV_INCLUDE
 
@@ -86,13 +95,11 @@ volatile int  lanIpBufAvail = NRBUFS;
 
 static rbuf_t *frb = 0; /* free list */
 
-typedef uint16_t __attribute__ ((may_alias)) usa;
-
 static uint16_t
 ipcsum(uint8_t *d, int n)
 {
 register uint32_t s = 0;
-register usa     *p;
+register uint16_a_t *p;
 int				  swapped;
 union {
 	uint8_t	b[2];
@@ -107,7 +114,7 @@ union {
 		n--;
 	}
 
-	p = (usa*)d;
+	p = (uint16_a_t*)d;
 
 	while ( n >= 16 ) {
 		s += *p++; s += *p++; s += *p++; s += *p++;
@@ -178,7 +185,7 @@ typedef struct IpBscIfRec_ {
 	rtems_id		mutx;
 	uint32_t		ipaddr;
 	uint32_t		nmask;
-	struct LanArpRec_		arpreq;
+	LanArpRec		arpreq;
 	LanArpRec		arprep;
 } IpBscIfRec;
 
@@ -206,6 +213,40 @@ static UdpSockRec	socks[NSOCKS] = {{0}};
 static int         nsocks         = 0;
 static IpBscIf		intrf         = 0;
 
+
+/* A helper type for copying 'spa' and 'tpa' fields in an ARP
+ * header. Note that (provided the ARP header is 32-bit aligned)
+ * that 'spa/tpa' which are 4-byte IP addresses are NOT 4-byte
+ * aligned. This means that we cannot portably copy them as
+ * 32-bit word entities.
+ * Use this helper type (which was tuned to produce fast code
+ * with gcc).
+ */
+union arpip_2_aligned {
+	uint8_t	 ipbytes[4];
+	uint16_t aligner[2]; /* dummy to provide 2-byte alignment */
+}; /* spa/tpa are 2-byte aligned */
+
+static inline uint32_t get_spa(IpArpRec *arphdr)
+{
+register union { uint32_t ip; union arpip_2_aligned bytes; } rval;
+	rval.bytes = *(union arpip_2_aligned*)arphdr->spa;
+	return rval.ip;
+}
+
+static inline uint32_t get_tpa(IpArpRec *arphdr)
+{
+register union { uint32_t ip; union arpip_2_aligned bytes; } rval;
+	rval.bytes = *(union arpip_2_aligned*)arphdr->tpa;
+	return rval.ip;
+}
+
+static inline void     set_tpa(IpArpRec *arphdr, uint32_t ipaddr)
+{
+register union { uint32_t ip; union arpip_2_aligned bytes; } val;
+	val.ip = ipaddr;
+	*(union arpip_2_aligned*)arphdr->tpa = val.bytes;
+}
 
 /* Permanent / 'static' flag */
 #define ARP_PERM	((rtems_interval)(-1))
@@ -634,8 +675,6 @@ src2dstUdp(LanUdpHeader p)
 	p->udp.dport = p->udp.sport;
 }
 
-typedef uint32_t uint32_a_t __attribute__ ((may_alias));
-
 static int
 handleArp(rbuf_t **ppbuf, IpBscIf pd)
 {
@@ -668,7 +707,7 @@ uint32_t    xx;
 		if ( lanIpDebug & DEBUG_ARP )
 			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
 #endif
-		if ( *(uint32_a_t*)pipa->tpa != pd->ipaddr )
+		if ( get_tpa(pipa) != pd->ipaddr )
 			return sizeof(*pipa);
 
 		/* they mean us; send reply */
@@ -687,7 +726,7 @@ uint32_t    xx;
 		}
 #endif
 
-		NETDRV_SND_PACKET(pd->drv_p, 0, 0, &pd->arprep, sizeof(pd->arprep));
+		NETDRV_SND_PACKET(pd, 0, 0, &pd->arprep, sizeof(pd->arprep));
 	} else {
 		/* a reply to our request */
 #ifdef DEBUG
@@ -696,7 +735,7 @@ uint32_t    xx;
 			printf("\n");
 		}
 #endif
-		arpPutEntry(pd, *(uint32_a_t*)pipa->spa, pipa->sha, 0);
+		arpPutEntry(pd, get_spa(pipa), pipa->sha, 0);
 	}
 
 	return sizeof(*pipa);
@@ -764,7 +803,7 @@ LanUdpHeader hdr;
 					src2dstIp(&lpkt_iphdr(p));
 					fillinSrcCsumIp(pd, &lpkt_iphdr(p));
 
-					NETDRV_SND_PACKET(pd->drv_p, 0, 0, p, sizeof(EthHeaderRec) + nbytes);
+					NETDRV_SND_PACKET(pd, 0, 0, p, sizeof(EthHeaderRec) + nbytes);
 				}
 			}
 		}
@@ -889,7 +928,7 @@ uint16_t        tt;
 
 
 IpBscIf
-lanIpBscIfCreate()
+lanIpBscIfAlloc()
 {
 IpBscIf          		rval = malloc(sizeof(*rval));
 rtems_status_code		sc;
@@ -929,10 +968,14 @@ rtems_interrupt_level	key;
 	return rval;
 }
 
-void
-lanIpBscIfInit(IpBscIf ipbif_p, void *drv_p, char *ipaddr, char *netmask)
+IpBscIf
+lanIpBscIfCreate(void *drv_p, char *ipaddr, char *netmask)
 {
 uint8_t		      (*enaddr)[6];
+IpBscIf           ipbif_p;
+
+	if ( ! (ipbif_p = lanIpBscIfAlloc()) )
+		return 0;
 
 	ipbif_p->drv_p  = drv_p;
 
@@ -951,7 +994,7 @@ uint8_t		      (*enaddr)[6];
 		/* DST: bcast address            */
 		memset(&ipbif_p->arpreq.ll.dst, 0xff, sizeof(*enaddr));
 		/* SRC: drv_p's ethernet address  */
-		NETDRV_READ_ENADDR(drv_p, (uint8_t*)enaddr);
+		NETDRV_READ_ENADDR(ipbif_p, (uint8_t*)enaddr);
 		/* TYPE/LEN is ARP (0x806)       */
 		ipbif_p->arpreq.ll.type = htons(0x806);
 	/* REPLY   */
@@ -991,6 +1034,7 @@ uint8_t		      (*enaddr)[6];
 		memcpy(ipbif_p->arprep.arp.sha, enaddr, sizeof(*enaddr));
 		/* SOURCE IP ADDR: our IP                     */
 		memcpy(ipbif_p->arprep.arp.spa, &ipbif_p->ipaddr, 4);
+	return ipbif_p;
 }
 
 void *
@@ -1361,7 +1405,7 @@ LanUdpHeader h;
 
 	udpSockHdrsSetlen(h, payload_len);
 
-	rval = NETDRV_SND_PACKET( socks[sd].intrf->drv_p, h, sizeof(*h), payload, payload_len );
+	rval = NETDRV_SND_PACKET( socks[sd].intrf, h, sizeof(*h), payload, payload_len );
 
 	SOCKUNLOCK( &socks[sd] );
 
@@ -1405,7 +1449,7 @@ LanUdpHeader h;
 
 	udpSockHdrsSetlen(h, payload_len);
 
-	rval = NETDRV_SND_PACKET( socks[sd].intrf->drv_p, h, sizeof(*h), payload, payload_len );
+	rval = NETDRV_SND_PACKET( socks[sd].intrf, h, sizeof(*h), payload, payload_len );
 
 	SOCKUNLOCK( &socks[sd] );
 

@@ -9,8 +9,10 @@
 C_PIECES_uC5282=drvLan9118 drvLan9118IpBasic padProto padStream bpmsim
 DEFINES_uC5282 = -DDRVLAN9118
 
-C_PIECES_beatnik=drvMveIpBasic padProto
-DEFINES_beatnik= -DDRVMVE
+#C_PIECES_beatnik=drvMveIpBasic padProto
+#DEFINES_beatnik= -DDRVMVE
+C_PIECES_beatnik=$(C_PIECES_pc386)
+DEFINES_beatnik =$(DEFINES_pc386)
 
 # not a good thing; the AMD driver can be built for PPC BSPs, too
 C_PIECES_pc386=drvAmdEthIpBasic

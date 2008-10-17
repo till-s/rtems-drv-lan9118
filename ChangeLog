@@ -1,4 +1,18 @@
 2008/10/16 (TS):
+ - provide helper inlines (lanIpBasic.c) for drivers to manipulate
+   unaligned IP addresses in ARP headers.
+ - cleaned-up and documented the 'setup' api, i.e., routines the drivers
+   must provide so that they can be attached/detached to/from the stack,
+   started and shutdown etc.
+ - removed EEPROM access from lanIpBasicTest API; this is only relevant
+   for the lan9118 where we couldn't read EEPROM after initializing the
+   device. We now read the 9118's EEPROM into a ram-shadow buffer
+   when we start the device and transparently provide cached data
+   to the user.
+ - do not access IP addresses inside of ARP packets as 32-bit entities
+   because they are not properly aligned. Provided helper inline routines
+   to do this (lanIpBasic.c).
+ - merged lanIpBscIfCreate + lanIpBscIfInit -> new API lanIpBscIfCreate().
  - lanIpBasic.c, lanIpBasic.h, udpComm.h: socket 'connection' may now
    be changed on the fly (w/o disconnecting first). Again, IIRC we simply
    follow BSD semantics.

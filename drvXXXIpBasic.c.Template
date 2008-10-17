@@ -1,3 +1,20 @@
+/* Template of driver support for lanIpBasic.c */
+
+/* $Id$ */
+
+/* Consult the implemetations
+ *   drvLan9118IpBasic.c: dumb PIO driven, FIFO-type device.
+ *                        (no descriptors, packets are written-to
+ *                        read-from device FIFOs using PIO).
+ *   drvMveIpBasic.c:     sophisticated GiGE device with descriptor
+ *                        rings and DMA.
+ *
+ * Note that the mentioned files provide only 'glue code'. The main
+ * driver implementation is outside of lanIpBasic. However, these
+ * drivers must provide appropriate hooks (for raw packet transmission
+ * and reception) so that the interface defined in this file can be
+ * implemented.
+ */
 
 /* fwd decl of interface struct */
 struct IpBscIfRec_;
@@ -13,21 +30,20 @@ struct IpBscIfRec_;
  * The (ipbif_p)->arpreq struct is only modified by this macro so
  * any lock used here is adequate.
  */
-#define NETDRV_ATOMIC_SEND_ARPREQ(ipbif_p, ipaddr)							\
-	do {																	\
-		DrvLan9118_tps	drv_p = (ipbif_p)->drv_p;							\
-		size_t             sz = sizeof((ipbif_p)->arpreq);					\
-																			\
-		if ( 0 == drvLan9118TxPacket(drv_p, 0, sz, 0) ) {					\
-																			\
-			/* arpreq is locked and may be modified */						\
-			set_tpa(&(ipbif_p)->arpreq.arp, ipaddr);						\
-																			\
-			/* send request - size of arpreq is multiple of words */		\
-			drvLan9118FifoWr(drv_p, &(ipbif_p)->arpreq, sz);				\
-																			\
-			drvLan9118TxUnlock(drv_p);										\
-		}																	\
+#define NETDRV_ATOMIC_SEND_ARPREQ(ipbif_p, ipaddr)					\
+	do {															\
+		DrvXXX 	drv_p = (ipbif_p)->drv_p;							\
+		size_t     sz = sizeof((ipbif_p)->arpreq);					\
+																	\
+		LOCK(drv_p);												\
+																	\
+			/* arpreq is locked and may be modified */				\
+			set_tpa(&(ipbif_p)->arpreq.arp, ipaddr);				\
+																	\
+			/* send request */										\
+			drvXXXSend(drv_p, &(ipbif_p)->arpreq, sz);				\
+																	\
+		UNLOCK(drv_p);												\
 	} while (0)
 
 /* Read 'nbytes' from device into buffer at 'ptr'.
@@ -38,13 +54,17 @@ struct IpBscIfRec_;
  * already contains packet data.
  */
 #define NETDRV_READ_INCREMENTAL(ipbif_p, ptr, nbytes)						\
-	drvLan9118FifoRd((DrvLan9118_tps)(ipbif_p)->drv_p, (ptr), (nbytes))
+	drvXXXReadIncremental((DrvXXX)(ipbif_p)->drv_p, (ptr), (nbytes))
 
 /* Send a packet header (size 'hdrsz') and payload data (size 'dtasz').
  * The header and payload areas are not necessarily contiguous.
  * 'phdr' may be NULL if 'data' already contains the header.
  * There is nothing magic about the header -- this is just 'poor-man's gathering'
  * i.e., support for sending data from two non-contiguous areas.
+ *
+ * This shows how a macro can alternatively be a inline routine.
+ * Do fwd. declaration here and provide implementation after inclusion
+ * of "lanIpBasic.c" so that internal features will be available.
  */
 static inline int 
 NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data, int dtasz);
@@ -57,20 +77,20 @@ NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data
  * the buffer pointer and the descriptor-sweeper may then release the
  * buffer (relrbuf()) after transmission.
  * The driver for a DMA-less controller may just call NETDRV_SND_PACKET()
- * (copy+send buffer) and release the buffer.
+ * (copy+send buffer) and release the buffer (this example).
  */
-#define NETDRV_ENQ_BUFFER(ipbif_p, pbuf, nbytes)							\
+#define NETDRV_ENQ_BUFFER(ipbif_p, pbuf, nbytes)						\
 	do {																\
-		NETDRV_SND_PACKET((ipbif_p), 0, 0, pbuf, nbytes);					\
+		NETDRV_SND_PACKET((ipbif_p), 0, 0, pbuf, nbytes);				\
 		relrbuf(pbuf);													\
 	} while (0)
 
 /* Read MAC address from device/driver into a buffer */
 #define NETDRV_READ_ENADDR(ipbif_p, buf)									\
-	drvLan9118ReadEnaddr((DrvLan9118_tps)(ipbif_p->drv_p), (buf))
+	drvXXXReadEnaddr((DrvXXX)(ipbif_p->drv_p), (buf))
 
 /* Driver header name with angle brackets e.g., <drvXXX.h> */
-#define NETDRV_INCLUDE	<drvLan9118.h>
+#define NETDRV_INCLUDE	<drvXXX.h>
 
 /* Include main C-file here */
 #include "lanIpBasic.c"
@@ -79,26 +99,17 @@ NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data
 static inline int 
 NETDRV_SND_PACKET(IpBscIf ipbif_p, void *phdr, int hdrsz, void *data, int dtasz)
 {
-DrvLan9118_tps drv_p = (DrvLan9118_tps)ipbif_p->drv_p;
-int ltot;
+DrvXXX drv_p = (DrvXXX)ipbif_p->drv_p;
 
-	/* header must be word-aligned; payload may be padded;
-	 * (implicit TXCMD_A_END_ALIGN_4)
-	 */
-	ltot = (dtasz+3) & ~3;
-
-	assert( 0 == (hdrsz  & 3) && 0 == ((uint32_t)phdr & 3) && 0 == ((uint32_t)data & 3) );
-
+	LOCK(drv_p);
 	if ( phdr ) {
-		if ( drvLan9118TxPacket(drv_p, 0, hdrsz+dtasz, 0) ) {
-			return -ENOSPC;
-		}
-		drvLan9118FifoWr(drv_p, phdr, hdrsz);
-		drvLan9118FifoWr(drv_p, data, ltot );
-		drvLan9118TxUnlock(drv_p);
-		return dtasz;
+		drvXXXWriteTxFifo(drv_p, phdr, hdrsz);
+	} else {
+		hdrsz = 0;
 	}
-	return drvLan9118TxPacket(drv_p, data, dtasz, 0) ? -ENOSPC : dtasz;
+	drvXXXWriteTxFifo(drv_p, data, dtasz);
+	UNLOCK(drv_p);
+	return hdrsz + dtasz;
 }
 
 /* Implement high-level routines (how to create, start, shutdown driver);
@@ -142,50 +153,3 @@ int ltot;
  *                        the case of a NULL driver handle (doing
  *                        nothing).
  */
-
-int
-drvLan9118IpRxCb(DrvLan9118_tps drv_p, uint32_t len, void *arg)
-{
-IpBscIf        ipbif_p = arg;
-rbuf_t			*prb;
-
-	if ( ! (prb = getrbuf()) ) {
-		return len;
-	}
-
-	len = lanIpProcessBuffer(ipbif_p, &prb, len);
-
-	relrbuf(prb);
-
-	return (len);
-}
-
-LanIpBscDrv
-lanIpBscDrvCreate(int instance, uint8_t *enaddr_p)
-{
-	return drvLan9118Setup(enaddr_p,0);
-}
-
-int
-lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
-{
-DrvLan9118_tps drv_p = lanIpBscIfGetDrv(ipbif_p);
-
-  if ( !drv_p ) {
-	rtems_error(RTEMS_NOT_DEFINED,"drvLan9118IpBasic: driver not attached to interface yet?");  		
-	return RTEMS_NOT_DEFINED;
-  }
-  return drvLan9118Start(drv_p, pri, 0,
-                drvLan9118IpRxCb, ipbif_p,
-                0, 0,
-                0, 0,
-                0, 0);
-}
-
-int
-lanIpBscDrvShutdown(LanIpBscDrv drv_p)
-{
-	if ( drv_p )
-        drvLan9118Shutdown((DrvLan9118_tps)drv_p);
-	return 0;
-}

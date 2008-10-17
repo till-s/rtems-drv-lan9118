@@ -53,7 +53,7 @@
  *
  *  2) Register the drvUdpSock driver:
  *
- *       rtems_io_register_driver(0, &drvUdpSock_ops, &drvUdpSocks_major);
+ *       rtems_io_register_driver(0, &drvUdpSock_ops, &drvUdpSock_major);
  *
  *     Note that your RTEMS system/application must have enough
  *     driver slots configured.

@@ -51,8 +51,9 @@ exechostbin_PROGRAMS           = @HOSTPROGRAM@
 # empty sources so that no automake doesn't try to use a default
 padProtoHost_SOURCES           =
 EXTRA_padProtoHost_SOURCES     = padProtoHost.c udpCommBSD.c padProtoNative.c
+EXTRA_padProtoHost_SOURCES    += hostStream.c bpmsimNative.c
 
-padProtoNative.c: padProto.c
+%Native.c: %.c
 	ln -s $^ $@
 
 padProtoHost_LDADD             = $(EXTRA_padProtoHost_SOURCES:%.c=%.$(OBJEXT))

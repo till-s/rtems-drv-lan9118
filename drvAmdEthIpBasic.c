@@ -8,41 +8,45 @@ typedef struct amdeth_drv_s_ *amdeth_drv;
 
 #define ETHERPADSZ sizeof(((EthHeaderRec*)0)->pad)
 
+/* fwd decl of interface struct */
+struct IpBscIfRec_;
 
-#define NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr)								\
+
+#define NETDRV_ATOMIC_SEND_ARPREQ(pif, ipaddr)								\
 	do {																	\
 		char *b = (char*)getrbuf();											\
 		if ( b ) {															\
-			amdeth_drv mdrv = (amdeth_drv)(pd)->drv_p;						\
-			int l_ = sizeof((pd)->arpreq) - ETHERPADSZ;						\
-			memcpy(b, &(pd)->arpreq, sizeof((pd)->arpreq));					\
+			amdeth_drv mdrv = (amdeth_drv)(pif)->drv_p;						\
+			int l_ = sizeof((pif)->arpreq) - ETHERPADSZ;					\
+			memcpy(b, &(pd)->arpreq, sizeof((pif)->arpreq));				\
+			set_tpa((IpArpRec*)(b+sizeof(EthHeaderRec)), ipaddr);           \
 			memcpy(((LanArp)b)->arp.tpa, &ipaddr, sizeof(ipaddr));			\
 			if ( amd_send_buf_locked(mdrv, b, b+ETHERPADSZ, l_) )			\
 				relrbuf((rbuf_t*)b);										\
 		}																	\
 	} while (0)
 
-#define NETDRV_READ_INCREMENTAL(pd, ptr, nbytes)							\
+#define NETDRV_READ_INCREMENTAL(pif, ptr, nbytes)							\
 	do {} while (0)
 
 static inline int 
-NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz);
+NETDRV_SND_PACKET(struct IpBscIfRec_ *pif, void *phdr, int hdrsz, void *data, int dtasz);
 
 static inline int
 amd_send_buf_locked(amdeth_drv mdrv, void *pbuf, void *data, int len);
 
-#define NETDRV_ENQ_BUFFER(pd, pbuf, nbytes)									\
+#define NETDRV_ENQ_BUFFER(pif, pbuf, nbytes)								\
 	do {																	\
 		char *b_ = (char*)pbuf + ETHERPADSZ;								\
 		int   l_ = (nbytes) - ETHERPADSZ;									\
-		amdeth_drv mdrv = (amdeth_drv)(pd)->drv_p;							\
+		amdeth_drv mdrv = (amdeth_drv)(pif)->drv_p;							\
 																			\
 		if ( amd_send_buf_locked(mdrv, pbuf, b_, l_) )						\
 			relrbuf((rbuf_t*)pbuf);											\
 	} while (0)
 
 static inline void
-NETDRV_READ_ENADDR(amdeth_drv drvhdl, uint8_t *buf);
+NETDRV_READ_ENADDR(struct IpBscIfRec_ *ipbif_p, uint8_t *buf);
 
 #define NETDRV_INCLUDE	<amdeth.h>
 
@@ -102,7 +106,7 @@ EtherHeader dummyh;
 		 */
 		dummyh = (EtherHeader)data;
 		data  += 14;
-		rval = amdEthSendPacketSwp( mdrv->mp, dummyh, &data, len - 14 );
+		rval   = amdEthSendPacketSwp( mdrv->mp, dummyh, &data, len - 14 );
 		if ( !rval && data ) {
 			relrbuf((rbuf_t*)((char*)data - ETHERPADSZ));
 		}
@@ -111,9 +115,9 @@ EtherHeader dummyh;
 }
 
 static inline int 
-NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz)
+NETDRV_SND_PACKET(struct IpBscIfRec_ *pif, void *phdr, int hdrsz, void *data, int dtasz)
 {
-amdeth_drv            mdrv = pdrv;
+amdeth_drv            mdrv = pif->drv_p;
 char                 *b_ = (char*)getrbuf();
 char                 *p;
 
@@ -136,8 +140,9 @@ char                 *p;
 		return -ENOMEM;
 }
 
-static inline void NETDRV_READ_ENADDR(amdeth_drv drvhdl, uint8_t *buf)
+static inline void NETDRV_READ_ENADDR(struct IpBscIfRec_ *ipbif_p, uint8_t *buf)
 {
+amdeth_drv drvhdl = (amdeth_drv)ipbif_p->drv_p;
 EtherHeaderRec h;
 	amdEthHeaderInit(&h, 0, drvhdl->mp);
 	memcpy(buf, h.src, sizeof(h.src));
@@ -198,18 +203,62 @@ int                     st;
 		}
 	} while ( st >= 0 );
 
+	fprintf(stderr,"drvAmdEthIpBasic: RX error %i; terminating\n", st);
+
 	relrbuf(mdrv->spare);
 	rtems_semaphore_delete(mdrv->mutex);
+
+	/*
+	 * leave driver struct alone so that they still can
+	 * shutdown if the task exited on error...
 	free(mdrv);
+	*/
 
 	rtems_task_delete(RTEMS_SELF);
 }
 
-void *
-drvAmdIpBasicSetup(IpBscIf ipbif)
+int
+lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
 {
-int                   unit, i;
+rtems_status_code sc;
+rtems_id          tid;
+
+	if ( pri <= 0 )
+		pri = 20;
+
+	sc = rtems_task_create(
+				rtems_build_name('i','p','b','d'),
+				pri,	/* can be changed later */
+				10000,
+				RTEMS_DEFAULT_MODES,
+				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
+				&tid);
+
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "creating drvAmdIpBasicTask\n");
+		return -1;
+	}
+
+	sc = rtems_task_start( tid, drvAmdIpBasicTask, (rtems_task_argument)ipbif_p );
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "starting drvAmdIpBasicTask\n");
+		rtems_task_delete( tid );
+		return -1;
+	}
+	return 0;
+}
+
+LanIpBscDrv
+lanIpBscDrvCreate(int unit, uint8_t *enaddr)
+{
+int                   i, minu, maxu;
 amdeth_drv            mdrv = 0;
+
+	if ( enaddr ) {
+		/* can only use ethernet address from PROM for now */
+		fprintf(stderr,"drvAmdEthIpBasic: setting MAC address not supported\n");
+		return 0;
+	}
 
 	if ( ! (mdrv = malloc(sizeof(*mdrv))) ) {
 		return 0;
@@ -232,7 +281,15 @@ amdeth_drv            mdrv = 0;
 			goto egress;
 	}
 
-	for ( unit=0; unit < 3; unit++ ) {
+	if ( unit < 0 ) {
+		minu = 0;
+		maxu = 3;
+	} else {
+		minu = unit;
+		maxu = unit+1;
+	}
+
+	for ( unit=minu; unit < maxu; unit++ ) {
 		if ( 0 == amdEthInit( &mdrv->mp, unit, 
 				  AMDETH_FLG_TX_MODE_LAZY
 				| AMDETH_FLG_RX_MODE_SYNC
@@ -267,10 +324,18 @@ egress:
 	return 0;
 }
 
-void
-drvAmdIpBasicShutdown(void *mdrv)
+int
+lanIpBscDrvShutdown(LanIpBscDrv drv_p)
 {
-	amdEthCloseDev(((amdeth_drv)mdrv)->mp);
+amdeth_drv mdrv = (amdeth_drv)drv_p;
+
+	if ( !drv_p )
+		return 0;
+
+	amdEthCloseDev(mdrv->mp);
 	/* hack: just wait instead of synchronizing */
 	rtems_task_wake_after(200);
+
+	free(mdrv);
+	return 0;
 }

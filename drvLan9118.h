@@ -360,7 +360,11 @@ void drvLan9118DumpRxSts(uint32_t rx_sts, FILE *f_ps);
  *        - All routines return 0 on success or (-ERRNO) on error.
  */
 
-/* Read from EEPROM; return 0 (success) or (-ERRNO) on error */
+/* Read from EEPROM; return 0 (success) or (-ERRNO) on error;
+ *
+ * NOTE: If called after starting the driver this routine returns the contents
+ *       of a shadow buffer in RAM.
+ */
 int
 drvLan9118E2PRead(DrvLan9118_tps plan_ps, void *dst_pa, unsigned src, unsigned len);
 

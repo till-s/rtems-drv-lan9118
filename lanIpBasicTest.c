@@ -1,7 +1,13 @@
+/* $Id$ */
+
+/* Wrapper code to initialize the simple IP/UDP stack */
+
 #include <rtems.h>
 #include <rtems/error.h>
 #include <lanIpBasic.h>
 #include <lanIpBasicTest.h>
+
+/* Note: the name of this file is historic and unfortunate... */
 
 #include <string.h>
 
@@ -11,174 +17,9 @@
 
 #include "hwtmr.h"
 
-#ifdef DRVLAN9118
-
-#include <drvLan9118.h>
-
-static uint8_t eeprom_shadow[100];
-static int     shadow_len = 0;
-
-#define SHADOW    eeprom_shadow
-#define SHADOWLEN shadow_len
-#define THE_SHADOWLEN (sizeof(eeprom_shadow)/sizeof(eeprom_shadow[0]))
-
-static inline void
-shutdown(void *drv)
-{
-	drvLan9118Shutdown((DrvLan9118_tps)drv);
-}
-
-static void *
-setup(IpBscIf ipbif, uint8_t *enaddr)
-{
-void *rval = drvLan9118Setup(enaddr,0);
-int   err;
-
-	if ( rval ) {
-		/* Cannot read eeprom once the driver is up -- therefore
-		 * we read it's contents into memory...
-		 */
-		if ( (err = drvLan9118E2PRead(rval, eeprom_shadow, 0, THE_SHADOWLEN)) ) {
-			fprintf(stderr,"Unable to read 9118 EEPROM: %s\n", strerror(-err));
-		} else {
-			SHADOWLEN = THE_SHADOWLEN;
-		}
-	}
-	return rval;
-}
-
-static int
-start(void *drv, IpBscIf ipbif, int pri)
-{
-	return drvLan9118Start(drv, pri, 0,
-				drvLan9118IpRxCb, ipbif,
-				0, 0,
-				0, 0,
-				0, 0);
-}
-
-#elif defined(DRVMVE)
-
-#include <bsp/if_mve_pub.h>
-
-#define SHADOW    0
-#define SHADOWLEN 0
-
-static rtems_id mve_tid = 0;
-
-extern void
-drvMveIpBasicShutdown(rtems_id tid);
-
-extern void
-drvMveIpBasicTask(rtems_task_argument arg);
-
-extern rtems_id
-drvMveIpBasicSetup(IpBscIf ipbif);
-
-extern void *
-drvMveIpBasicGetDrv(rtems_id tid);
-
-static void *
-setup(IpBscIf ipbif, uint8_t *enaddr)
-{
-	mve_tid = drvMveIpBasicSetup(ipbif);
-	if ( mve_tid ) {
-		return drvMveIpBasicGetDrv(mve_tid);
-	}
-	return 0;
-}
-
-static int
-start(void *drv, IpBscIf ipbif, int pri)
-{
-rtems_task_priority op;
-
-	if ( pri > 0 )
-		rtems_task_set_priority(mve_tid, (rtems_task_priority)pri, &op);
-	return RTEMS_SUCCESSFUL == rtems_task_start(mve_tid, drvMveIpBasicTask, (rtems_task_argument)ipbif) ? 0 : -1;
-}
-
-static inline void
-shutdown(void *drv)
-{
-	drvMveIpBasicShutdown(mve_tid);
-	mve_tid = 0;
-}
-
-#elif defined(DRVAMD)
-
-#define SHADOW    0
-#define SHADOWLEN 0
-
-extern void
-drvAmdIpBasicShutdown(void *drv);
-
-extern void
-drvAmdIpBasicTask(rtems_task_argument arg);
-
-extern void *
-drvAmdIpBasicSetup(IpBscIf ipbif);
-
-static void *
-setup(IpBscIf ipbif, uint8_t *enaddr)
-{
-	return drvAmdIpBasicSetup(ipbif);
-}
-
-static int
-start(void *drv, IpBscIf ipbif, int pri)
-{
-rtems_status_code sc;
-rtems_id          tid;
-
-	if ( pri <= 0 )
-		pri = 20;
-
-	sc = rtems_task_create(
-				rtems_build_name('i','p','b','d'),
-				pri,	/* can be changed later */
-				10000,
-				RTEMS_DEFAULT_MODES,
-				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
-				&tid);
-
-	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "creating drvAmdIpBasicTask\n");
-		return -1;
-	}
-
-	sc = rtems_task_start( tid, drvAmdIpBasicTask, (rtems_task_argument)ipbif );
-	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "starting drvAmdIpBasicTask\n");
-		rtems_task_delete( tid );
-		return -1;
-	}
-	return 0;
-}
-
-static inline void
-shutdown(void *drv)
-{
-	drvAmdIpBasicShutdown(drv);
-}
-
-#else
-#error "unsupported driver"
-#endif
-
 void      *lanIpDrv  =  0;
 IpBscIf   lanIpIf    =  0;
 int		  lanIpUdpsd = -1;
-
-const uint8_t * const lanIpEEPROMShadow = SHADOW;
-
-/* Length of shadow area */
-
-int      
-lanIpEEPROMShadowLength()
-{
-	return SHADOWLEN;
-}
 
 void
 lanIpTakedown()
@@ -188,7 +29,7 @@ lanIpTakedown()
 		lanIpUdpsd = -1;
 	}
 	if ( lanIpDrv ) {
-		shutdown(lanIpDrv);
+		lanIpBscDrvShutdown(lanIpDrv);
 		lanIpDrv = 0;
 	}
 	if ( lanIpIf ) {
@@ -210,20 +51,18 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		return -1;
 	}
 
-	if ( ! (lanIpIf = lanIpBscIfCreate()) ) {
-		fprintf(stderr,"Unable to create callback data\n");
-		goto egress;
-	}
-
-	lanIpDrv = setup(lanIpIf, enaddr);
+	lanIpDrv = lanIpBscDrvCreate(-1, enaddr);
 
 	if ( !lanIpDrv )
 		goto egress;
 
-	lanIpBscIfInit(lanIpIf, lanIpDrv, ip, nmsk);
+	if ( ! (lanIpIf = lanIpBscIfCreate(lanIpDrv, ip, nmsk)) ) {
+		fprintf(stderr,"Unable to create interface data struct\n");
+		goto egress;
+	}
 
 	/* Start driver */
-	if ( start(lanIpDrv, lanIpIf, 0) ) {
+	if ( lanIpBscDrvStart(lanIpIf, 0) ) {
 		fprintf(stderr,"Unable to start driver\n");
 		goto egress;
 	}
