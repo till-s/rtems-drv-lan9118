@@ -1,11 +1,9 @@
-#ifndef LAN_IP_BASIC_TEST_H
-#define LAN_IP_BASIC_TEST_H
+#ifndef LAN_IP_BASIC_SETUP_H
+#define LAN_IP_BASIC_SETUP_H
 
 #include <rtems.h>
 #include <lanIpBasic.h>
 #include <stdint.h>
-
-/* Note: the name of this file is historic and unfortunate... */
 
 #ifdef __cplusplus
 extern "C" {

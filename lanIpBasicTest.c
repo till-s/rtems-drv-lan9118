@@ -5,7 +5,7 @@
 #include <rtems.h>
 #include <rtems/error.h>
 #include <lanIpBasic.h>
-#include <lanIpBasicTest.h>
+#include <lanIpBasicSetup.h>
 
 /* Note: the name of this file is historic and unfortunate... */
 

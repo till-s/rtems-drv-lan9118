@@ -26,7 +26,7 @@ lanIpObjs_pci_DEFS             = -DDRVAMD
 AM_CPPFLAGS                   += $(lanIpObjs_$(LANIPBASIC_SUPPORT)_DEFS)
 
 include_HEADERS                = drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h
-include_HEADERS               += padStream.h lanIpBasicTest.h drvUdpSock.h
+include_HEADERS               += padStream.h lanIpBasicSetup.h drvUdpSock.h
 
 
 lib_LIBRARIES                  = liblanIpBasic.a

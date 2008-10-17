@@ -12,7 +12,7 @@
 #include <sys/errno.h>
 #include <sys/ioctl.h>
 #include <lanIpBasic.h>
-#include <lanIpBasicTest.h>
+#include <lanIpBasicSetup.h>
 #include <string.h>
 #include <stdlib.h>
 
