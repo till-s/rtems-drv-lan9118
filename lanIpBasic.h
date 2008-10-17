@@ -137,12 +137,6 @@ udpSockSendBufRaw(LanIpPacket buf_p, int len);
 int
 udpSockSendBufRawIp(LanIpPacket buf_p);
 
-/*
- * RX callback for drvLan9118
- */
-int
-drvLan9118IpRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *arg);
-
 /* Operations on packet headers: */
 
 /* Setup Ethernet, IP and UDP headers in a packet.
@@ -170,7 +164,7 @@ void
 udpSockHdrsSetlen(LanUdpHeader p, int payload_len);
 
 /* Flip source -> dest and fill-in local source addresses
- * (at ethernet, IP and UDP level)
+ * (at ethernet, IP and UDP level) and IP checksum.
  */
 void
 udpSockHdrsReflect(LanUdpHeader p);
@@ -182,19 +176,24 @@ udpSockHdrsReflect(LanUdpHeader p);
  */
 
 typedef struct IpBscIfRec_ *IpBscIf;
+typedef void               *LanIpBscDrv;
 
-/* Create private data */
+/* Create and Setup private data structure (AKA 'interface handle') */
 IpBscIf
-lanIpBscIfCreate(void);
-
-/* Setup private data structure */
-void
-lanIpBscIfInit(IpBscIf ipbif_p, void *drv_p, char *ipaddr, char *netmask);
+lanIpBscIfCreate(LanIpBscDrv drv_p, char *ipaddr, char *netmask);
 
 /* Retrieve the driver handle   */
-void *
+LanIpBscDrv
 lanIpBscIfGetDrv(IpBscIf ipbif_p);
 
+/* Tear down interface handle and release all resources associated
+ * with it (but *not* the driver). The interface and driver handles
+ * are separate objects ('drv_p' passed to lanIpBscIfCreate() is only
+ * a reference to the associated driver stored in the interface data
+ * structure for convenience).
+ * Usually, the driver must be shut-down prior to destroying the
+ * interface handle.
+ */
 void
 lanIpBscIfDestroy(IpBscIf);
 
@@ -290,6 +289,62 @@ arpFlushCache(IpBscIf pd, int perm_also);
 /* Print ARP cache contents to a file (stdout if NULL) */
 void
 arpDumpCache(IpBscIf pd, FILE *f);
+
+/* The following entry points need to be implemented by the driver */
+
+/* The intended use of these routines is as follows 
+ *
+ * setup and start stack and driver:
+ *
+ *    // create driver handle
+ *    drv = lanIpBscDrvCreate(unit, &enaddr);
+ *    // marry them and set interface address
+ *    ifc = lanIpBscIfCreate(drv, "192.168.2.2", "255.255.255.0");
+ *    if ( !ifc )
+ *    	lanIpBscDrvShutdown(drv);
+ *    // start driver and stack
+ *    lanIpBscDrvStart(ifc, priority);
+ *
+ * take down driver and stack:
+ *
+ *    // shutdow driver and destroy interface
+ *    lanIpBscDrvShutdown(lanIpBscIfGetDrv(ifc));
+ *    lanIpBscIfDestroy(ifc);
+ */
+
+/* Create and setup driver instance. Note that this routine must not
+ * call any services from lanIpBasic yet.
+ * ARGUMENTS:
+ * 'instance': identifies device instance if there are more than one.
+ *             A value < 0 picks the first instance available.
+ *   'enaddr': ethernet address (driver may either ignore this or
+ *             use it to override hardware settings).
+ * RETURNS: driver handle.
+ */
+LanIpBscDrv
+lanIpBscDrvCreate(int instance, uint8_t *enaddr_p);
+
+/* Start driver with priority 'pri'. The driver must previously have
+ * been 'attached' to the interface by lanIpBscIfInit().
+ *
+ * RETURNS: 0 on success, nonzero on error.
+ */
+int
+lanIpBscDrvStart(IpBscIf ipbif_p, int pri);
+
+/* Shutdown driver (if running) and release resources.
+ * The driver handle is not valid anymore if this routine
+ * returns successfully.
+ *
+ * The routine returns 0 and does nothing if drv_p == NULL.
+ *
+ * RETURNS: 0 on success, nonzero on error.
+ *
+ * NOTE: The interface structure must be torn down
+ *       separately.
+ */
+int
+lanIpBscDrvShutdown(LanIpBscDrv drv_p);
 
 #ifdef __cplusplus
 }
