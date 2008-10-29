@@ -1,2 +1,9 @@
+2008/10/29 (TS): Fix problems reported by Stephen Norum (beatnik)
+ - TX ring was apparently exhausted (send returning -ENOSPC). This
+   occurred due to corruption because the driver task swiped the TX
+   ring w/o acquiring the lock.
+ - After re-plugging cable the port seemed to be dead. Need to
+   propagate link change to serial port; use new MVE driver entry
+   point BSP_mve_ack_link_chg() for this purpose.
 2007/9/6 (TS):
  - eliminated 'sd' argument from udpCommReturnPacket().
