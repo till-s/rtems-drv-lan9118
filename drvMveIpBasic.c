@@ -183,11 +183,18 @@ uint32_t				irqs;
 	do {
 		rtems_event_receive( ALL_EVENTS, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
 		irqs = BSP_mve_ack_irqs(mp);
-		if ( irqs & BSP_MVE_IRQ_TX ) {
+		if ( (irqs & BSP_MVE_IRQ_TX) ) {
+		DRVLOCK(mdrv);
 			BSP_mve_swipe_tx(mp); /* cleanup_txbuf */
+		DRVUNLOCK(mdrv);
 		}
-		if ( irqs & BSP_MVE_IRQ_RX ) {
+		if ( (irqs & BSP_MVE_IRQ_RX) ) {
 			BSP_mve_swipe_rx(mp); /* alloc_rxbuf, consume_rxbuf */
+		}
+		if ( (irqs & BSP_MVE_IRQ_LINK) ) {
+		DRVLOCK(mdrv);
+			BSP_mve_ack_link_chg(mp, 0); /* propagate link change to serial port */
+		DRVUNLOCK(mdrv);
 		}
 		BSP_mve_enable_irqs(mp);
 	} while ( ! (evs & KILL_EVENT) );
