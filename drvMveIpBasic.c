@@ -1,13 +1,16 @@
 #include <stdint.h>
-/* How to send the ARP request structure:
- * Either lock, fillin-IP addr, send, unlock
- * or copy, fillin send copy...
- */
+
+#include <rtems/rtems_mii_ioctl.h>
 
 typedef struct mveth_drv_s_ *mveth_drv;
 
 #define ETHERPADSZ sizeof(((EtherHeaderRec*)0)->pad)
 #define ETHERHDRSZ (sizeof(EtherHeaderRec) - ETHERPADSZ) 
+
+/* How to send the ARP request structure:
+ * Either lock, fillin-IP addr, send, unlock
+ * or copy, fillin send copy...
+ */
 
 #define NETDRV_ATOMIC_SEND_ARPREQ(pd, ipaddr)								\
 	do {																	\
@@ -74,9 +77,13 @@ NETDRV_READ_ENADDR(mveth_drv drvhdl, uint8_t *buf);
 
 #include "lanIpBasic.c"
 
+#define IF_FLG_STOPPED	(1<<0)
+
 typedef struct mveth_drv_s_ {
 	struct mveth_private *mp;
 	rtems_id             mutex;
+	int                  unit; /* zero based */
+	unsigned             flags;
 } mveth_drv_s;
 
 #define DRVLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain( (drv)->mutex, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
@@ -88,7 +95,13 @@ mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len)
 {
 int rval;
 	DRVLOCK(mdrv);
-		rval = BSP_mve_send_buf(mdrv->mp, pbuf, data, len);
+		if ( (mdrv->flags & IF_FLG_STOPPED) ) {
+			/* drop */
+			rval = 0;
+		} else
+		{
+			rval = BSP_mve_send_buf(mdrv->mp, pbuf, data, len);
+		}
 	DRVUNLOCK(mdrv);
 	return rval;
 }
@@ -99,6 +112,7 @@ NETDRV_SND_PACKET(void *pdrv, void *phdr, int hdrsz, void *data, int dtasz)
 mveth_drv            mdrv = pdrv;
 char                 *b_ = (char*)getrbuf();
 char                 *p;
+int                  st;
 
 		if ( (p=b_) ) {
 			int l_ = hdrsz + dtasz - ETHERPADSZ;
@@ -110,9 +124,12 @@ char                 *p;
 			p = b_ + ETHERPADSZ;
 
 
-			if ( mve_send_buf_locked(mdrv, b_, p, l_) <= 0 ) {
+			if ( (st = mve_send_buf_locked(mdrv, b_, p, l_)) <= 0 ) {
+				/* If nothing was sent (packet dropped) don't report
+				 * an error but release the buffer.
+				 */
 				relrbuf((rbuf_t*)b_);
-				return -ENOSPC;
+				return st < 0 ? -ENOSPC : 0;
 			}
 			return hdrsz + dtasz;
 		}
@@ -160,17 +177,23 @@ IpBscIf pd = closure;
 }
 
 #define KILL_EVENT RTEMS_EVENT_4
-#define ALL_EVENTS (RTEMS_EVENT_0 | RTEMS_EVENT_1 | KILL_EVENT)
+
+#ifndef SIOCGIFMEDIA
+/* BSP_mve_media_ioctl() aliases '0' to SIOCGIFMEDIA :-) */
+#define SIOCGIFMEDIA 0
+#endif
 
 
 void
 drvMveIpBasicTask(rtems_task_argument arg)
 {
-IpBscIf				ipbif  = (IpBscIf)arg;
-mveth_drv				mdrv = lanIpBscIfGetDrv(ipbif);
-struct mveth_private	*mp = mdrv->mp; 
-rtems_event_set			evs;
-uint32_t				irqs;
+IpBscIf               ipbif   = (IpBscIf)arg;
+mveth_drv             mdrv    = lanIpBscIfGetDrv(ipbif);
+struct mveth_private  *mp     = mdrv->mp; 
+rtems_event_set       ev_mask = (1<<mdrv->unit) | KILL_EVENT;
+rtems_event_set       evs;
+uint32_t              irqs;
+int                   media;
 
 #ifdef DEBUG
 	if ( lanIpDebug & DEBUG_TASK ) {
@@ -180,8 +203,16 @@ uint32_t				irqs;
 
 	BSP_mve_init_hw( mp, 0, 0 );
 
+	if ( 0 == BSP_mve_media_ioctl(mp, SIOCGIFMEDIA, &media) ) {
+		if ( (IFM_LINK_OK & media) ) {
+			mdrv->flags &= ~IF_FLG_STOPPED;
+		}
+	} else {
+		fprintf(stderr,"WARNING: unable to determine link state; may be unable to send\n");
+	}
+
 	do {
-		rtems_event_receive( ALL_EVENTS, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
+		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs );
 		irqs = BSP_mve_ack_irqs(mp);
 		if ( (irqs & BSP_MVE_IRQ_TX) ) {
 		DRVLOCK(mdrv);
@@ -193,6 +224,12 @@ uint32_t				irqs;
 		}
 		if ( (irqs & BSP_MVE_IRQ_LINK) ) {
 		DRVLOCK(mdrv);
+			BSP_mve_ack_link_chg(mp, &media); /* propagate link change to serial port */
+			if ( (IFM_LINK_OK & media) ) {
+				mdrv->flags &= ~IF_FLG_STOPPED;
+			} else {
+				mdrv->flags |=  IF_FLG_STOPPED;
+			}
 			BSP_mve_ack_link_chg(mp, 0); /* propagate link change to serial port */
 		DRVUNLOCK(mdrv);
 		}
@@ -225,6 +262,9 @@ rtems_id              tid  = 0;
 
 	mdrv->mutex = 0;
 
+	mdrv->mutex = 0;
+	mdrv->flags = IF_FLG_STOPPED;
+
 	if ( RTEMS_SUCCESSFUL != rtems_semaphore_create(
 								rtems_build_name('m','v','e','L'),
 								1,
@@ -250,8 +290,9 @@ rtems_id              tid  = 0;
 								alloc_rxbuf,
 								consume_rxbuf, ipbif,
 								RX_RING_SIZE, TX_RING_SIZE,
-								BSP_MVE_IRQ_TX | BSP_MVE_IRQ_RX /* | BSP_MVE_IRQ_LINK */ )) ) {
+								BSP_MVE_IRQ_TX | BSP_MVE_IRQ_RX | BSP_MVE_IRQ_LINK)) ) {
 			rtems_task_set_note( tid, RTEMS_NOTEPAD_0, (uint32_t)mdrv );
+			mdrv->unit = unit - 1;
 			return tid;
 		}
 	}
