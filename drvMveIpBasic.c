@@ -230,7 +230,7 @@ int                   media;
 			} else {
 				mdrv->flags |=  IF_FLG_STOPPED;
 			}
-			BSP_mve_ack_link_chg(mp, 0); /* propagate link change to serial port */
+
 		DRVUNLOCK(mdrv);
 		}
 		BSP_mve_enable_irqs(mp);
@@ -259,8 +259,6 @@ rtems_id              tid  = 0;
 	if ( ! (mdrv = malloc(sizeof(*mdrv))) ) {
 		return 0;
 	}
-
-	mdrv->mutex = 0;
 
 	mdrv->mutex = 0;
 	mdrv->flags = IF_FLG_STOPPED;
