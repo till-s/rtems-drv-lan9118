@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <rtems/rtems_mii_ioctl.h>
+
 typedef struct mveth_drv_s_ *mveth_drv;
 
 #define ETHERPADSZ sizeof(((EthHeaderRec*)0)->pad)
@@ -76,10 +78,14 @@ NETDRV_READ_ENADDR(struct IpBscIfRec_ *pif, uint8_t *buf);
 
 #include "lanIpBasic.c"
 
+#define IF_FLG_STOPPED	(1<<0)
+
 typedef struct mveth_drv_s_ {
 	struct mveth_private *mve_p;
 	IpBscIf              ipbif_p;
 	rtems_id             mutex;
+	int                  unit; /* zero based */
+	unsigned             flags;
 	rtems_id             tid;
 	int8_t               hasenaddr;
 	uint8_t              enaddr[6];
@@ -94,7 +100,13 @@ mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len)
 {
 int rval;
 	DRVLOCK(mdrv);
-		rval = BSP_mve_send_buf(mdrv->mve_p, pbuf, data, len);
+		if ( (mdrv->flags & IF_FLG_STOPPED) ) {
+			/* drop */
+			rval = 0;
+		} else
+		{
+			rval = BSP_mve_send_buf(mdrv->mve_p, pbuf, data, len);
+		}
 	DRVUNLOCK(mdrv);
 	return rval;
 }
@@ -105,6 +117,7 @@ NETDRV_SND_PACKET(IpBscIf pif, void *phdr, int hdrsz, void *data, int dtasz)
 mveth_drv            mdrv = pif->drv_p;
 char                 *b_ = (char*)getrbuf();
 char                 *p;
+int                  st;
 
 		if ( (p=b_) ) {
 			int l_ = hdrsz + dtasz - ETHERPADSZ;
@@ -116,9 +129,12 @@ char                 *p;
 			p = b_ + ETHERPADSZ;
 
 
-			if ( mve_send_buf_locked(mdrv, b_, p, l_) <= 0 ) {
+			if ( (st = mve_send_buf_locked(mdrv, b_, p, l_)) <= 0 ) {
+				/* If nothing was sent (packet dropped) don't report
+				 * an error but release the buffer.
+				 */
 				relrbuf((rbuf_t*)b_);
-				return -ENOSPC;
+				return st < 0 ? -ENOSPC : 0;
 			}
 			return dtasz;
 		}
@@ -194,6 +210,8 @@ int                   minu, maxu;
 		return 0;
 	}
 
+	mdrv->flags |= IF_FLG_STOPPED;
+
 	/* Save ethernet addr. if given; the mve low-level driver
 	 * is not yet ready to use it at this point
 	 */
@@ -252,6 +270,7 @@ int                   minu, maxu;
 								BSP_MVE_IRQ_TX | BSP_MVE_IRQ_RX /* | BSP_MVE_IRQ_LINK */ )) ) {
 			/* SUCCESSFUL EXIT (unit found and initialized) */
 			fprintf(stderr,"drvMveIpBasic: using mve instance %u\n",unit);
+			mdrv->unit = unit - 1;
 			return mdrv;
 		}
 	}
@@ -269,16 +288,22 @@ egress:
 }
 
 #define KILL_EVENT RTEMS_EVENT_4
-#define ALL_EVENTS (RTEMS_EVENT_0 | RTEMS_EVENT_1 | KILL_EVENT)
+
+#ifndef SIOCGIFMEDIA
+/* BSP_mve_media_ioctl() aliases '0' to SIOCGIFMEDIA :-) */
+#define SIOCGIFMEDIA 0
+#endif
 
 void
 drvMveIpBasicTask(rtems_task_argument arg)
 {
-IpBscIf					ipbif_p = (IpBscIf)arg;
-mveth_drv				mdrv    = lanIpBscIfGetDrv(ipbif_p);
-struct mveth_private	*mve_p  = mdrv->mve_p; 
-rtems_event_set			evs;
-uint32_t				irqs;
+IpBscIf               ipbif_p = (IpBscIf)arg;
+mveth_drv             mdrv    = lanIpBscIfGetDrv(ipbif_p);
+struct mveth_private  *mve_p  = mdrv->mve_p; 
+rtems_event_set       ev_mask = (1<<mdrv->unit) | KILL_EVENT;
+rtems_event_set       evs;
+uint32_t              irqs;
+int                   media;
 
 #ifdef DEBUG
 	if ( lanIpDebug & DEBUG_TASK ) {
@@ -288,9 +313,19 @@ uint32_t				irqs;
 
 	BSP_mve_init_hw( mve_p, 0, mdrv->hasenaddr ? mdrv->enaddr : 0 );
 
+	if ( 0 == BSP_mve_media_ioctl(mp, SIOCGIFMEDIA, &media) ) {
+		if ( (IFM_LINK_OK & media) ) {
+			mdrv->flags &= ~IF_FLG_STOPPED;
+		}
+	} else {
+		fprintf(stderr,"WARNING: unable to determine link state; may be unable to send\n");
+	}
+
 	do {
-		rtems_event_receive( ALL_EVENTS, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
+		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
+
 		irqs = BSP_mve_ack_irqs(mve_p);
+
 		if ( (irqs & BSP_MVE_IRQ_TX) ) {
 		DRVLOCK(mdrv);
 			/* cleanup_txbuf */
@@ -304,7 +339,12 @@ uint32_t				irqs;
 		if ( (irqs & BSP_MVE_IRQ_LINK) ) {
 			/* propagate link change to serial port */
 		DRVLOCK(mdrv);
-			BSP_mve_ack_link_chg(mve_p, 0);
+			BSP_mve_ack_link_chg(mp, &media); /* propagate link change to serial port */
+			if ( (IFM_LINK_OK & media) ) {
+				mdrv->flags &= ~IF_FLG_STOPPED;
+			} else {
+				mdrv->flags |=  IF_FLG_STOPPED;
+			}
 		DRVUNLOCK(mdrv);
 		}
 		BSP_mve_enable_irqs(mve_p);
