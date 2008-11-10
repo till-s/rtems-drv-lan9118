@@ -313,7 +313,7 @@ int                   media;
 
 	BSP_mve_init_hw( mve_p, 0, mdrv->hasenaddr ? mdrv->enaddr : 0 );
 
-	if ( 0 == BSP_mve_media_ioctl(mp, SIOCGIFMEDIA, &media) ) {
+	if ( 0 == BSP_mve_media_ioctl( mve_p, SIOCGIFMEDIA, &media ) ) {
 		if ( (IFM_LINK_OK & media) ) {
 			mdrv->flags &= ~IF_FLG_STOPPED;
 		}
@@ -339,7 +339,7 @@ int                   media;
 		if ( (irqs & BSP_MVE_IRQ_LINK) ) {
 			/* propagate link change to serial port */
 		DRVLOCK(mdrv);
-			BSP_mve_ack_link_chg(mp, &media); /* propagate link change to serial port */
+			BSP_mve_ack_link_chg(mve_p, &media); /* propagate link change to serial port */
 			if ( (IFM_LINK_OK & media) ) {
 				mdrv->flags &= ~IF_FLG_STOPPED;
 			} else {
