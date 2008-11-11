@@ -5,9 +5,9 @@ include $(top_srcdir)/rtems-pre.am
 
 EXEEXT=$(OBJEXEEXT)
 
-liblanIpBasic_a_SOURCES        = lanIpBasicTest.c drvUdpSock.c
+liblanIpBasic_a_SOURCES        = lanIpBasicTest.c drvUdpSock.c hwtmr.h
 
-EXTRA_liblanIpBasic_a_SOURCES  = padProto.c
+EXTRA_liblanIpBasic_a_SOURCES  = padProto.c lanIpBasic.c
 EXTRA_liblanIpBasic_a_SOURCES += drvLan9118.c drvLan9118IpBasic.c padStream.c bpmsim.c
 EXTRA_liblanIpBasic_a_SOURCES += drvMveIpBasic.c
 EXTRA_liblanIpBasic_a_SOURCES += drvAmdEthIpBasic.c
