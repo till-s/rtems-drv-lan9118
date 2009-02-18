@@ -56,8 +56,10 @@ EXTRA_padProtoHost_SOURCES    += hostStream.c bpmsimNative.c
 %Native.c: %.c
 	ln -s $^ $@
 
-padProtoHost_LDADD             = $(EXTRA_padProtoHost_SOURCES:%.c=%.$(OBJEXT))
-padProtoHost_DEPENDENCIES      = $(padProtoHost_LDADD)
+padProtoHost_OBJCTS           = $(EXTRA_padProtoHost_SOURCES:%.c=%.$(OBJEXT)) 
 
-$(padProtoHost_LDADD):%.$(OBJEXT):%.c
+padProtoHost_LDADD             = $(padProtoHost_OBJCTS) -lm
+padProtoHost_DEPENDENCIES      = $(padProtoHost_OBJCTS)
+
+$(padProtoHost_OBJCTS):%.$(OBJEXT):%.c
 	$(HOSTCC) -c -O2 -DBSDSOCKET -I$(srcdir) -o $@ $<
