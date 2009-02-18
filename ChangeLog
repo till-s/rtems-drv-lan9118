@@ -1,3 +1,15 @@
+2009/02/18 (TS):
+ - iir2_bpmsim declared in new header (bpmsim.h)
+ - iir2_bpmsim takes new argument (2nd initial value) which
+   allows to add random phase + time-of-arrival.
+ - add (compile-time-optional) SDDS reader which allows
+   padProtoHost to play back waveforms from an SDDS file.
+ - streamSim() adds (common-mode to all 4 channels) random
+   phase + time-of-arrival to simulated waveforms.
+ - padProtoHost has 'server mode' with new '-P <server_xmit_period>'
+   option. Transmit simulated or SDDS-playback waveform every P seconds.
+   (in server mode).
+ - if port # (-p) is zero use PADPROTO_STRM_PORT in listener mode.
 2008/10/29 (TS): Fix problems reported by Stephen Norum (beatnik)
  - TX ring was apparently exhausted (send returning -ENOSPC). This
    occurred due to corruption because the driver task swiped the TX

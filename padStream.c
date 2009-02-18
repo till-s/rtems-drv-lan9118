@@ -16,6 +16,7 @@
 #include <padStream.h>
 
 #include "hwtmr.h"
+#include "bpmsim.h"
 
 int padStreamDebug = 0;
 
@@ -217,15 +218,6 @@ typedef struct StripSimValRec_ {
 
 static StripSimValRec strips;
 
-extern unsigned
-iir2_bpmsim(
-	int16_t *pf,
-	int nloops,
-	int ini,
-	unsigned long *pn,
-	int swp,
-	int stride);
-
 static void *
 streamSim(void *packetBuffer,
 			int idx,
@@ -242,18 +234,18 @@ static unsigned long noise = 1;
 	swp    = ( bigEndian() != !little_endian );
 
 	if ( column_major ) {
-		iir2_bpmsim(buf++, nsamples, ini->a,  &noise, swp, NCHNS);
-		iir2_bpmsim(buf++, nsamples, ini->b,  &noise, swp, NCHNS);
-		iir2_bpmsim(buf++, nsamples, ini->c,  &noise, swp, NCHNS);
-		iir2_bpmsim(buf++, nsamples, ini->d,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->a, 0,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->b, 0,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->c, 0,  &noise, swp, NCHNS);
+		iir2_bpmsim(buf++, nsamples, ini->d, 0,  &noise, swp, NCHNS);
 	} else {
-		iir2_bpmsim(buf, nsamples, ini->a,  &noise, swp, 1);
+		iir2_bpmsim(buf, nsamples, ini->a, 0,  &noise, swp, 1);
 		buf += nsamples;
-		iir2_bpmsim(buf, nsamples, ini->b,  &noise, swp, 1);
+		iir2_bpmsim(buf, nsamples, ini->b, 0,  &noise, swp, 1);
 		buf += nsamples;
-		iir2_bpmsim(buf, nsamples, ini->c,  &noise, swp, 1);
+		iir2_bpmsim(buf, nsamples, ini->c, 0,  &noise, swp, 1);
 		buf += nsamples;
-		iir2_bpmsim(buf, nsamples, ini->d,  &noise, swp, 1);
+		iir2_bpmsim(buf, nsamples, ini->d, 0,  &noise, swp, 1);
 	}
 
 	return packetBuffer;

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "hwtmr.h"
+#include "bpmsim.h"
 
 /* coldfire uc5282 has no FPU */
 typedef int FiltNumber;
@@ -17,14 +18,7 @@ typedef int FiltNumber;
 /* renormalize after multiplication by coefficients */
 #define FNORM(x) ((x)>>16)
 
-/* Crude algorithm from random(3). This is uniformely distributed noise
- * but becomes approximately gaussian after filtering...
- */ 
-#define NOISESTEP(pn) do { *(pn) = *(pn) * 1103515245 + 12345; } while (0)
-
-/* random(3) does ((*pn) >> 16) & 0x7fff after a NOISESTEP to generate
- * a number between 0..MAXRAND
- */
+#define NOISESTEP(pn) randstep(pn)
 
 /* How many bits of noise (in-band) to use */
 #define IBNOISEBITS 6
@@ -76,14 +70,14 @@ struct Iir2Stat_ {
 #define CD1 FNUM(0.2361611)
 #define CD2 FNUM(0.8311936)
 
-static inline int16_t
+static __inline__ int16_t
 bswap(int16_t x)
 {
 	return (x<<8) | (((uint16_t)x)>>8);
 }
 
 /* simulate PAD overflow signalization (LSB == OVR) */
-static inline int16_t lmt(int v)
+static __inline__ int16_t lmt(int v)
 {
 int16_t rval;
 	rval = v & 0x0000fffe;
@@ -93,7 +87,7 @@ int16_t rval;
 }
 
 unsigned
-iir2_bpmsim(int16_t *pf, int nloops, int ini, unsigned long *pn, int swp, int stride)
+iir2_bpmsim(int16_t *pf, int nloops, int ini, int ini2, unsigned long *pn, int swp, int stride)
 {
 unsigned then = Read_hwtimer();
 FiltNumber ysa[2] = { FNUM(0.), FNUM(0.) }, xsa[2] = { FNUM(0.), FNUM(0.)};
@@ -109,7 +103,7 @@ int         ini1 = ini;
 	/* This is 'in-band' noise. We should also add wide-band noise
 	 * at the output but we probably wouldn't have time to make it gaussian
 	 */
-	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini1,(FiltNumber)(n>>(8-IBNOISEBITS)),CN0,CN1,CN2,CD1,CD2);
+	IIRBP2(ysa,ysb,xsa,(FiltNumber)ini1,(FiltNumber)(ini2+(n>>(8-IBNOISEBITS))),CN0,CN1,CN2,CD1,CD2);
 	*pf = lmt(ysa[0] + ysb[0]); *pf1 = lmt(ysa[1] + ysb[1]);
 	if ( swp ) {
 		*pf = bswap(lmt(ysa[0] + ysb[0])); *pf1 = bswap(lmt(ysa[1] + ysb[1]));
@@ -168,18 +162,29 @@ int         ini1 = ini;
 
 #ifdef MAIN
 
+#include  <math.h>
+
 int
 main(int argc, char **argv)
 {
-int              i;
+int              i,i2;
 int16_t buf[128];
+int     N = sizeof(buf)/sizeof(buf[0]);
+float   e,x;
 unsigned long nois = 1;
 
 	if ( argc < 2 || 1!=sscanf(argv[1],"%i",&i) )
 		i = 10000;
-	iir2_bpmsim(buf, sizeof(buf)/sizeof(buf[0]), i, &nois, 0, 1);
+	if ( argc < 3 || 1!=sscanf(argv[2],"%i",&i2) )
+		i2 = 10000;
+	iir2_bpmsim(buf, sizeof(buf)/sizeof(buf[0]), i, i2, &nois, 0, 1);
 
-	for ( i=0; i<sizeof(buf)/sizeof(buf[0]); i++)
+	e = 0.;
+	for ( i=0; i<N; i++) {
+		x  = (float)buf[i];
+		e += x*x;
 		printf("%f\n",(float)buf[i]);
+	}
+	printf("Energy: %f, RMS %f\n", e, sqrtf(e/(float)N));
 }
 #endif

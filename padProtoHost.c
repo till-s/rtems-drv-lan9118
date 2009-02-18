@@ -13,6 +13,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
+
+#include "hostStream.h"
+
 static int verbose    = 0;
 
 static int theChannel = 0;
@@ -61,7 +65,7 @@ union {
 void
 usage(char *nm)
 {
-	fprintf(stderr,"Usage: %s [-bhvec] [-C channel] [-l port] [-n nsamples] [-s srvr_port] [-d dbg_flgs] ip:port <msg_type_int>\n",nm);
+	fprintf(stderr,"Usage: %s [-bhvec] [-C channel] [-l port] [-n nsamples] [-s srvr_port] [-S sdds_file:col,col,col,col] [-P server_xmit_period] [-d dbg_flgs] ip:port <msg_type_int>\n",nm);
 	fprintf(stderr,"          -b bcast to all channels\n");
 	fprintf(stderr,"          -h print this help\n");
 	fprintf(stderr,"          -v be verbose\n");
@@ -80,6 +84,11 @@ usage(char *nm)
 	fprintf(stderr,"                      5 = SIM  (simulate BPM)\n");
 	fprintf(stderr,"                     15 = KILL (terminate padUdpHandler on target)\n");
 	fprintf(stderr,"          -s srvr_port  run as a padProto server\n");
+	fprintf(stderr,"          -S sdds_file:col,col,col,col SDDS file to 'play'\n");
+	fprintf(stderr,"                                       specified columns.\n");
+	fprintf(stderr,"          -P period_ms  transmit simulated or playback\n");
+	fprintf(stderr,"                        waveforms every 'period_ms'\n");
+	fprintf(stderr,"          -p start:end  SDDS page range (1-based) to 'play'\n");
 }
 
 static void
@@ -112,13 +121,14 @@ int         err = -1;
 int         sd;
 UdpCommPkt  p;
 uint32_t	peerip;
+int         T = timeout_ms <= 0 ? 1000 : timeout_ms;
 
 	if ( (sd = udpCommSocket(port)) < 0 ) {
 		return sd;
 	}
 
 	while ( !padudpkilled ) {
-		if ( (p = udpCommRecvFrom(sd, timeout_ms, &peerip, 0)) ) {
+		if ( (p = udpCommRecvFrom(sd, T, &peerip, 0)) ) {
 			err = padProtoHandler((PadRequest)udpCommBufPtr(p), chan, (int*)&padudpkilled, peerip);
 			if ( 0 < err ) {
 				/* OK to send packet */
@@ -131,9 +141,10 @@ uint32_t	peerip;
 				}
 			}
 		} else {
-			extern int padStream(int32_t a, int32_t b, int32_t c, int32_t d);
-			/* timed out; try to send stream */
-			padStream(2000,3000,4000,5000);
+			if ( timeout_ms > 0 ) {
+				/* server period expired; try to send stream */
+				padStreamSimulated();
+			}
 		}
 	}
 
@@ -223,8 +234,14 @@ int               badEndian = 0;
 int               colMajor  = 0;
 int               srvrMode  = 0;
 unsigned          dbg       = 0;
+int               srvrPerMs = 0;
+#ifdef USE_SDDS
+const char        *sddsnam  = 0;
+int               pgFst     = 0;
+int               pgLst     = -1;
+#endif
 
-	while ( (ch = getopt(argc, argv, "bvcehl:n:C:s:d:")) > 0 ) {
+	while ( (ch = getopt(argc, argv, "bvcehl:n:C:s:d:S:P:p:")) > 0 ) {
 		switch (ch) {
 			default:
 				fprintf(stderr,"Unknown option '%c'\n",ch);
@@ -256,6 +273,30 @@ unsigned          dbg       = 0;
 					srvrMode = 1;
 				break;
 
+			case 'S':
+#ifdef USE_SDDS
+				sddsnam = optarg;
+#else
+				fprintf(stderr,"program was built w/o SDDS support; recompile with -DUSE_SDDS\n");
+#endif
+			break;
+
+			case 'p':
+#ifdef USE_SDDS
+				if ( 2 != sscanf(optarg,"%i:%i",&pgFst,&pgLst) ) {
+					fprintf(stderr,"need <start-page>:<end-page> range\n");
+					exit(1);
+				}
+				if ( --pgFst < 0 ) 
+					pgFst = 0;
+				/* last page < 0 means -> end */
+				pgLst--;
+
+#else
+				fprintf(stderr,"program was built w/o SDDS support; recompile with -DUSE_SDDS\n");
+#endif
+			break;
+
 			case 'b': theChannel = -128; break;
 
 			case 'v': verbose   = 1; break;
@@ -265,6 +306,14 @@ unsigned          dbg       = 0;
 			case 'C':
 				if ( 1 != sscanf(optarg,"%i",&theChannel) || theChannel > 255 || (theChannel < 0 && -128 != theChannel) ) {
 					fprintf(stderr,"invalid channel #: '%s'\n",optarg);
+					usage(argv[0]);
+					exit(1);
+				}
+			break;
+
+			case 'P':
+				if ( 1 != sscanf(optarg,"%i",&srvrPerMs) ) {
+					fprintf(stderr,"invalid period (number expected): '%s'\n",optarg);
 					usage(argv[0]);
 					exit(1);
 				}
@@ -282,6 +331,13 @@ unsigned          dbg       = 0;
 		}
 	}
 
+#ifdef USE_SDDS
+	if ( sddsnam &&  padStreamSddsSetup(sddsnam,pgFst,pgLst) ) {
+		fprintf(stderr,"invalid SDDS filespec\n");
+		exit(1);
+	}
+#endif
+
 	if ( !listener && !srvrMode ) {
 		if ( argc - optind < 2 || !(col=strchr(argv[optind],':')) || (*col++=0, INADDR_NONE == inet_addr(argv[optind])) || 1 != sscanf(col,"%i",&port) || (-1 == type && 1 != sscanf(argv[optind+1],"%i",&type)) ) {
 			usage(argv[0]);
@@ -291,18 +347,18 @@ unsigned          dbg       = 0;
 
 	
 	if ( 0 == port )
-		port = PADPROTO_PORT;
+		port = listener ? PADPROTO_STRM_PORT : PADPROTO_PORT;
 
 	if ( srvrMode ) {
 		extern int padProtoDebug;
 		padProtoDebug = dbg;
-		server(port, theChannel, 1000);
+		server(port, theChannel, srvrPerMs);
 		/* should never return here */
 		perror("padUdpHandler failed");
 		exit(1);
 	}
 
-	sd = udpCommSocket(port);
+	sd = udpCommSocket(listener ? port : 0);
 
 	if ( sd < 0 ) {
 		fprintf(stderr,"udpCommSocket: %s",strerror(-sd));
@@ -324,4 +380,5 @@ unsigned          dbg       = 0;
 	}
 
 	udpCommClose(sd);
+	return 0;
 }
