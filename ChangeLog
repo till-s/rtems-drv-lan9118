@@ -1,3 +1,6 @@
+2009/04/21 (TS):
+ - udpSockHdrsReflect() needs to convert port number to host endianness
+   before passing to fillinSrcCsumUdp().
 2009/02/18 (TS):
  - iir2_bpmsim declared in new header (bpmsim.h)
  - iir2_bpmsim takes new argument (2nd initial value) which

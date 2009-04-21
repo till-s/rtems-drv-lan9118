@@ -1114,7 +1114,7 @@ int rval = 0;
 void
 udpSockHdrsReflect(LanUdpHeader p)
 {
-uint16_t  port = p->udp.dport;
+uint16_t  port = ntohs(p->udp.dport);
 	src2dstUdp(p);
 	fillinSrcCsumUdp(intrf, p, port);
 }
