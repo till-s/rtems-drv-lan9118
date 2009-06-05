@@ -116,7 +116,7 @@ struct sockaddr_in they;
 	
 	memset(&they, 0, sizeof(they));
 	they.sin_family = AF_INET;
-	they.sin_addr.s_addr   = (in_addr_t)diaddr;
+	they.sin_addr.s_addr   = (uint32_t)diaddr;
 	they.sin_port   = htons(port);
 	return connect(sd, (struct sockaddr*)&they, sizeof(they));
 }
