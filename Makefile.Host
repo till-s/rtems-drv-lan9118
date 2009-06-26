@@ -3,12 +3,19 @@
 OBJS  =  padProtoHost.o udpCommBSD.o padProto.o hostStream.o bpmsim.o
 OBJS1 =  hostStreamMain.o udpCommBSD.o bpmsim.o
 
-CFLAGS = -O2
+CFLAGS = -O2 -g
 
-all: padProtoHost 
+RANLIB=ranlib
+
+all: padProtoHost libudpCommBSD.a
 
 padProtoHost: $(OBJS)
-	$(CC)  $(CFLAGS) -DBSDSOCKET -o $@ $^
+	$(CC)  $(CFLAGS) -DBSDSOCKET -o $@ $^ -lm
+
+libudpCommBSD.a: udpCommBSD.o
+	$(RM) $@
+	$(AR) cr $@ $^
+	$(RANLIB) $@
 
 hostStreamMain.o: hostStream.c
 	$(CC) -I. -c $(CFLAGS) -DMAIN -DBSDSOCKET -o $@ $<
@@ -21,5 +28,5 @@ hostStream: $(OBJS1)
 	$(CC) -I. -c $(CFLAGS) -DBSDSOCKET -o $@ $<
 
 clean:
-	$(RM) padProtoHost hostStream
+	$(RM) padProtoHost hostStream libudpCommBSD.a
 	$(RM) $(OBJS) $(OBJS1)

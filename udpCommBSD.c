@@ -33,6 +33,23 @@ typedef struct {
 	void            *raw_mem;
 } __attribute__((may_alias)) UdpCommBSDPkt;
 
+UdpCommPkt
+udpCommAllocPacket()
+{
+void          *p_raw;
+UdpCommBSDPkt *p;
+
+	p_raw      = malloc(sizeof(*p) + PADSZ + LAN_IP_BASIC_PACKET_ALIGNMENT-1);
+
+	if ( !p_raw )
+		return 0;
+
+	p          = (UdpCommBSDPkt*)(BUFALIGN(p_raw) + PADSZ);
+	p->raw_mem = p_raw;
+	p->rx_sd   = -1;
+	return p;
+}
+
 int
 udpCommSocket(int port)
 {
@@ -60,7 +77,6 @@ udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
 struct timeval     tv;
 fd_set             fds;
 UdpCommBSDPkt      *p;
-void               *p_raw;
 struct sockaddr_in __attribute__((may_alias)) *sa;
 socklen_t          len;
 
@@ -71,11 +87,13 @@ socklen_t          len;
 
 	if ( select(sd+1, &fds, 0, 0, &tv) <= 0 )
 		return 0;
-	p_raw      = malloc(sizeof(*p) + PADSZ + LAN_IP_BASIC_PACKET_ALIGNMENT-1);
-	p          = (UdpCommBSDPkt*)(BUFALIGN(p_raw) + PADSZ);
-	p->raw_mem = p_raw;
+
+	if ( !(p = udpCommAllocPacket()) )
+		return 0;
+
 	sa         = (struct sockaddr_in __attribute__((may_alias)) *)&p->sender;
 	len        = sizeof( p->sender );
+
 	if ( recvfrom(sd, p->data, sizeof(p->data), 0, &p->sender, &len) < 0 ) {
 		udpCommFreePacket(p);
 		return 0;
@@ -115,8 +133,39 @@ udpCommConnect(int sd, uint32_t diaddr, int port)
 struct sockaddr_in they;
 	
 	memset(&they, 0, sizeof(they));
-	they.sin_family = AF_INET;
-	they.sin_addr.s_addr   = (uint32_t)diaddr;
-	they.sin_port   = htons(port);
+	they.sin_family        = AF_INET;
+	they.sin_addr.s_addr   = diaddr;
+	they.sin_port          = htons(port);
 	return connect(sd, (struct sockaddr*)&they, sizeof(they));
 }
+
+int
+udpCommSendPkt(int sd, UdpCommPkt pkt, int len)
+{
+UdpCommBSDPkt *p = (UdpCommBSDPkt*) pkt;
+int           rval;
+
+	rval = send(sd, p->data, len, 0);
+	udpCommFreePacket(p);
+	return rval;
+}
+
+int
+udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port)
+{
+UdpCommBSDPkt *p = (UdpCommBSDPkt*) pkt;
+int           rval;
+
+union {
+	struct sockaddr_in sin;
+	struct sockaddr    sa;
+} dst;
+
+	dst.sin.sin_family      = AF_INET;
+	dst.sin.sin_addr.s_addr = dipaddr;
+	dst.sin.sin_port        = htons(port);
+	rval = sendto(sd, p->data, len, 0, &dst.sa, sizeof(dst.sin));
+	udpCommFreePacket(p);
+	return rval;
+}
+

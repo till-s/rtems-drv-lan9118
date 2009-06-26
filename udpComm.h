@@ -53,17 +53,55 @@ udpCommRecv(int sd, int timeout_ms);
 STATICINLINE UdpCommPkt
 udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport);
 
-/* Obtain pointer to data area in buffer (UDP payload) */
-static __inline__ void *
-udpCommBufPtr(UdpCommPkt p);
+/* Allocate a packet (for sending with udpCommSendPktTo) */
+STATICINLINE UdpCommPkt
+udpCommAllocPacket();
 
 /* Release packet (obtained from Recv) when done */
 STATICINLINE void
 udpCommFreePacket(UdpCommPkt p);
 
-/* Send packet to connected peer */
+#ifdef BSDSOCKET
+/* Payload size = 3*512 (<MTU) - eth, ip and udp header sizes) */
+#define UDPCOMM_PKTSZ (3*512 - 16 - 20 - 8)
+#else
+#define UDPCOMM_PKTSZ UDPPAYLOADSIZE
+#endif
+
+/* Obtain pointer to data area in buffer (UDP payload) */
+static __inline__ void *
+udpCommBufPtr(UdpCommPkt p);
+
+/* Send packet to connected peer; 
+ * The data in 'buf' has to be copied
+ * into the 'lanIpBasic' stack (no-op
+ * when using BSD sockets).
+ */
 static __inline__ int
 udpCommSend(int sd, void *buf, int len);
+
+/* Send packet w/o extra copy step.
+ * Packet must be pre-allocated using
+ * udpCommAllocPacket() and filled with
+ * data (into the user area).
+ *
+ * NOTE: Ownership of the packet is
+ *       transferred to the stack by
+ *       this call (regardless of the
+ *       return value).
+ */
+STATICINLINE int
+udpCommSendPkt(int sd, UdpCommPkt pkt, int len);
+
+/*
+ * As above but send to specified peer
+ * (unconnected socket only).
+ *
+ * NOTE: 'dipaddr' is the peer's IP address in *network* byte order
+ *       'port'    is the peer's port number in *host*   byte order
+ */
+STATICINLINE int
+udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port);
 
 /* Return packet to sender (similar to 'send'; 
  * this interface exists for efficiency reasons
@@ -92,6 +130,15 @@ udpCommBufPtr(UdpCommPkt p)
 	return (void*)lpkt_udphdr((LanIpPacket)p).pld;
 #endif
 }
+
+#ifndef BSDSOCKET
+static __inline__ UdpCommPkt
+udpCommAllocPacket()
+{
+	return udpSockGetBuf();
+}
+#endif
+
 
 #ifndef BSDSOCKET
 static __inline__ void

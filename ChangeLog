@@ -1,3 +1,8 @@
+2009/06/26 (TS):
+ - added udpCommAllocPacket()
+ - added udpCommSendPkt(), udpCommSendPktTo() (BSD only, so far)
+ - define UDPCOMM_PKTSZ (max size of payload)
+ - Makefile.Host builds a small library with just udpCommBSD
 2009/04/21 (TS):
  - udpSockHdrsReflect() needs to convert port number to host endianness
    before passing to fillinSrcCsumUdp().
