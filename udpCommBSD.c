@@ -77,7 +77,7 @@ socklen_t          len;
 	sa         = (struct sockaddr_in __attribute__((may_alias)) *)&p->sender;
 	len        = sizeof( p->sender );
 	if ( recvfrom(sd, p->data, sizeof(p->data), 0, &p->sender, &len) < 0 ) {
-		free(p_raw);
+		udpCommFreePacket(p);
 		return 0;
 	} else {
 		if ( ppeerip )
