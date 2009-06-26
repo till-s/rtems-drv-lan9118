@@ -81,9 +81,11 @@ egress:
 
 uint32_t lanIpTst_mintrip         = -1;
 uint32_t lanIpTst_maxtrip         =  0;
+uint32_t lanIpTst_maxsend         =  0;
 uint32_t lanIpTst_avgtrip128      =  0;
 uint32_t lanIpTst_pktlost         =  0;
 uint32_t lanIpTst_pktsent         =  0;
+uint32_t lanIpTst_pktrcvd         =  0;
 volatile int lanIpTst_keeprunning =  1;
 
 /* bounce a UDP packet back to the caller */
@@ -96,12 +98,13 @@ udpSocketEcho(int sd, int raw, int idx, int timeout)
 LanIpPacket p;
 uint16_t    tmp;
 int         len = -1, rval;
-uint32_t	now, then;
+uint32_t	now, then, post;
 
 static LanIpPacketRec dummy = {{{{{0}}}}};
 
-	if ( idx < 0 || idx >= sizeof(echodata)/sizeof((*(echodata*)0)[0]) )
+	if ( idx < 0 || idx >= sizeof(echodata)/sizeof((*(echodata*)0)[0]) ) {
 		return -1;
+	}
 
 	if ( !lpkt_ip(&dummy).src ) {
 		if ( (rval = udpSockHdrsInit(sd, &lpkt_udphdr(&dummy), 0, 0, 0)) ) {
@@ -115,10 +118,10 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 	if ( p ) {
 
 		if ( raw ) {
+			if ( 0 ) {
 			/* user manages headers */
 			memcpy(lpkt_eth(p).dst, lpkt_eth(p).src, sizeof(lpkt_eth(p).dst));
 			lpkt_ip(p).dst    = lpkt_ip(p).src;	
-			lpkt_udp(p).dport = lpkt_udp(p).sport;
 			{
 				/* fill source ll address, IP address and UDP port */
 				memcpy(lpkt_eth(p).src, lpkt_eth(&dummy).src, sizeof(lpkt_eth(&dummy).src));
@@ -136,20 +139,30 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 				lpkt_udp(p).csum = 0;
 
 			}
+			} else {
+				udpSockHdrsReflect(&lpkt_udphdr(p));
+			}
 			now  = Read_hwtimer();
 			then = lpkt_udp_pld(p,echodata)[idx];
 			lpkt_udp_pld(p,echodata)[idx] = now;
 			len = udpSockSendBufRawIp(p);
+			post = Read_hwtimer();
 		} else {
 			now  = Read_hwtimer();
 			then = lpkt_udp_pld(p,echodata)[idx];
 			lpkt_udp_pld(p,echodata)[idx] = now;
 			len = ntohs(lpkt_udp(p).len) - sizeof(UdpHeaderRec);
 			udpSockSend(sd, &lpkt_udp_pld(p,echodata), len);
+			post = Read_hwtimer();
 			udpSockFreeBuf(p);
 		}
 
+		post-=now;
+		if ( post > lanIpTst_maxsend )
+			lanIpTst_maxsend = post;
+
 		lanIpTst_pktsent++;
+		lanIpTst_pktrcvd++;
 
 		/* If this was not the first packet then measure roundtrip */
 		if ( then != 0 ) {
@@ -172,7 +185,10 @@ int
 udpBouncer(int master, int raw, uint32_t dipaddr, uint16_t dport)
 {
 LanIpPacket p;
+int         st;
 int         err = -1;
+int         cnt = 4;
+
 	if ( !raw ) {
 		if ( (err=udpSockConnect(lanIpUdpsd, dipaddr, dport)) ) {
 			fprintf(stderr,"bouncer: Unable to connect socket: %s\n", strerror(-err));
@@ -204,7 +220,9 @@ int         err = -1;
 				udpSockFreeBuf(p);
 			}
 
-			while ( udpSocketEcho(lanIpUdpsd, raw, 1, 20) > 0 ) {
+			lanIpTst_pktsent++;
+
+			while ( (st = udpSocketEcho(lanIpUdpsd, raw, 1, 50)) > 0 ) {
 				if ( !lanIpTst_keeprunning ) {
 					lanIpTst_pktlost--;
 					break;
@@ -213,7 +231,7 @@ int         err = -1;
 
 			lanIpTst_pktlost++;
 
-		} while ( lanIpTst_keeprunning );
+		} while ( lanIpTst_keeprunning && cnt-- > 0 );
 			fprintf(stderr,"Master terminated.\n");
 			/* in case they want to start again */
 			lanIpTst_keeprunning=1;
@@ -221,9 +239,9 @@ int         err = -1;
 			/* make sure socket is flushed */
 			while ( (p = udpSockRecv(lanIpUdpsd,0)) )		
 				udpSockFreeBuf(p);
-			while (udpSocketEcho(lanIpUdpsd, raw, 0, 100) > 0)
+			while ( (st = udpSocketEcho(lanIpUdpsd, raw, 0, 100)) > 0)
 					;
-			fprintf(stderr,"Slave timed out; terminating\n");
+			fprintf(stderr,"Slave timed out; terminating (status %i)\n", st);
 	}
 	err = 0;
 

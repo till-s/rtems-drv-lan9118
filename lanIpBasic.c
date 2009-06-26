@@ -30,6 +30,10 @@
 #include <lanIpProto.h>
 #include <lanIpBasic.h>
 
+#ifdef ENABLE_PROFILE
+#include "hwtmr.h"
+#endif
+
 /* Alias helper types */
 typedef uint32_t	uint32_a_t __attribute__((__may_alias__));
 typedef  int32_t	 int32_a_t __attribute__((__may_alias__));
@@ -1381,12 +1385,34 @@ int rval;
 	return rval;
 }
 
+#ifdef ENABLE_PROFILE
+uint32_t maxes[10]={0};
+
+#define PRFDECL uint32_t now,then
+#define dodiff(i) do { uint32_t diff__ ; \
+	now = Read_hwtimer();  \
+	diff__ = now - then;   \
+	if ( diff__ > maxes[i] ) {  \
+		maxes[i]=diff__;     \
+    }                       \
+    then = now;            \
+	} while (0)
+#define setbase() do { then = Read_hwtimer(); } while (0)
+
+#else
+
+#define PRFDECL
+#define dodiff(i)  do { } while(0)
+#define setbase(i) do { } while(0)
+
+#endif
 
 int
 udpSockSend(int sd, void *payload, int payload_len)
 {
 int          rval;
 LanUdpHeader h;
+PRFDECL;
 
 	if ( sd < 0 || sd >= NSOCKS )
 		return -EBADF;
@@ -1394,7 +1420,11 @@ LanUdpHeader h;
 	if ( 0 == socks[sd].port )
 		return -EBADF;
 
+	setbase();
+
 	SOCKLOCK( &socks[sd] );
+
+	dodiff(1);
 
 	if ( ! (FLG_ISCONN & socks[sd].flags) ) {
 		SOCKUNLOCK( &socks[sd] );
@@ -1408,11 +1438,19 @@ LanUdpHeader h;
 		return -ENOTCONN;
 	}
 
+    dodiff(2);
+
 	udpSockHdrsSetlen(h, payload_len);
+
+	dodiff(3);
 
 	rval = NETDRV_SND_PACKET( socks[sd].intrf, h, sizeof(*h), payload, payload_len );
 
+	dodiff(4);
+
 	SOCKUNLOCK( &socks[sd] );
+
+	dodiff(5);
 
 	return rval;
 }
