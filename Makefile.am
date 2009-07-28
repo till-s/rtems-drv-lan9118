@@ -53,6 +53,8 @@ padProtoHost_SOURCES           =
 EXTRA_padProtoHost_SOURCES     = padProtoHost.c udpCommBSD.c padProtoNative.c
 EXTRA_padProtoHost_SOURCES    += hostStream.c bpmsimNative.c
 
+EXTRA_DIST                     = hostStream.h bpmsim.h
+
 %Native.c: %.c
 	ln -s $^ $@
 
