@@ -1,3 +1,7 @@
+2009/07/28 (TS):
+ - removed unnecessary inclusion of drvLan9118.h from lanIpBasic.h.
+ - silenced some compiler warnings
+ - added udpCommJoinMcast(), udpCommLeaveMcast() and udpCommSetIfMcast().
 2009/06/26 (TS):
  - added udpCommAllocPacket()
  - added udpCommSendPkt(), udpCommSendPktTo() (BSD only, so far)

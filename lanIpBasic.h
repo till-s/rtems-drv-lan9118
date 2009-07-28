@@ -6,7 +6,8 @@
 /* Basic IP/UDP socket */
 
 #include <lanIpProto.h>
-#include <drvLan9118.h>
+#include <rtems.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -27,7 +27,7 @@
 #define PADSZ         (16+20+8)
 
 typedef struct {
-	char   data[1500];
+	char   data[UDPCOMM_PKTSZ];
 	struct sockaddr sender;
 	int             rx_sd;
 	void            *raw_mem;
@@ -169,3 +169,63 @@ union {
 	return rval;
 }
 
+
+/* can tweak this in special cases so select incoming IF... */
+uint32_t udpCommMcastIfAddr = INADDR_ANY;
+
+static int mc_doit(int sd, uint32_t mcaddr, int cmd)
+{
+#ifdef __linux__
+struct ip_mreqn ipm;
+#else /* rtems, BSD (?) */
+struct ip_mreq  ipm;
+#endif
+
+	ipm.imr_multiaddr.s_addr = mcaddr;
+#ifdef __linux__
+	ipm.imr_address.s_addr   = udpCommMcastIfAddr;
+	ipm.imr_ifindex          = 0;
+#else
+	ipm.imr_interface.s_addr = udpCommMcastIfAddr;
+#endif
+
+	if ( setsockopt(sd, IPPROTO_IP, cmd, &ipm, sizeof(ipm)) ) {
+		return -errno;
+	}
+
+	return 0;
+}
+
+int
+udpCommJoinMcast(int sd, uint32_t mcaddr)
+{
+	return mc_doit(sd, mcaddr, IP_ADD_MEMBERSHIP);
+}
+
+int
+udpCommLeaveMcast(int sd, uint32_t mcaddr)
+{
+	return mc_doit(sd, mcaddr, IP_DROP_MEMBERSHIP);
+}
+
+int
+udpCommSetIfMcast(int sd, uint32_t ifipaddr)
+{
+#ifdef __linux__
+struct ip_mreqn arg;
+
+	memset(&arg, 0, sizeof(arg));
+#define mcifa arg.imr_address
+#else
+struct in_addr  arg;
+#define mcifa arg
+#endif
+
+	mcifa.s_addr = ifipaddr;
+
+	if ( setsockopt(sd, IPPROTO_IP, IP_MULTICAST_IF, &mcifa, sizeof(mcifa)) ) {
+		return -errno;
+	}
+
+	return 0;
+}

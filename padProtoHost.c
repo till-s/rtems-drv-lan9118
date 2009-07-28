@@ -45,7 +45,7 @@ int16_t tmp;
 	printf("     Type: 0x%02x\n",           (uint8_t)p->type);
 	printf("  Channel: %i\n",               p->chnl);
 	tmp = ntohs(p->nBytes);
-	printf("   nBytes: %i [payload %i]\n",  tmp, tmp-sizeof(*p));
+	printf("   nBytes: %i [payload %i]\n",  tmp, tmp-(int16_t)sizeof(*p));
 	printf("      XID: 0x%08x\n",           ntohl(p->xid)); 
 	tmp = ntohs(p->status);
 	printf("   status: %i (%s)\n",          tmp, strerror(-tmp));

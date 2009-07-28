@@ -10,6 +10,7 @@
 #ifdef BSDSOCKET
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <unistd.h>
 #include <stdlib.h>
 #define STATICINLINE
@@ -110,7 +111,59 @@ udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port);
 STATICINLINE void
 udpCommReturnPacket(UdpCommPkt p, int len);
 
+/* Join and leave a MC group. This actually affects the interface
+ * not just the socket 'sd'.
+ * NOTE: calls do not nest; you cannot call this twice on the
+ *       same socket.
+ *
+ * RETURNS: zero on success, -errno on failure.
+ */
+
+STATICINLINE int
+udpCommJoinMcast(int sd, uint32_t mcaddr);
+
+STATICINLINE int
+udpCommLeaveMcast(int sd, uint32_t ifipaddr);
+
+/*
+ * Set the outgoing interface for sending multicast
+ * traffic from 'sd'. The interface with IP address
+ * 'ifaddr' is used for sending all MC traffic from
+ * socket 'sd'. 
+ *
+ * Note that the same or similar functionality 
+ * can be achieved by setting up the system routing
+ * tables which is more transparent, flexible and
+ * IMHO preferable.
+ * However, in some cases -- especially for testing --
+ * setting this on a 'per-socket' basis with this
+ * call is useful; particularly because (on linux
+ * and other general-purpose, protected OSes) no
+ * special privileges are required.
+ *
+ * RETURNS: zero on success, nonzero (-errno) on
+ *          error.
+ *
+ * NOTES:   use a 'ifaddr' == 0 to remove the
+ *          association of a outgoing mcast IF
+ *          with a socket.
+ *
+ *          The 'ifipaddr' is as usual given in
+ *          network-byte order.
+ */
+STATICINLINE int
+udpCommSetIfMcast(int sd, uint32_t ifipaddr);
+
+/* This variable can be set to IP address of
+ * receiving interface (if host has multiple NICs)
+ * in network byte order. Defaults to INADDR_ANY,
+ * i.e., system picks a suitable IF.
+ */
+extern uint32_t udpCommMcastIfAddr;
+
+
 /* Inline implementations for both BSD and udpSocks */
+
 static __inline__ int
 udpCommClose(int sd)
 {
