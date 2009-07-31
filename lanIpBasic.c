@@ -658,7 +658,7 @@ fillinSrcCsumIp(IpBscIf ifc, LanIp buf_p)
 	buf_p->ip.src              = ifc->ipaddr;
 
 	buf_p->ip.csum             = 0;
-	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
+	buf_p->ip.csum             = in_cksum_hdr((void*)&buf_p->ip);
 }
 
 static inline void
