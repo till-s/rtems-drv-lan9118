@@ -162,7 +162,7 @@ union {
 
 	buf.b = *ppbuf;
 	buf.raw += ETHERPADSZ;
-	st = amdEthReceivePacket( d, &buf.raw, LANPKTMAX );
+	st = amdEthReceivePacket( d, &buf.raw, LANPKTMAX - ETHERPADSZ );
 	if ( buf.raw ) {
 		buf.raw -= ETHERPADSZ;
 		*ppbuf   = buf.b;
