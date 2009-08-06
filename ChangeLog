@@ -1,4 +1,14 @@
 2009/08/06 (TS):
+ - lanIpProto.h, lanIpBasic.c: Fix packet size to true ethernet limit;
+   separated packet size from rbuf alignment and size. Padding for
+   proper alignment is now added to the 'rbuf' data type.
+ 
+   Added 'lanIpBasicAddBufs()' allowing to add buffers at run-time.
+
+   Added 'reference-count' to rbuf and a 'refrbuf()' entry point
+   for incrementing the reference-count. 'relrbuf' only really
+   releases a buffer when the refcnt reaches zero.
+2009/08/06 (TS):
  - drvUdpSock.c: clip transmitted payload to UDPPAYLOADSIZE, not LANPKTMAX!
 2009/08/06 (TS):
  - drvAmdEthIpBasic.c: since buffer pointer is adjusted by ETHERPADSZ

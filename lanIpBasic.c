@@ -71,10 +71,26 @@ int	lanIpDebug = DEBUG;
 #define RBUF_ALIGNMENT LAN_IP_BASIC_PACKET_ALIGNMENT
 #endif
 
-/* Trivial RX buffers */
-#if ((RBUF_ALIGNMENT-1) & LANPKTMAX)
-#error "LANPKTMAX has insufficient alignment for this chip driver"
-#endif
+#define RBUF_ALGN(x)   (((x) + (RBUF_ALIGNMENT-1)) & ~RBUF_ALIGNMENT)
+/* Trivial RX buffers (upalign to multiple of 128 to 
+ * provide safe alignment of payload for vector engines and
+ * caches).
+ * 
+ * Cache note: If we ever use SW cache invalidation then
+ *             we must be careful with the 'refcnt' field.
+ *             Possibly, the last cache line must be
+ *             flushed before being invalidated so that
+ *             the refcnt makes it out to memory.
+ *
+ */
+typedef union rbuf_ {
+	LanIpPacketRec pkt;
+	struct {
+		union rbuf_    *next;
+		uint8_t         raw[RBUF_ALGN(sizeof(LanIpPacketRec)) + sizeof(union rbuf_*) + sizeof(uint8_t)];
+		uint8_t         refcnt;
+	}              buf;
+} rbuf_t;
 
 #ifndef NRBUFS
 #define NRBUFS		50	/* Total number of RX buffers */
@@ -90,16 +106,14 @@ int	lanIpDebug = DEBUG;
 #define DEFLT_PORT  31110
 #endif
 
-typedef LanIpPacketRec rbuf_t;
-
 static rbuf_t		rbufs[NRBUFS]
 #ifdef RBUF_ALIGNMENT
 __attribute__ ((aligned(RBUF_ALIGNMENT)))
 #endif
-                    = {{{{{{0}}}}}};
+                            = {{{{{{{0}}}}}}};
 
 /* lazy init of tbuf facility */
-static int    ravail = NRBUFS;
+static int    ravail        = NRBUFS;
 volatile int  lanIpBufAvail = NRBUFS;
 
 static rbuf_t *frb = 0; /* free list */
@@ -161,13 +175,14 @@ rtems_interrupt_level key;
 
 	rtems_interrupt_disable(key);
 	if ( (rval = frb) ) {
-		frb = *(rbuf_t **)rval;
+		frb = rval->buf.next;
 	} else {
 		/* get from pool */
 		if ( ravail ) {
 			rval = &rbufs[--ravail];
 		}
 	}
+	rval->buf.refcnt++;
 	if ( lanIpBufAvail )
 		lanIpBufAvail--;
 	rtems_interrupt_enable(key);
@@ -180,11 +195,56 @@ rtems_interrupt_level key;
 
 	if ( b ) {
 		rtems_interrupt_disable(key);
-			*(rbuf_t**)b = frb;
-			frb = b;
-			lanIpBufAvail++;
+			if ( 0 == --b->buf.refcnt ) {
+				b->buf.next  = frb;
+				frb = b;
+				lanIpBufAvail++;
+			}
 		rtems_interrupt_enable(key);
 	}
+}
+
+static void refrbuf(rbuf_t *b)
+{
+rtems_interrupt_level key;
+
+	rtems_interrupt_disable(key);
+		b->buf.refcnt++;
+	rtems_interrupt_enable(key);
+}
+
+int
+lanIpBasicAddBufs(unsigned n)
+{
+rtems_interrupt_level key;
+void   *mem;
+rbuf_t *bufs;
+int     i,j;
+
+	if ( 0 == n ) {
+		n = NRBUFS;
+	}
+
+	if ( ! (mem = malloc(sizeof(rbuf_t)*(n+1))) )
+		return -1;
+
+	bufs = (rbuf_t*)RBUF_ALGN((uintptr_t)mem);
+
+	for ( i = 0; i < n - 1; i = j) {
+		j = i + 1;
+		bufs[i].buf.next   = &bufs[j];
+		bufs[i].buf.refcnt = 0;
+	}
+
+	bufs[i].buf.refcnt = 0;
+
+	rtems_interrupt_disable(key);
+		bufs[i].buf.next = frb;
+		frb              = bufs;
+		lanIpBufAvail   += n;
+	rtems_interrupt_enable(key);
+
+	return 0;	
 }
 
 #define ISBCST(ip,nm)  (((ip) & ~(nm)) == ~(nm))
@@ -211,7 +271,7 @@ typedef struct UdpSockRec_ {
 } UdpSockRec, *UdpSock;
 
 typedef struct UdpSockMsgRec_ {
-	LanIpPacketRec        *pkt;
+	rbuf_t               *pkt;
 	int                   len;
 } UdpSockMsgRec, *UdpSockMsg;
 
@@ -689,7 +749,7 @@ handleArp(rbuf_t **ppbuf, IpBscIf pd)
 {
 int			isreq = 0;
 rbuf_t		*p    = *ppbuf;
-IpArpRec	*pipa = &lpkt_arp(p);
+IpArpRec	*pipa = &lpkt_arp(&p->pkt);
 uint32_t    xx;
 
 
@@ -755,7 +815,7 @@ handleIP(rbuf_t **ppbuf, IpBscIf pd)
 {
 int          rval = 0, l, nbytes, i;
 rbuf_t		 *p = *ppbuf;
-IpHeaderRec  *pip = &lpkt_ip(p);
+IpHeaderRec  *pip = &lpkt_ip(&p->pkt);
 uint16_t	 dport;
 int			 isbcst = 0;
 LanUdpHeader hdr;
@@ -789,7 +849,7 @@ LanUdpHeader hdr;
 	switch ( pip->prot ) {
 		case 1 /* ICMP */:
 		{
-		IcmpHeaderRec *picmp = &lpkt_icmp(p);
+		IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
 
 			if ( sizeof(*p)-sizeof(*pip) - sizeof(EthHeaderRec) >= l ) {
 				NETDRV_READ_INCREMENTAL(pd, picmp, l);
@@ -802,15 +862,15 @@ LanUdpHeader hdr;
 					picmp->type = 0; /* ICMP REPLY */
 					picmp->csum = 0;
 					picmp->csum = ipcsum((uint8_t*)picmp, nbytes-sizeof(*pip));
-					lpkt_eth(p).type = htons(0x800); /* IP */
+					lpkt_eth(&p->pkt).type = htons(0x800); /* IP */
 
 					/* refresh peer's ARP entry */
 					if ( lanIpBscAutoRefreshARP ) {
-						arpPutEntry(pd, lpkt_ip(p).src, lpkt_eth(p).src, 0);
+						arpPutEntry(pd, lpkt_ip(&p->pkt).src, lpkt_eth(&p->pkt).src, 0);
 					}
 
-					src2dstIp(&lpkt_iphdr(p));
-					fillinSrcCsumIp(pd, &lpkt_iphdr(p));
+					src2dstIp(&lpkt_iphdr(&p->pkt));
+					fillinSrcCsumIp(pd, &lpkt_iphdr(&p->pkt));
 
 					NETDRV_SND_PACKET(pd, 0, 0, p, sizeof(EthHeaderRec) + nbytes);
 				}
@@ -820,7 +880,7 @@ LanUdpHeader hdr;
 
 		case 17 /* UDP */:
 		{
-		LanUdpHeader pudp = &lpkt_udphdr(p);
+		LanUdpHeader pudp = &lpkt_udphdr(&p->pkt);
 
 			/* UDP header is word aligned -> OK */
 			NETDRV_READ_INCREMENTAL(pd, &pudp->udp, sizeof(pudp->udp));
@@ -907,7 +967,7 @@ int
 lanIpProcessBuffer(IpBscIf pd, rbuf_t **pprb, int len)
 {
 rbuf_t         *prb = *pprb;
-EthHeaderRec   *pll = &lpkt_eth(prb);
+EthHeaderRec   *pll = &lpkt_eth(&prb->pkt);
 uint16_t        tt;
 
 	NETDRV_READ_INCREMENTAL(pd, prb, sizeof(*pll));
@@ -1346,7 +1406,7 @@ rtems_status_code sc;
 	_Thread_Disable_dispatch();
 	socks[sd].nbytes -= msg.len;
 	_Thread_Enable_dispatch();
-	return msg.pkt;
+	return &msg.pkt->pkt;
 }
 
 
@@ -1503,13 +1563,13 @@ LanUdpHeader h;
 void
 udpSockFreeBuf(LanIpPacketRec *b)
 {
-	relrbuf(b);
+	relrbuf((rbuf_t*)b);
 }
 
 LanIpPacketRec *
 udpSockGetBuf()
 {
-	return getrbuf();
+	return &getrbuf()->pkt;
 }
 
 int
