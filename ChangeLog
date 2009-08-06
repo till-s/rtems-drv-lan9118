@@ -1,4 +1,6 @@
 2009/08/06 (TS):
+ - drvUdpSock.c: clip transmitted payload to UDPPAYLOADSIZE, not LANPKTMAX!
+2009/08/06 (TS):
  - drvAmdEthIpBasic.c: since buffer pointer is adjusted by ETHERPADSZ
    must reduce buffer size by same amount.
 2009/08/06 (TS):

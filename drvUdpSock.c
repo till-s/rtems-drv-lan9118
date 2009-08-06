@@ -254,7 +254,7 @@ typedef struct {
 	if ( !d->peer.ipaddr || !d->peer.port )
 		return RTEMS_NOT_OWNER_OF_RESOURCE;
 
-	n = argp->count > LANPKTMAX ? LANPKTMAX : argp->count;
+	n = argp->count > UDPPAYLOADSIZE ? UDPPAYLOADSIZE : argp->count;
 
 	if ( SOCK_ISCONN & d->flags ) {
 		n =	udpSockSend( SOCK_SD(d->flags), argp->buffer, n );
