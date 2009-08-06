@@ -1,4 +1,9 @@
 2009/08/06 (TS):
+ - added 'e1k_lldrv.c' which contains low-level driver entry
+   points for intel e1000 chips. The file also implements
+   these entry points based on intel's e1000_api.h.
+   The driver is derived from 'if_em' (intel).
+2009/08/06 (TS):
  - renamed 'drvMveIpBasic.c' -> 'drvGnrIpBasic.c' and created a 
    'low-level driver' API. This allows for re-using this code
    for all NIC drivers that provide the same low-level API as
