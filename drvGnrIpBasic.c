@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <rtems/rtems_mii_ioctl.h>
 
-typedef struct mveth_drv_s_ *mveth_drv;
+typedef struct gnreth_drv_s_ *gnreth_drv;
 
 #define ETHERPADSZ sizeof(((EthHeaderRec*)0)->pad)
 #define ETHERHDRSZ (sizeof(EthHeaderRec) - ETHERPADSZ) 
@@ -17,11 +17,11 @@ struct IpBscIfRec_;
 	do {																	\
 		char *b = (char*)getrbuf();											\
 		if ( b ) {															\
-			mveth_drv mdrv = (mveth_drv)(pif)->drv_p;						\
+			gnreth_drv gdrv = (gnreth_drv)(pif)->drv_p;						\
 			int l_ = sizeof((pif)->arpreq) - ETHERPADSZ;					\
 			memcpy(b, &(pif)->arpreq.ll.dst, l_);							\
 			set_tpa((IpArpRec*)(b + ETHERHDRSZ), ipaddr);					\
-			if ( mve_send_buf_locked(mdrv, b, b, l_) <= 0 )					\
+			if ( gnr_send_buf_locked(gdrv, b, b, l_) <= 0 )					\
 				relrbuf((rbuf_t*)b);										\
 		}																	\
 	} while (0)
@@ -33,22 +33,23 @@ int
 NETDRV_SND_PACKET(struct IpBscIfRec_ *pif, void *phdr, int hdrsz, void *data, int dtasz);
 
 static inline int
-mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len);
+gnr_send_buf_locked(gnreth_drv gdrv, void *pbuf, void *data, int len);
 
 #define NETDRV_ENQ_BUFFER(pif, pbuf, nbytes)								\
 	do {																	\
 		char *b_ = (char*)pbuf + ETHERPADSZ;								\
 		int   l_ = (nbytes) - ETHERPADSZ;									\
-		mveth_drv mdrv = (mveth_drv)(pif)->drv_p;							\
+		gnreth_drv gdrv = (gnreth_drv)(pif)->drv_p;							\
 																			\
-		if ( mve_send_buf_locked(mdrv, pbuf, b_, l_) <= 0 )					\
+		if ( gnr_send_buf_locked(gdrv, pbuf, b_, l_) <= 0 )					\
 			relrbuf((rbuf_t*)pbuf);											\
 	} while (0)
 
 static inline void
 NETDRV_READ_ENADDR(struct IpBscIfRec_ *pif, uint8_t *buf);
 
-#define NETDRV_INCLUDE	<bsp/if_mve_pub.h>
+/*#define NETDRV_INCLUDE	<bsp/if_mve_pub.h>*/
+#define NETDRV_INCLUDE "gnreth_lldrv.h"
 
 /* RX buffers must be 64-bit aligned (8 byte)
  * However: SW cache flushing probably needs 32-bytes
@@ -80,8 +81,55 @@ NETDRV_READ_ENADDR(struct IpBscIfRec_ *pif, uint8_t *buf);
 
 #define IF_FLG_STOPPED	(1<<0)
 
-typedef struct mveth_drv_s_ {
-	struct mveth_private *mve_p;
+#if 0
+typedef struct IpBscLLDrv_ *LLDrv;
+typedef void               *LLDev;
+
+struct IpBscLLDrv_ {
+	LLDev        dev;
+	uint32_t     tx_irq_msk;
+	uint32_t     rx_irq_msk;
+	uint32_t     ln_irq_msk;
+	void    	*(*setup)(
+					int      unit,
+					rtems_id tid,
+               		void     (*cleanup_txbuf)(void*, void*, int),
+					void     *cleanup_txbuf_arg,
+					void     *(*alloc_rxbuf)(int*, unsigned long*),
+					void     (*consume_rxbuf)(void*, void*, int),
+					void     *consume_rxbuf_arg,
+					int      rx_ring_size,
+					int      tx_ring_size,
+					uint32_t irq_mask);
+	int     	(*detach)(void*);
+	void    	(*read_eaddr)(void *, unsigned char *);
+	void    	(*init_hw)(void*, int, unsigned char *);	
+	uint32_t    (*ack_irqs)(void*);
+	void        (*enb_irqs)(void*);
+	int         (*ack_ln_chg)(void*, int*);
+	int         (*swipe_tx)(void*);
+	int         (*swipe_rx)(void*);
+	int         (*send_buf)(void*, void*, void*, int);
+	int         (*med_ioctl)(void*, int, int*);
+} ipBscLLDrvMve = {
+	tx_irq_msk:  BSP_MVE_IRQ_TX,
+	rx_irq_msk:  BSP_MVE_IRQ_RX,
+	ln_irq_msk:  /* BSP_MVE_IRQ_LINK */ 0,
+	setup     :  (void*) BSP_mve_setup,
+	detach    :  (void*) BSP_mve_detach,
+	read_eaddr:  (void*) BSP_mve_read_eaddr,
+	init_hw   :  (void*) BSP_mve_init_hw,
+	ack_irqs  :  (void*) BSP_mve_ack_irqs,
+	enb_irqs  :  (void*) BSP_mve_enable_irqs,
+	ack_ln_chg:  (void*) BSP_mve_ack_link_chg,
+	swipe_tx  :  (void*) BSP_mve_swipe_tx,
+	swipe_rx  :  (void*) BSP_mve_swipe_rx,
+	send_buf  :  (void*) BSP_mve_send_buf,
+	med_ioctl :  (void*) BSP_mve_media_ioctl,
+};
+#endif
+
+typedef struct gnreth_drv_s_ {
 	IpBscIf              ipbif_p;
 	rtems_id             mutex;
 	int                  unit; /* zero based */
@@ -89,32 +137,33 @@ typedef struct mveth_drv_s_ {
 	rtems_id             tid;
 	int8_t               hasenaddr;
 	uint8_t              enaddr[6];
-} mveth_drv_s;
+	struct IpBscLLDrv_   lldrv;
+} gnreth_drv_s;
 
 #define DRVLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain( (drv)->mutex, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
 #define DRVUNLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_release( (drv)->mutex) )
 
 
 static inline int
-mve_send_buf_locked(mveth_drv mdrv, void *pbuf, void *data, int len)
+gnr_send_buf_locked(gnreth_drv gdrv, void *pbuf, void *data, int len)
 {
 int rval;
-	DRVLOCK(mdrv);
-		if ( (mdrv->flags & IF_FLG_STOPPED) ) {
+	DRVLOCK(gdrv);
+		if ( (gdrv->flags & IF_FLG_STOPPED) ) {
 			/* drop */
 			rval = 0;
 		} else
 		{
-			rval = BSP_mve_send_buf(mdrv->mve_p, pbuf, data, len);
+			rval = gdrv->lldrv.send_buf(gdrv->lldrv.dev, pbuf, data, len);
 		}
-	DRVUNLOCK(mdrv);
+	DRVUNLOCK(gdrv);
 	return rval;
 }
 
 int 
 NETDRV_SND_PACKET(IpBscIf pif, void *phdr, int hdrsz, void *data, int dtasz)
 {
-mveth_drv            mdrv = pif->drv_p;
+gnreth_drv            gdrv = pif->drv_p;
 char                 *b_ = (char*)getrbuf();
 char                 *p;
 int                  st;
@@ -129,7 +178,7 @@ int                  st;
 			p = b_ + ETHERPADSZ;
 
 
-			if ( (st = mve_send_buf_locked(mdrv, b_, p, l_)) <= 0 ) {
+			if ( (st = gnr_send_buf_locked(gdrv, b_, p, l_)) <= 0 ) {
 				/* If nothing was sent (packet dropped) don't report
 				 * an error but release the buffer.
 				 */
@@ -143,8 +192,8 @@ int                  st;
 
 static inline void NETDRV_READ_ENADDR(IpBscIf pif, uint8_t *buf)
 {
-mveth_drv drvhdl = (mveth_drv)pif->drv_p;
-	BSP_mve_read_eaddr(drvhdl->mve_p, buf);
+gnreth_drv drvhdl = (gnreth_drv)pif->drv_p;
+	drvhdl->lldrv.read_eaddr(drvhdl->lldrv.dev, buf);
 }
 
 static void
@@ -161,63 +210,71 @@ alloc_rxbuf(int *p_size, unsigned long *p_data_addr)
 	return (void*) *p_data_addr;
 }
 
-int drvMveIpBasicRxErrs = 0;
-int drvMveIpBasicRxDrop = 0;
+int drvGnrethIpBasicRxErrs  = 0;
+int drvGnrethIpBasicRxDrop  = 0;
 
 static void
 consume_rxbuf(void *buf, void *closure, int len)
 {
 rbuf_t      *b = buf;
-mveth_drv mdrv = closure;
+gnreth_drv gdrv = closure;
 
 	if ( !buf ) {
-		drvMveIpBasicRxDrop++;
+		drvGnrethIpBasicRxDrop++;
 		if ( len < 0 )
-			drvMveIpBasicRxErrs++;
+			drvGnrethIpBasicRxErrs++;
 		return;
 	}
 
-	lanIpProcessBuffer(mdrv->ipbif_p, &b, len);
+	lanIpProcessBuffer(gdrv->ipbif_p, &b, len);
 
 	relrbuf(b);
 }
 
 static void
-mdrv_cleanup(mveth_drv mdrv)
+gdrv_cleanup(gnreth_drv gdrv)
 {
-	if ( mdrv->mve_p ) {
-		BSP_mve_detach(mdrv->mve_p);
-		mdrv->mve_p = 0;
+	if ( gdrv->lldrv.dev ) {
+		gdrv->lldrv.detach(gdrv->lldrv.dev);
+		gdrv->lldrv.dev = 0;
 	}
-	if ( mdrv->mutex ) {
-		rtems_semaphore_delete(mdrv->mutex);
-		mdrv->mutex = 0;
+	if ( gdrv->mutex ) {
+		rtems_semaphore_delete(gdrv->mutex);
+		gdrv->mutex = 0;
 	}
-	if ( mdrv->tid ) {
-		rtems_task_delete(mdrv->tid);
-		mdrv->tid = 0;
+	if ( gdrv->tid ) {
+		rtems_task_delete(gdrv->tid);
+		gdrv->tid = 0;
 	}
 }
 
 LanIpBscDrv
 lanIpBscDrvCreate(int unit, uint8_t *enaddr)
 {
-mveth_drv             mdrv = 0;
+gnreth_drv             gdrv = 0;
 rtems_status_code     sc;
 int                   minu, maxu;
+uint32_t              irq_msk;
 
-	if ( ! (mdrv = calloc(1, sizeof(*mdrv))) ) {
+	if ( 0 == &drvGnrethIpBasicLLDrv || 0 == drvGnrethIpBasicLLDrv ) {
+		fprintf(stderr,"drvGnrethIpBasic: No low-level driver hooked\n");
 		return 0;
 	}
 
-	mdrv->flags |= IF_FLG_STOPPED;
+	if ( ! (gdrv = calloc(1, sizeof(*gdrv))) ) {
+		return 0;
+	}
 
-	/* Save ethernet addr. if given; the mve low-level driver
+	gdrv->flags |= IF_FLG_STOPPED;
+
+	gdrv->lldrv = *drvGnrethIpBasicLLDrv;
+
+	/* Save ethernet addr. if given; the low-level driver
 	 * is not yet ready to use it at this point
 	 */
 	if ( enaddr ) {
-		mdrv->hasenaddr = 1;
-		memcpy(mdrv->enaddr, enaddr, 6);
+		gdrv->hasenaddr = 1;
+		memcpy(gdrv->enaddr, enaddr, 6);
 	}
 
 	/* Create driver mutex */
@@ -227,10 +284,10 @@ int                   minu, maxu;
 				RTEMS_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY
 				| RTEMS_NO_PRIORITY_CEILING | RTEMS_LOCAL,
 				0,
-				&mdrv->mutex);
+				&gdrv->mutex);
 
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "drvMveIpBasic: unable to create driver mutex");
+		rtems_error(sc, "drvGnrethIpBasic: unable to create driver mutex");
 		goto egress;
 	}
 
@@ -241,10 +298,10 @@ int                   minu, maxu;
 				10000,
 				RTEMS_DEFAULT_MODES,
 				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
-				&mdrv->tid);
+				&gdrv->tid);
 
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "drvMveIpBasic: unable to create driver task");
+		rtems_error(sc, "drvGnrethIpBasic: unable to create driver task");
 		goto egress;
 	}
 
@@ -255,52 +312,64 @@ int                   minu, maxu;
 		minu = 1;
 		maxu = 3;
 	} else {
-		unit++;	/* mve units are 1-based, lanIpBasic units are 0 based */
+		unit++;	/* low-level driver units are 1-based, lanIpBasic units are 0 based */
 		minu = unit;
 		maxu = minu+1;
 	}
 
+	irq_msk  = 0;
+	irq_msk |= gdrv->lldrv.tx_irq_msk;
+	irq_msk |= gdrv->lldrv.rx_irq_msk;
+	irq_msk |= gdrv->lldrv.ln_irq_msk;
+
 	for ( unit=minu; unit < maxu; unit++ ) {
-		if ( (mdrv->mve_p = BSP_mve_setup( unit,
-								mdrv->tid,
-								cleanup_txbuf, mdrv,
+		if ( (gdrv->lldrv.dev = gdrv->lldrv.setup(unit,
+								gdrv->tid,
+								cleanup_txbuf, gdrv,
 								alloc_rxbuf,
-								consume_rxbuf, mdrv,
+								consume_rxbuf, gdrv,
 								RX_RING_SIZE, TX_RING_SIZE,
-								BSP_MVE_IRQ_TX | BSP_MVE_IRQ_RX /* | BSP_MVE_IRQ_LINK */ )) ) {
+								irq_msk)) ) {
 			/* SUCCESSFUL EXIT (unit found and initialized) */
-			fprintf(stderr,"drvMveIpBasic: using mve instance %u\n",unit);
-			mdrv->unit = unit - 1;
-			return mdrv;
+			fprintf(stderr,"drvGnrethIpBasic: using device instance %u\n",unit);
+			gdrv->unit = unit - 1;
+			return gdrv;
 		}
 	}
 	/* if we get here the requested unit was already busy */
 
 	sc = RTEMS_TOO_MANY;
-	rtems_error(sc, "drvMveIpBasic: no free low-level driver slot found");
+	rtems_error(sc, "drvGnrethIpBasic: no free low-level driver slot found");
 	/* fall through */
 
 egress:
 
-	mdrv_cleanup(mdrv);
-	free(mdrv);
+	gdrv_cleanup(gdrv);
+	free(gdrv);
 	return 0;
 }
 
-#define KILL_EVENT RTEMS_EVENT_4
+#define KILL_EVENT RTEMS_EVENT_7
 
 #ifndef SIOCGIFMEDIA
-/* BSP_mve_media_ioctl() aliases '0' to SIOCGIFMEDIA :-) */
+/* media_ioctl() aliases '0' to SIOCGIFMEDIA :-) */
 #define SIOCGIFMEDIA 0
 #endif
 
+LLDev
+drvGnrethLLDev(gnreth_drv gdrv)
+{
+	return gdrv->lldrv.dev;
+}
+
 void
-drvMveIpBasicTask(rtems_task_argument arg)
+drvGnrethIpBasicTask(rtems_task_argument arg)
 {
 IpBscIf               ipbif_p = (IpBscIf)arg;
-mveth_drv             mdrv    = lanIpBscIfGetDrv(ipbif_p);
-struct mveth_private  *mve_p  = mdrv->mve_p; 
-rtems_event_set       ev_mask = (1<<mdrv->unit) | KILL_EVENT;
+gnreth_drv            gdrv    = lanIpBscIfGetDrv(ipbif_p);
+LLDev                 lldev   = gdrv->lldrv.dev;
+LLDrv                 lldrv   = &gdrv->lldrv;
+rtems_event_set       ev_mask = (1<<gdrv->unit) | KILL_EVENT;
 rtems_event_set       evs;
 uint32_t              irqs;
 int                   media;
@@ -311,11 +380,11 @@ int                   media;
 	}
 #endif
 
-	BSP_mve_init_hw( mve_p, 0, mdrv->hasenaddr ? mdrv->enaddr : 0 );
+	lldrv->init_hw( lldev, 0, gdrv->hasenaddr ? gdrv->enaddr : 0 );
 
-	if ( 0 == BSP_mve_media_ioctl( mve_p, SIOCGIFMEDIA, &media ) ) {
+	if ( 0 == lldrv->med_ioctl( lldev, SIOCGIFMEDIA, &media ) ) {
 		if ( (IFM_LINK_OK & media) ) {
-			mdrv->flags &= ~IF_FLG_STOPPED;
+			gdrv->flags &= ~IF_FLG_STOPPED;
 		}
 	} else {
 		fprintf(stderr,"WARNING: unable to determine link state; may be unable to send\n");
@@ -324,30 +393,30 @@ int                   media;
 	do {
 		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
 
-		irqs = BSP_mve_ack_irqs(mve_p);
+		irqs = lldrv->ack_irqs(lldev);
 
-		if ( (irqs & BSP_MVE_IRQ_TX) ) {
-		DRVLOCK(mdrv);
+		if ( (irqs & lldrv->tx_irq_msk) ) {
+		DRVLOCK(gdrv);
 			/* cleanup_txbuf */
-			BSP_mve_swipe_tx(mve_p);
-		DRVUNLOCK(mdrv);
+			lldrv->swipe_tx(lldev);
+		DRVUNLOCK(gdrv);
 		}
-		if ( (irqs & BSP_MVE_IRQ_RX) ) {
+		if ( (irqs & lldrv->rx_irq_msk) ) {
 			/* alloc_rxbuf, consume_rxbuf */
-			BSP_mve_swipe_rx(mve_p);
+			lldrv->swipe_rx(lldev);
 		}
-		if ( (irqs & BSP_MVE_IRQ_LINK) ) {
+		if ( (irqs & lldrv->ln_irq_msk) ) {
 			/* propagate link change to serial port */
-		DRVLOCK(mdrv);
-			BSP_mve_ack_link_chg(mve_p, &media); /* propagate link change to serial port */
+		DRVLOCK(gdrv);
+			lldrv->ack_ln_chg(lldev, &media); /* propagate link change to serial port */
 			if ( (IFM_LINK_OK & media) ) {
-				mdrv->flags &= ~IF_FLG_STOPPED;
+				gdrv->flags &= ~IF_FLG_STOPPED;
 			} else {
-				mdrv->flags |=  IF_FLG_STOPPED;
+				gdrv->flags |=  IF_FLG_STOPPED;
 			}
-		DRVUNLOCK(mdrv);
+		DRVUNLOCK(gdrv);
 		}
-		BSP_mve_enable_irqs(mve_p);
+		lldrv->enb_irqs(lldev);
 	} while ( ! (evs & KILL_EVENT) );
 
 #ifdef DEBUG
@@ -357,11 +426,11 @@ int                   media;
 #endif
 
 	/* prevent this task from being deleted in cleanup routine */
-	mdrv->tid = 0;
+	gdrv->tid = 0;
 
-	mdrv_cleanup(mdrv);
+	gdrv_cleanup(gdrv);
 
-	free(mdrv);
+	free(gdrv);
 
 	rtems_task_delete(RTEMS_SELF);
 }
@@ -369,41 +438,41 @@ int                   media;
 int
 lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
 {
-mveth_drv           mdrv = lanIpBscIfGetDrv(ipbif_p);
+gnreth_drv           gdrv = lanIpBscIfGetDrv(ipbif_p);
 rtems_status_code   sc;
 rtems_task_priority op;
 
 	/* sanity check: has driver been attached to interface yet ? */
-	if ( !mdrv ) {
+	if ( !gdrv ) {
 		sc = RTEMS_NOT_DEFINED;
-		rtems_error(sc, "drvMveIpBasic: driver not attached to interface yet?");
+		rtems_error(sc, "drvGnrethIpBasic: driver not attached to interface yet?");
 		return sc;
 	}
 
 	/* sanity check: has driver already been started? */
-	if ( mdrv->ipbif_p ) {
+	if ( gdrv->ipbif_p ) {
 		sc = RTEMS_RESOURCE_IN_USE;
-		rtems_error(sc, "drvMveIpBasic: driver already started\n");
+		rtems_error(sc, "drvGnrethIpBasic: driver already started\n");
 		return sc;
 	}
 
 	if ( pri > 0 ) {
-		sc = rtems_task_set_priority(mdrv->tid, pri, &op);
+		sc = rtems_task_set_priority(gdrv->tid, pri, &op);
 		if ( RTEMS_SUCCESSFUL != sc ) {
-			rtems_error(sc,"drvMveIpBasic: unable to change driver task priority");
+			rtems_error(sc,"drvGnrethIpBasic: unable to change driver task priority");
 			return sc;
 		}
 	}
 
-	/* Link to IF; non-NULL -ness of the IF pointer in the mveth_drv struct
+	/* Link to IF; non-NULL -ness of the IF pointer in the gnreth_drv struct
 	 * also server as a flag that the task has been started.
 	 */
-	mdrv->ipbif_p = ipbif_p;
+	gdrv->ipbif_p = ipbif_p;
 
-	sc = rtems_task_start( mdrv->tid, drvMveIpBasicTask, (rtems_task_argument)ipbif_p);
+	sc = rtems_task_start( gdrv->tid, drvGnrethIpBasicTask, (rtems_task_argument)ipbif_p);
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "drvMveIpBasic: unable to start driver task");
-		mdrv->ipbif_p = 0; /* mark as not started */
+		rtems_error(sc, "drvGnrethIpBasic: unable to start driver task");
+		gdrv->ipbif_p = 0; /* mark as not started */
 	}
 
 	/* don't clean the driver struct; leave everything as it was on entry */
@@ -413,20 +482,20 @@ rtems_task_priority op;
 int
 lanIpBscDrvShutdown(LanIpBscDrv drv_p)
 {
-mveth_drv mdrv = drv_p;
+gnreth_drv gdrv = drv_p;
 
-	if ( !mdrv )
+	if ( !gdrv )
 		return 0;
 
-	if ( mdrv->ipbif_p ) {
+	if ( gdrv->ipbif_p ) {
 		/* Has already been started; driver task must cleanup */
-		rtems_event_send(mdrv->tid, KILL_EVENT);
+		rtems_event_send(gdrv->tid, KILL_EVENT);
 		/* hack: just wait instead of synchronizing */
 		rtems_task_wake_after(200);
 	} else {
 		/* Not started yet */
-		mdrv_cleanup(mdrv);
-		free(mdrv);
+		gdrv_cleanup(gdrv);
+		free(gdrv);
 	}
 	return 0;
 }
