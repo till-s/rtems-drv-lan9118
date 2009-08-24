@@ -47,8 +47,9 @@ struct IpBscIfRec_;
  * i.e., support for sending data from two non-contiguous areas.
  */
 static inline int 
-NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data, int dtasz);
+snd_packet_locked(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data, int dtasz);
 
+#define NETDRV_SND_PACKET snd_packet_locked
 /* Enqueue and send a buffer; in contrast to NETDRV_SND_PACKET() which
  * sends data out of arbitrary memory (and therefore always involves some
  * kind of copying) the buffer handed to NETDRV_ENQ_BUFFER() is a buffer
@@ -77,7 +78,7 @@ NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data
 
 /* Implement fwd-declared bits */
 static inline int 
-NETDRV_SND_PACKET(IpBscIf ipbif_p, void *phdr, int hdrsz, void *data, int dtasz)
+snd_packet_locked(IpBscIf ipbif_p, void *phdr, int hdrsz, void *data, int dtasz)
 {
 DrvLan9118_tps drv_p = (DrvLan9118_tps)ipbif_p->drv_p;
 int ltot;

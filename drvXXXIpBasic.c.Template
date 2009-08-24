@@ -65,9 +65,16 @@ struct IpBscIfRec_;
  * This shows how a macro can alternatively be a inline routine.
  * Do fwd. declaration here and provide implementation after inclusion
  * of "lanIpBasic.c" so that internal features will be available.
+ *
+ * NOTE: this entry point is deprecated for chips which are not
+ *       FIFO based but do their own DMA. Such chips should only
+ *       implement NETDRV_ENQ_BUFFER and leave NETDRV_SND_PACKET
+ *       *undefined*
  */
+/* all-capital NETDRV_SND_PACKET MUST be a macro */
+#define NETDRV_SND_PACKET netdrv_snd_packet
 static inline int 
-NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data, int dtasz);
+netdrv_snd_packet(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data, int dtasz);
 
 /* Enqueue and send a buffer; in contrast to NETDRV_SND_PACKET() which
  * sends data out of arbitrary memory (and therefore always involves some
@@ -97,7 +104,7 @@ NETDRV_SND_PACKET(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data
 
 /* Implement fwd-declared bits */
 static inline int 
-NETDRV_SND_PACKET(IpBscIf ipbif_p, void *phdr, int hdrsz, void *data, int dtasz)
+netdrv_snd_packet(IpBscIf ipbif_p, void *phdr, int hdrsz, void *data, int dtasz)
 {
 DrvXXX drv_p = (DrvXXX)ipbif_p->drv_p;
 

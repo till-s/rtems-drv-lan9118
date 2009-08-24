@@ -1,4 +1,15 @@
 2009/08/24 (TS):
+ - drvLan9118IpBasic.c, drvXXXIpBasic.c.Template: NETDRV_SND_PACKET must
+   now be a macro. Renamed inline function to use all-lower-case letters
+   and defined NETDRV_SND_PACKET.
+
+2009/08/24 (TS):
+ - drvGnrIpBasic.c:
+    o Removed deprecated NETDRV_SND_PACKET().
+    o Removed side-effects from assert() statements. Use new
+      mutex_lock(), mutex_unloc() primitives from lanIpBasic.c
+  
+2009/08/24 (TS):
  - drvAmdEthIpBasic.c:
     o Removed deprecated NETDRV_SND_PACKET().
     o Removed side-effects from assert() statements. Use new
