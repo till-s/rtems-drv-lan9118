@@ -29,9 +29,6 @@ struct IpBscIfRec_;
 #define NETDRV_READ_INCREMENTAL(pif, ptr, nbytes)							\
 	do {} while (0)
 
-static inline int 
-NETDRV_SND_PACKET(struct IpBscIfRec_ *pif, void *phdr, int hdrsz, void *data, int dtasz);
-
 static inline int
 amd_send_buf_locked(amdeth_drv mdrv, void *pbuf, void *data, int len);
 
@@ -89,8 +86,8 @@ typedef struct amdeth_drv_s_ {
 	rbuf_t     *spare;
 } amdeth_drv_s;
 
-#define DRVLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain( (drv)->mutex, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
-#define DRVUNLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_release( (drv)->mutex) )
+#define DRVLOCK(drv)   mutex_lock((drv)->mutex)
+#define DRVUNLOCK(drv) mutex_unlock((drv)->mutex)
 
 
 static inline int
@@ -114,32 +111,6 @@ EtherHeader dummyh;
 	return rval;
 }
 
-static inline int 
-NETDRV_SND_PACKET(struct IpBscIfRec_ *pif, void *phdr, int hdrsz, void *data, int dtasz)
-{
-amdeth_drv            mdrv = pif->drv_p;
-char                 *b_ = (char*)getrbuf();
-char                 *p;
-
-		if ( (p=b_) ) {
-			int l_ = hdrsz + dtasz - ETHERPADSZ;
-			if ( phdr ) {
-				memcpy(p, phdr, hdrsz);
-				p += hdrsz;
-			}
-			memcpy(p, data, dtasz);
-			p = b_ + ETHERPADSZ;
-
-
-			if ( amd_send_buf_locked(mdrv, b_, p, l_) ) {
-				relrbuf((rbuf_t*)b_);
-				return -ENOSPC;
-			}
-			return dtasz;
-		}
-		return -ENOMEM;
-}
-
 static inline void NETDRV_READ_ENADDR(struct IpBscIfRec_ *ipbif_p, uint8_t *buf)
 {
 amdeth_drv drvhdl = (amdeth_drv)ipbif_p->drv_p;
@@ -148,6 +119,23 @@ EtherHeaderRec h;
 	memcpy(buf, h.src, sizeof(h.src));
 }
 
+static inline void
+NETDRV_MC_FILTER_ADD(struct IpBscIfRec_ *ipbif_p, uint8_t *macaddr)
+{
+amdeth_drv drvhdl = (amdeth_drv)ipbif_p->drv_p;
+	DRVLOCK( drvhdl );
+		amdEthMcFilterAdd( drvhdl->mp, macaddr );
+	DRVUNLOCK( drvhdl );
+}
+
+static inline void
+NETDRV_MC_FILTER_DEL(struct IpBscIfRec_ *ipbif_p, uint8_t *macaddr)
+{
+amdeth_drv drvhdl = (amdeth_drv)ipbif_p->drv_p;
+	DRVLOCK( drvhdl );
+		amdEthMcFilterDel( drvhdl->mp, macaddr );
+	DRVUNLOCK( drvhdl );
+}
 
 #define KILL_EVENT RTEMS_EVENT_4
 #define ALL_EVENTS (RTEMS_EVENT_0 | RTEMS_EVENT_1 | KILL_EVENT)
@@ -273,7 +261,7 @@ amdeth_drv            mdrv = 0;
 	mdrv->mutex = 0;
 
 	if ( RTEMS_SUCCESSFUL != rtems_semaphore_create(
-								rtems_build_name('m','v','e','L'),
+								rtems_build_name('a','m','d','L'),
 								1,
 								RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
 								0,

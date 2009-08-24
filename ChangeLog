@@ -1,3 +1,11 @@
+2009/08/24 (TS):
+ - drvAmdEthIpBasic.c:
+    o Removed deprecated NETDRV_SND_PACKET().
+    o Removed side-effects from assert() statements. Use new
+      mutex_lock(), mutex_unloc() primitives from lanIpBasic.c
+    o Added NETDRV_MC_FILTER_ADD(), NETDRV_MC_FILTER_DEL().
+    o Fixed typo: Changed driver mutex name from 'mveL' -> 'amdL'.
+   
 2009/08/06 (TS):
  - lanIpProto.h, lanIpBasic.c: Fix packet size to true ethernet limit;
    separated packet size from rbuf alignment and size. Padding for
