@@ -45,6 +45,12 @@ amd_send_buf_locked(amdeth_drv mdrv, void *pbuf, void *data, int len);
 static inline void
 NETDRV_READ_ENADDR(struct IpBscIfRec_ *ipbif_p, uint8_t *buf);
 
+static inline void
+NETDRV_MC_FILTER_ADD(struct IpBscIfRec_ *ipbif_p, uint8_t *macaddr);
+
+static inline void
+NETDRV_MC_FILTER_DEL(struct IpBscIfRec_ *ipbif_p, uint8_t *macaddr);
+
 #define NETDRV_INCLUDE	<amdeth.h>
 
 /* No alignment req. on RX buffers, AFAIK.
@@ -86,8 +92,11 @@ typedef struct amdeth_drv_s_ {
 	rbuf_t     *spare;
 } amdeth_drv_s;
 
+static inline void mutex_lock(rtems_id);
+static inline void mutex_unlk(rtems_id);
+
 #define DRVLOCK(drv)   mutex_lock((drv)->mutex)
-#define DRVUNLOCK(drv) mutex_unlock((drv)->mutex)
+#define DRVUNLOCK(drv) mutex_unlk((drv)->mutex)
 
 
 static inline int
