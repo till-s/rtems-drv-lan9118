@@ -29,9 +29,6 @@ struct IpBscIfRec_;
 #define NETDRV_READ_INCREMENTAL(pif, ptr, nbytes)							\
 	do {} while (0)
 
-int 
-NETDRV_SND_PACKET(struct IpBscIfRec_ *pif, void *phdr, int hdrsz, void *data, int dtasz);
-
 static inline int
 gnr_send_buf_locked(gnreth_drv gdrv, void *pbuf, void *data, int len);
 
@@ -140,8 +137,8 @@ typedef struct gnreth_drv_s_ {
 	struct IpBscLLDrv_   lldrv;
 } gnreth_drv_s;
 
-#define DRVLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_obtain( (drv)->mutex, RTEMS_WAIT, RTEMS_NO_TIMEOUT) )
-#define DRVUNLOCK(drv) assert( RTEMS_SUCCESSFUL == rtems_semaphore_release( (drv)->mutex) )
+#define DRVLOCK(drv)   mutex_lock( (drv)->mutex )
+#define DRVUNLOCK(drv) mutex_unlock( (drv)->mutex )
 
 
 static inline int
@@ -158,36 +155,6 @@ int rval;
 		}
 	DRVUNLOCK(gdrv);
 	return rval;
-}
-
-int 
-NETDRV_SND_PACKET(IpBscIf pif, void *phdr, int hdrsz, void *data, int dtasz)
-{
-gnreth_drv            gdrv = pif->drv_p;
-char                 *b_ = (char*)getrbuf();
-char                 *p;
-int                  st;
-
-		if ( (p=b_) ) {
-			int l_ = hdrsz + dtasz - ETHERPADSZ;
-			if ( phdr ) {
-				memcpy(p, phdr, hdrsz);
-				p += hdrsz;
-			}
-			memcpy(p, data, dtasz);
-			p = b_ + ETHERPADSZ;
-
-
-			if ( (st = gnr_send_buf_locked(gdrv, b_, p, l_)) <= 0 ) {
-				/* If nothing was sent (packet dropped) don't report
-				 * an error but release the buffer.
-				 */
-				relrbuf((rbuf_t*)b_);
-				return st < 0 ? -ENOSPC : 0;
-			}
-			return dtasz;
-		}
-		return -ENOMEM;
 }
 
 static inline void NETDRV_READ_ENADDR(IpBscIf pif, uint8_t *buf)
