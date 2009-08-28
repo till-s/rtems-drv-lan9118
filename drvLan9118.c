@@ -59,6 +59,20 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.30  2008/10/17 22:38:17  strauman
+		 - cleaned-up and documented the 'setup' api, i.e., routines the drivers
+		   must provide so that they can be attached/detached to/from the stack,
+		   started and shutdown etc.
+		 - removed EEPROM access from lanIpBasicTest API; this is only relevant
+		   for the lan9118 where we couldn't read EEPROM after initializing the
+		   device. We now read the 9118's EEPROM into a ram-shadow buffer
+		   when we start the device and transparently provide cached data
+		   to the user.
+		 - do not access IP addresses inside of ARP packets as 32-bit entities
+		   because they are not properly aligned. Provided helper inline routines
+		   to do this (lanIpBasic.c).
+		 - merged lanIpBscIfCreate + lanIpBscIfInit -> new API lanIpBscIfCreate().
+		
 		Revision 1.29  2008/10/16 23:55:51  strauman
 		 - drvLan9118Shutdown(): ignore NULL argument and do nothing.
 		
@@ -580,6 +594,8 @@ struct DrvLan9118_ts_;
 #define TXLOCK(plan_ps)		assert( !rtems_semaphore_obtain((plan_ps)->tmutx, RTEMS_WAIT, RTEMS_NO_TIMEOUT))
 #define TXUNLOCK(plan_ps)	assert( !rtems_semaphore_release((plan_ps)->tmutx) )
 
+#define NUM_MC_HASHES		64
+
 typedef struct DrvLan9118_ts_ {
 	uint32_t			base;
 	uint32_t			int_msk;
@@ -598,7 +614,9 @@ typedef struct DrvLan9118_ts_ {
 	void				*phy_cb_arg_p;
 	EthHeaderRec		ebcst_s;
 	struct {
-		uint32_t	rxp;
+		uint32_t	rxu;
+		uint32_t	rxm;
+		uint32_t	rxb;
 		uint32_t	txp;
 		uint32_t	rwt;
 		uint32_t	rxe;
@@ -615,7 +633,8 @@ typedef struct DrvLan9118_ts_ {
 		uint32_t	tool;
 		uint32_t	lcol;
 		uint32_t	csum;
-	} 					stats_s;
+	} 				stats_s;
+	uint16_t			mc_refcnt[NUM_MC_HASHES];
 } DrvLan9118_ts;
 
 /* Forward and extern decl. */
@@ -1277,7 +1296,7 @@ rtems_status_code sc;
 	wr9118Reg(plan_ps->base, HW_CFG, rd9118Reg(plan_ps->base, HW_CFG) | HW_CFG_SF);
 
 	/* Setup the MAC but don't start the receiver */
-	macCsrWrite(plan_ps, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
+	macCsrWrite(plan_ps, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | MAC_CR_HPFILT | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
 
 	if ( enaddr_pa ) {
 		tmp = (enaddr_pa[5]<<8) | enaddr_pa[4];
@@ -1287,6 +1306,7 @@ rtems_status_code sc;
 		}
 		macCsrWrite(plan_ps, ADDRL, tmp);
 	}
+	drvLan9118McFilterClear(plan_ps);
 
 	/* Setup the PHY */
 
@@ -1410,7 +1430,9 @@ uint8_t ena[6];
 	drvLan9118ReadEnaddr(plan_ps, ena);
 	fprintf(f_p,"DrvLan9118_tps interface [%02X:%02X:%02X:%02X:%02X:%02X] statistics:\n",
 		ena[0], ena[1], ena[2], ena[3], ena[4], ena[5]);
-	fprintf(f_p,"  Packets received: %lu\n", plan_ps->stats_s.rxp);
+	fprintf(f_p,"  Unicast   recvd.: %lu\n", plan_ps->stats_s.rxu);
+	fprintf(f_p,"  Broadcast recvd.: %lu\n", plan_ps->stats_s.rxb);
+	fprintf(f_p,"  Multicast recvd.: %lu\n", plan_ps->stats_s.rxm);
 	fprintf(f_p,"  Packets sent    : %lu\n", plan_ps->stats_s.txp);
 	fprintf(f_p,"  Oversized packets received (RX watchdog timout): %lu\n", plan_ps->stats_s.rwt);
 	fprintf(f_p,"  Receiver errors : %lu\n", plan_ps->stats_s.rxe);
@@ -1679,7 +1701,13 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 						maxFFDDelay = dly;
 #endif
 				}
-				plan_ps->stats_s.rxp++;
+				if ( ( RXSTS_MCST_FRAME & rx_sts ) ) {
+					plan_ps->stats_s.rxm++;
+				} else if ( (RXSTS_BCST & rx_sts) ) {
+					plan_ps->stats_s.rxb++;
+				} else {
+					plan_ps->stats_s.rxu++;
+				}
 			}
 			/* at least 135ns delay after reading STS_FIFO - this is probably
 			 * burnt by what happened up to here but we have to make sure...
@@ -1996,4 +2024,88 @@ struct in_addr	sa;
 	}
 bail:
 		return len;
+}
+
+void
+drvLan9118McFilterClear(DrvLan9118_tps plan_ps)
+{
+int i;
+	REGLOCK(plan_ps);
+		macCsrWrite(plan_ps, HASHH, 0);
+		macCsrWrite(plan_ps, HASHL, 0);
+		for ( i=0; i<NUM_MC_HASHES; i++ ) {
+			plan_ps->mc_refcnt[i] = 0;
+		}
+	REGUNLOCK(plan_ps);
+}
+
+static int
+mc_addr_valid(uint8_t *enaddr)
+{
+static const char bcst[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	return ( (0x01 & enaddr[0]) && memcmp(enaddr, bcst, sizeof(bcst)) );
+}
+
+static uint32_t
+mc_hash(uint8_t *enaddr)
+{
+uint32_t crc = 0xffffffff;
+int      i,j;
+#define CRCPOLY_LE 0xedb88320
+	for ( j=0; j<6; j++) {
+		crc ^= enaddr[j];
+		for ( i=0; i<8; i++ ) {
+			crc = (crc>>1) ^ ( (crc & 1) ? CRCPOLY_LE : 0 );
+		}
+	}
+	/* bit-reverse; this is not exactly documented
+	 * but other chips do the same thing...
+	 * 
+	 * We only want the upper-most bits of the end-result.
+	 * Hence, it is enough to bit-reverse the least-significant
+	 * byte (which will be the MSB after bit-reversal).
+	 */
+	crc = ((crc&0x0f) << 4) | ((crc&0xf0) >> 4);
+	crc = ((crc&0x33) << 2) | ((crc&0xcc) >> 2);
+	crc = ((crc&0x55) << 1) | ((crc&0xaa) >> 1);
+	/* now strip the 2 lower-bits */
+	return (crc >> 2);
+}
+
+void
+drvLan9118McFilterAdd(DrvLan9118_tps plan_ps, uint8_t *mac_addr)
+{
+uint32_t hash;
+uint32_t off;
+uint32_t val;
+	if ( ! mc_addr_valid(mac_addr) )
+		return;
+	hash = mc_hash(mac_addr);
+	REGLOCK(plan_ps);
+	if ( 0 == plan_ps->mc_refcnt[hash]++ ) {
+		off  = hash > 31 ? HASHH : HASHL;
+		val  = macCsrRead(plan_ps, off);
+		val |= (1<<(hash & 31));
+		macCsrWrite(plan_ps, off, val);
+	}
+	REGUNLOCK(plan_ps);
+}
+
+void
+drvLan9118McFilterDel(DrvLan9118_tps plan_ps, uint8_t *mac_addr)
+{
+uint32_t hash;
+uint32_t off;
+uint32_t val;
+	if ( ! mc_addr_valid(mac_addr) )
+		return;
+	hash = mc_hash(mac_addr);
+	REGLOCK(plan_ps);
+	if ( plan_ps->mc_refcnt[hash] > 0 && 0 == --plan_ps->mc_refcnt[hash] ) {
+		off  = hash > 31 ? HASHH : HASHL;
+		val  = macCsrRead(plan_ps, off);
+		val &= ~(1<<(hash & 31));
+		macCsrWrite(plan_ps, off, val);
+	}
+	REGUNLOCK(plan_ps);
 }

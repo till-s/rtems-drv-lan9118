@@ -1,3 +1,26 @@
+2009/08/27 (TS):
+ - drvLan9118.h, drvLan9118.c, drvLan9118IpBasic.c: Added support for
+   multicast.
+
+2009/08/24 (TS):
+ - e1k_lldrv.c:
+    o added 'e1000_mta_clr()' routine which is analogous to intel driver's
+      'e1000_mta_set()' and can be used to reset an individual bit in the
+      multicast filter. This routine might need to be updated if a new
+	  intel driver version is ported.
+    o added multicast support (drv_e1k_mcast_filter_clear(),
+      drv_e1k_mcast_filter_accept_add(), drv_e1k_mcast_filter_accept_del()).	
+    o added multicast filter hooks to low-level driver entry point table.
+ - mve_lldrv.c: added multicast filter hooks to low-level driver entry point
+   table.
+ - gnreth_lldrv.h: added multicast filter hooks to low-level driver entry
+   point table.
+ - drvGnrIpBasic.c: added NETDRV_MC_FILTER_ADD(), NETDRV_MC_FILTER_DEL()
+   using multicast filter hooks from low-level driver table.
+ - drvLan9118.h, drvLan9118.c: added new entry points drvLan9118McFilterClear(),
+   drvLan9118McFilterAdd() and drvLan9118McFilterDel().
+ - drvLan9118IpBasic.c: defined NETDRV_MC_FILTER_ADD(), NETDRV_MC_FILTER_DEL()
+
 2009/08/24 (TS):
  - drvLan9118IpBasic.c, drvXXXIpBasic.c.Template: NETDRV_SND_PACKET must
    now be a macro. Renamed inline function to use all-lower-case letters

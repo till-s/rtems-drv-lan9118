@@ -60,15 +60,21 @@ snd_packet_locked(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data
  * The driver for a DMA-less controller may just call NETDRV_SND_PACKET()
  * (copy+send buffer) and release the buffer.
  */
-#define NETDRV_ENQ_BUFFER(ipbif_p, pbuf, nbytes)							\
+#define NETDRV_ENQ_BUFFER(ipbif_p, pbuf, nbytes)						\
 	do {																\
-		NETDRV_SND_PACKET((ipbif_p), 0, 0, pbuf, nbytes);					\
+		NETDRV_SND_PACKET((ipbif_p), 0, 0, pbuf, nbytes);				\
 		relrbuf(pbuf);													\
 	} while (0)
 
 /* Read MAC address from device/driver into a buffer */
-#define NETDRV_READ_ENADDR(ipbif_p, buf)									\
+#define NETDRV_READ_ENADDR(ipbif_p, buf)								\
 	drvLan9118ReadEnaddr((DrvLan9118_tps)(ipbif_p->drv_p), (buf))
+
+#define NETDRV_MC_FILTER_ADD(ipbif_p, macaddr)							\
+	drvLan9118McFilterAdd((DrvLan9118_tps)((ipbif_p)->drv_p), (macaddr))
+
+#define NETDRV_MC_FILTER_DEL(ipbif_p, macaddr)							\
+	drvLan9118McFilterDel((DrvLan9118_tps)((ipbif_p)->drv_p), (macaddr))
 
 /* Driver header name with angle brackets e.g., <drvXXX.h> */
 #define NETDRV_INCLUDE	<drvLan9118.h>

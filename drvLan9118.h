@@ -161,6 +161,26 @@ drvLan9118Setup(const uint8_t *enaddr_pa, uint32_t flags);
 void
 drvLan9118ReadEnaddr(DrvLan9118_tps plan_ps, uint8_t *buf_pa);
 
+/* Clear Multicast Address Filter
+ */
+void
+drvLan9118McFilterClear(DrvLan9118_tps plan_ps);
+
+/* Add a MAC address to (imperfect) multicast filter.
+ * A reference-count is kept so that the same address
+ * can be added multiple times.
+ */
+void
+drvLan9118McFilterAdd(DrvLan9118_tps plan_ps, uint8_t *mac_addr);
+
+/* Remove a MAC address from (imperfect) multicast filter.
+ * The address is really only removed if the reference count 
+ * drops to zero.
+ */ 
+void
+drvLan9118McFilterDel(DrvLan9118_tps plan_ps, uint8_t *mac_addr);
+
+
 /* The 'sts' word passed to and the return value of the various callbacks
  * have the following meaning:
  *
