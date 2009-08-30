@@ -1,3 +1,7 @@
+2009/08/29 (TS):
+ - drvLan9118.c: create a semaphore and block until driver task exits
+   when shutting-down the driver.
+
 2009/08/27 (TS):
  - drvLan9118.h, drvLan9118.c, drvLan9118IpBasic.c: Added support for
    multicast.

@@ -59,6 +59,11 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.31  2009/08/28 03:36:24  strauman
+		2009/08/27 (TS):
+		 - drvLan9118.h, drvLan9118.c, drvLan9118IpBasic.c: Added support for
+		   multicast.
+		
 		Revision 1.30  2008/10/17 22:38:17  strauman
 		 - cleaned-up and documented the 'setup' api, i.e., routines the drivers
 		   must provide so that they can be attached/detached to/from the stack,
@@ -604,6 +609,7 @@ typedef struct DrvLan9118_ts_ {
 	rtems_id			tmutx;
 	rtems_id			tid;
 	rtems_id			txq;
+	rtems_id            sync;
 	DrvLan9118CB_tpf	rx_cb_pf;
 	void				*rx_cb_arg_p;
 	DrvLan9118CB_tpf	tx_cb_pf;
@@ -1316,7 +1322,6 @@ rtems_status_code sc;
 	/* enable & start autonegotiation (also select 100 FD as a hint in case autoneg is switched off) */
 	drvLan9118_mdio_w(0, plan_ps, MII_BMCR, BMCR_SPEED0 | BMCR_AUTOEN | BMCR_FDX | BMCR_STARTNEG);
 
-
 	return plan_ps;
 }
 
@@ -1376,7 +1381,7 @@ rtems_status_code 	sc;
 	
 	sc = rtems_task_start(tid, drvLan9118Daemon, (rtems_task_argument)plan_ps);
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc,"drvLan9118; unable to start task\n");
+		rtems_error(sc,"drvLan9118: unable to start task\n");
 		rtems_task_delete(tid);
 		plan_ps->tid = 0;
 		return -1;
@@ -1390,16 +1395,45 @@ rtems_status_code 	sc;
 void
 drvLan9118Shutdown(DrvLan9118_tps plan_ps)
 {
+rtems_status_code sc;
 
 	if ( !plan_ps )
 		return;
 
 	drvLan9118IrqDisable();
 
-	if ( plan_ps->tid )
+	if ( plan_ps->tid ) {
+
+		sc = rtems_semaphore_create(
+				rtems_build_name('l', 'a', 'n', 's'),
+				0,
+				RTEMS_SIMPLE_BINARY_SEMAPHORE,
+				0,
+				& plan_ps->sync
+				);
+
+		if ( RTEMS_SUCCESSFUL != sc ) {
+			rtems_error(sc, "drvLan9118: unable to create sync semaphore; not synchronizing termination\n");
+		}
+
 		rtems_event_send(plan_ps->tid, KILL_EVENT);
-	plan_ps->tid = 0;
-	rtems_task_wake_after( 20 );
+
+		if ( plan_ps->sync ) {
+
+			sc = rtems_semaphore_obtain(plan_ps->sync, RTEMS_WAIT, 20);
+
+			if ( RTEMS_SUCCESSFUL == sc ) {
+				rtems_task_delete(plan_ps->tid);
+			} else {
+				rtems_error(sc, "drvLan9118: unable to synchronize with driver task; may leak resources!\n");
+			}
+		} else {
+			rtems_task_wake_after(20);
+		}
+
+		plan_ps->tid            = 0;
+
+	}
 
 	plan_ps->rx_cb_pf		= 0;
 	plan_ps->rx_cb_arg_p	= 0;
@@ -1418,7 +1452,7 @@ drvLan9118Shutdown(DrvLan9118_tps plan_ps)
 	if ( plan_ps->txq )
 		rtems_message_queue_delete(plan_ps->txq);
 	plan_ps->txq  = 0;
-	BSP_removeVME_isr( LAN9118_VECTOR, lan9118isr, 0 );
+	BSP_removeVME_isr(LAN9118_VECTOR, lan9118isr, 0);
 }
 
 int
@@ -1778,7 +1812,12 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 		wr9118Reg(base, INT_STS, int_sts);
 		drvLan9118IrqEnable();
 	}
-	rtems_task_delete(RTEMS_SELF);
+	if ( plan_ps->sync ) {
+		rtems_semaphore_release(plan_ps->sync);
+		rtems_task_suspend(RTEMS_SELF);
+	} else {
+		rtems_task_delete(RTEMS_SELF);
+	}
 }
 
 void
