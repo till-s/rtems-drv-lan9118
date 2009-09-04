@@ -10,36 +10,32 @@ typedef struct amdeth_drv_s_ *amdeth_drv;
 
 /* fwd decl of interface struct */
 struct IpBscIfRec_;
+union  rbuf_;
 
 
 #define NETDRV_ATOMIC_SEND_ARPREQ(pif, ipaddr)								\
 	do {																	\
-		char *b = (char*)getrbuf();											\
+		rbuf_t *b = getrbuf();												\
 		if ( b ) {															\
 			amdeth_drv mdrv = (amdeth_drv)(pif)->drv_p;						\
-			int l_ = sizeof((pif)->arpreq) - ETHERPADSZ;					\
-			memcpy(b, &(pd)->arpreq, sizeof((pif)->arpreq));				\
-			set_tpa((IpArpRec*)(b+sizeof(EthHeaderRec)), ipaddr);           \
-			memcpy(((LanArp)b)->arp.tpa, &ipaddr, sizeof(ipaddr));			\
-			if ( amd_send_buf_locked(mdrv, b, b+ETHERPADSZ, l_) )			\
-				relrbuf((rbuf_t*)b);										\
+			int l_ = sizeof((pif)->arpreq);									\
+			memcpy(&b->pkt, &(pd)->arpreq, sizeof((pif)->arpreq));			\
+			set_tpa( &lpkt_arp( &b->pkt ), ipaddr);							\
+			memcpy( lpkt_arp( &b->pkt ).tpa, &ipaddr, sizeof(ipaddr) );		\
+			amd_send_buf_locked(mdrv, 0, 0, b, l_);							\
 		}																	\
 	} while (0)
 
 #define NETDRV_READ_INCREMENTAL(pif, ptr, nbytes)							\
 	do {} while (0)
 
-static inline int
-amd_send_buf_locked(amdeth_drv mdrv, void *pbuf, void *data, int len);
+static inline void
+amd_send_buf_locked(amdeth_drv mdrv, union rbuf_ *hbuf, int hlen, union rbuf_ *dbuf, int dlen);
 
-#define NETDRV_ENQ_BUFFER(pif, pbuf, nbytes)								\
-	do {																	\
-		char *b_ = (char*)pbuf + ETHERPADSZ;								\
-		int   l_ = (nbytes) - ETHERPADSZ;									\
-		amdeth_drv mdrv = (amdeth_drv)(pif)->drv_p;							\
-																			\
-		if ( amd_send_buf_locked(mdrv, pbuf, b_, l_) )						\
-			relrbuf((rbuf_t*)pbuf);											\
+#define NETDRV_ENQ_BUFFER(pif, pd, dl)										\
+	do {                                                                    \
+		amdeth_drv adrv = (amdeth_drv)(pif)->drv_p;							\
+		amd_send_buf_locked(adrv, 0, 0, (pd), (dl));						\
 	} while (0)
 
 static inline void
@@ -90,34 +86,46 @@ typedef struct amdeth_drv_s_ {
 	AmdEthDev  mp;
 	rtems_id   mutex;
 	rbuf_t     *spare;
+	rtems_id   tid;
 } amdeth_drv_s;
-
-static inline void mutex_lock(rtems_id);
-static inline void mutex_unlk(rtems_id);
 
 #define DRVLOCK(drv)   mutex_lock((drv)->mutex)
 #define DRVUNLOCK(drv) mutex_unlk((drv)->mutex)
 
-
-static inline int
-amd_send_buf_locked(amdeth_drv mdrv, void *pbuf, void *data, int len)
+static inline void
+amd_send_buf_locked(amdeth_drv mdrv, rbuf_t *hbuf, int hlen, rbuf_t *dbuf, int dlen)
 {
-int rval;
-EtherHeader dummyh;
+int   st,  l1;
+void *b0, *b1;
+rbuf_t    *hd;
 
-	assert( (uintptr_t)data - (uintptr_t)pbuf == ETHERPADSZ );
+	if ( hbuf ) {
+		/* driver assumes UDP header */
+		assert( hlen == sizeof(LanUdpHeaderRec) );
+		b0 = (void*)&hbuf->pkt + ETHERPADSZ;
+		l1 = dlen;
+		/* chain bufs together */
+		hbuf->buf.next = dbuf;
+	} else {
+		b0 = AMDETH_TX_HEADER_NONE;
+		b1 = (void*)&dbuf->pkt + ETHERPADSZ;
+		l1 = dlen - ETHERPADSZ;
+	}
+
 	DRVLOCK(mdrv);
-		/* The chip doesn't seem to like zero-length descriptors so
-		 * we pass the header in separately...
-		 */
-		dummyh = (EtherHeader)data;
-		data  += 14;
-		rval   = amdEthSendPacketSwp( mdrv->mp, dummyh, &data, len - 14 );
-		if ( !rval && data ) {
-			relrbuf((rbuf_t*)((char*)data - ETHERPADSZ));
+		st = amdEthSendPacketSwp( mdrv->mp, b0, &b1, l1 );
+		if ( st ) {
+			relrbuf(hbuf);
+			relrbuf(dbuf);
+		} else {
+			if ( b1 ) {
+				hd = (rbuf_t*)((char*)b1 - ETHERPADSZ);
+				/* got back the 'head' of mini-chain */
+				relrbuf ( hd->buf.next );
+				relrbuf ( hd );
+			}
 		}
 	DRVUNLOCK(mdrv);
-	return rval;
 }
 
 static inline void NETDRV_READ_ENADDR(struct IpBscIfRec_ *ipbif_p, uint8_t *buf)
@@ -168,7 +176,7 @@ union {
 }
 
 void
-drvAmdIpBasicTask(rtems_task_argument arg)
+drvAmdIpBasicTask(void *arg)
 {
 IpBscIf					ipbif  = (IpBscIf)arg;
 amdeth_drv				mdrv   = lanIpBscIfGetDrv(ipbif);
@@ -211,38 +219,32 @@ int                     st;
 	free(mdrv);
 	*/
 
-	rtems_task_delete(RTEMS_SELF);
+	task_leave();
 }
 
 int
 lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
 {
-rtems_status_code sc;
 rtems_id          tid;
+amdeth_drv		  mdrv = lanIpBscIfGetDrv(ipbif_p);
 
 	if ( pri <= 0 )
 		pri = 20;
 
-	sc = rtems_task_create(
-				rtems_build_name('i','p','b','d'),
-				pri,	/* can be changed later */
-				10000,
-				RTEMS_DEFAULT_MODES,
-				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
-				&tid);
-
-	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "creating drvAmdIpBasicTask\n");
+	if ( !(tid = task_spawn("ipbd", pri, 10000, drvAmdIpBasicTask, ipbif_p)) ) {
+		fprintf(stderr, "Unable to spawn drvAmdIpBasicTask\n");
 		return -1;
 	}
 
-	sc = rtems_task_start( tid, drvAmdIpBasicTask, (rtems_task_argument)ipbif_p );
-	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "starting drvAmdIpBasicTask\n");
-		rtems_task_delete( tid );
-		return -1;
-	}
+	mdrv->tid = tid;
 	return 0;
+}
+
+static void
+cleanup_rbuf(int tx, void *buf, void *closure)
+{
+rbuf_t *buf_aligned = (buf - ETHERPADSZ);
+	relrbuf(buf_aligned);
 }
 
 LanIpBscDrv
@@ -269,12 +271,7 @@ amdeth_drv            mdrv = 0;
 
 	mdrv->mutex = 0;
 
-	if ( RTEMS_SUCCESSFUL != rtems_semaphore_create(
-								rtems_build_name('a','m','d','L'),
-								1,
-								RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
-								0,
-								&mdrv->mutex) ) {
+	if ( ! (mdrv->mutex = bsem_create("amdL", SEM_SMTX)) ) {
 			goto egress;
 	}
 
@@ -291,7 +288,7 @@ amdeth_drv            mdrv = 0;
 				  AMDETH_FLG_TX_MODE_LAZY
 				| AMDETH_FLG_RX_MODE_SYNC
 				| AMDETH_FLG_DO_RETRY
-				| AMDETH_FLG_HDR_ETHERNET,
+				| AMDETH_FLG_HDR_UDP,
 				RX_RING_SIZE, TX_RING_SIZE ) ) {
 			/* fill ring */
 			for ( i=0; i<RX_RING_SIZE; i++ ) {
@@ -313,7 +310,7 @@ egress:
 	if ( mdrv ) {
 		relrbuf( mdrv->spare );
 		if ( mdrv->mp )
-			amdEthCloseDev(mdrv->mp);
+			amdEthCloseDev(mdrv->mp, cleanup_rbuf, 0);
 		if ( mdrv->mutex )
 			rtems_semaphore_delete( mdrv->mutex );
 		free(mdrv);
@@ -325,13 +322,17 @@ int
 lanIpBscDrvShutdown(LanIpBscDrv drv_p)
 {
 amdeth_drv mdrv = (amdeth_drv)drv_p;
+rtems_id   tid  = mdrv->tid;
+rtems_id   sync;
 
 	if ( !drv_p )
 		return 0;
 
-	amdEthCloseDev(mdrv->mp);
-	/* hack: just wait instead of synchronizing */
-	rtems_task_wake_after(200);
+	sync = task_pseudojoin_prepare( tid );
+
+	amdEthCloseDev(mdrv->mp, cleanup_rbuf, 0);
+
+	task_pseudojoin_wrapup( tid, sync );
 
 	free(mdrv);
 	return 0;

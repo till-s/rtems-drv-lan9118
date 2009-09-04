@@ -1,3 +1,17 @@
+2009/09/03 (TS):
+ - drvAmdEthIpBasic.c:
+    o do 2-byte adjustment of buffer start address
+      in 'amd_send_buf_locked()'. amd_send_buf_locked() can now use
+      'split-packets' where a UDP header and payload are stored in
+      separate buffers.
+    o Use new convenience-wrappers (bsem_create, task_spawn, ...) for
+      semaphore and task creation.
+    o Use new API (amdeth.h) for amdEthCloseDev() providing a 'cleanup'
+      callback which releases buffers present in the rings when the
+      driver is shut down.
+    o Use new 'task_pseudojoin' facility to synchronize with driver
+      task termination.
+
 2009/08/29 (TS):
  - drvLan9118.c: create a semaphore and block until driver task exits
    when shutting-down the driver.
