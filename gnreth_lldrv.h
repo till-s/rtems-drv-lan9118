@@ -38,6 +38,8 @@ struct IpBscLLDrv_ {
 	int         (*swipe_rx)(void*);   /* swipe RX ring, call 'consume_rxbuf'     */
 	int         (*send_buf)(void*, void*, void*, int); /* enqueue buf for TX     */
 	int         (*med_ioctl)(void*, int, int*); /* obtain media state            */
+	void        (*mc_filter_add)(void*, uint8_t*); /* add addr to mcast filter   */
+	void        (*mc_filter_del)(void*, uint8_t*); /* del addr from mcast filter */
 };
 
 #endif

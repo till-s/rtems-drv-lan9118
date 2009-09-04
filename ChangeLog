@@ -1,4 +1,7 @@
 2009/09/03 (TS):
+ - gnreth_lldrv.h: Added multicast-support driver entry points.
+
+2009/09/03 (TS):
  - e1k_lldrv.c:
     o Added comments explaining e1000_mta_clr() function (which parallels
       intel's e1000_mta_set() and which is needed to remove a single
