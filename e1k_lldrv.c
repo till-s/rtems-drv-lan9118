@@ -1,4 +1,8 @@
+/* $Id$ */
+
 /* Parts of this code are derived from 'if_em.c' (c) Intel Corp. */
+
+/* Author: Till Straumann <strauman@slac.stanford.edu>           */
 
 /**************************************************************************
 
@@ -32,8 +36,6 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
 ***************************************************************************/
-
-
 
 #include <rtems.h>
 #include <bsp.h>
@@ -149,6 +151,8 @@ struct adapter {
 	rtems_irq_connect_data   irq;
 	int                      link_active;
 	uint16_t                 link_speed, link_duplex;
+	uint16_t                 *mc_refcnt;
+	uint32_t                 mc_num_hashes;
 };
 
 int      drv_e1k_debug = 1;
@@ -397,6 +401,120 @@ uint32_t        icr;
 		rtems_event_send( ad->tid, 1<<ad->unit );
 }
 
+/* e1000_mta_clr() is modelled after e1000_mta_set() which is implemented
+ * by the Intel driver (which unfortunately lacks the functionality to
+ * clear individual bits in the multicast filter).
+ * As of the Intel FreeBSD driver release present in FreeBSD as of 20070724
+ * only e1000_mta_set_82543() did anything special. All other chips used
+ * e1000_mta_set_generic().
+ *
+ * This routine checks the chip type and does what e1000_mta_clr_82543() or
+ * e1000_mta_clr_generic() would do, respectively if they existed.
+ *
+ * For future (or more recent) versions of the Intel driver this routine
+ * might require to include support for more chips...
+ */
+static void
+e1000_mta_clr(struct e1000_hw *hw, u32 hash_value)
+{
+	u32 hash_bit, hash_reg, mta, temp;
+
+	hash_reg = (hash_value >> 5);
+
+	/* If we are on an 82544 and we are trying to write an odd offset
+	 * in the MTA, save off the previous entry before writing and
+	 * restore the old value after writing.
+	 */
+	if ((hw->mac.type == e1000_82544) && (hash_reg & 1)) {
+		hash_reg &= (hw->mac.mta_reg_count - 1);
+		hash_bit = hash_value & 0x1F;
+		mta = E1000_READ_REG_ARRAY(hw, E1000_MTA, hash_reg);
+		mta &= ~(1 << hash_bit);
+		temp = E1000_READ_REG_ARRAY(hw, E1000_MTA, hash_reg - 1);
+
+		E1000_WRITE_REG_ARRAY(hw, E1000_MTA, hash_reg, mta);
+		E1000_WRITE_FLUSH(hw);
+		E1000_WRITE_REG_ARRAY(hw, E1000_MTA, hash_reg - 1, temp);
+		E1000_WRITE_FLUSH(hw);
+	} else {
+		/* The MTA is a register array of 32-bit registers. It is
+		 * treated like an array of (32*mta_reg_count) bits.  We want to
+		 * set bit BitArray[hash_value]. So we figure out what register
+		 * the bit is in, read it, OR in the new bit, then write
+		 * back the new value.  The (hw->mac.mta_reg_count - 1) serves as a
+		 * mask to bits 31:5 of the hash value which gives us the
+		 * register we're modifying.  The hash bit within that register
+		 * is determined by the lower 5 bits of the hash value.
+		 */
+		hash_reg = (hash_value >> 5) & (hw->mac.mta_reg_count - 1);
+		hash_bit = hash_value & 0x1F;
+
+		mta = E1000_READ_REG_ARRAY(hw, E1000_MTA, hash_reg);
+
+		mta &= ~(1 << hash_bit);
+
+		E1000_WRITE_REG_ARRAY(hw, E1000_MTA, hash_reg, mta);
+		E1000_WRITE_FLUSH(hw);
+	}
+}
+
+void
+drv_e1k_mcast_filter_clear(struct adapter *ad)
+{
+struct e1000_hw *hw = &ad->hw;
+int              i;
+
+	for ( i = 0; i < hw->mac.mta_reg_count; i++ ) {
+		E1000_WRITE_REG_ARRAY(hw, E1000_MTA, i, 0);
+		E1000_WRITE_FLUSH(hw);
+	}
+
+	for ( i = 0; i < ad->mc_num_hashes; i++ ) {
+		ad->mc_refcnt[i] = 0;
+	}
+}
+
+static int
+mc_addr_valid(uint8_t *enaddr)
+{
+static const char bcst[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	return ( (0x01 & enaddr[0]) && memcmp(enaddr, bcst, sizeof(bcst)) );
+}
+
+void
+drv_e1k_mcast_filter_accept_add(struct adapter *ad, uint8_t *enaddr)
+{
+struct e1000_hw *hw = &ad->hw;
+uint32_t         hash;
+
+	if ( ! mc_addr_valid(enaddr) )
+		return;
+
+	hash = e1000_hash_mc_addr(hw, enaddr);
+
+	if ( 0 == ad->mc_refcnt[hash]++ ) {
+		e1000_mta_set(hw, hash);
+	}
+}
+
+void
+drv_e1k_mcast_filter_accept_del(struct adapter *ad, uint8_t *enaddr)
+{
+struct e1000_hw *hw = &ad->hw;
+uint32_t         hash;
+
+	if ( ! mc_addr_valid(enaddr) )
+		return;
+
+	hash = e1000_hash_mc_addr(hw, enaddr);
+
+	if ( ad->mc_refcnt[hash] > 0 && 0 == --ad->mc_refcnt[hash] ) {
+		e1000_mta_clr(hw, hash);
+	}
+}
+
+
+
 static int
 hwmatch(struct e1000_hw *hw, int b, int s, int f)
 {
@@ -575,6 +693,16 @@ uint8_t                line;
 		goto bail;
 	}
 
+	/* mta_reg_count is set by e1000_setup_init_funcs */
+	ad->mc_num_hashes = hw->mac.mta_reg_count * 32;
+	ad->mc_refcnt = calloc(sizeof(*ad->mc_refcnt), ad->mc_num_hashes);
+
+	if ( 0 == ad->mc_refcnt ) {
+		errpr("Unable to allocate memory for MC ref. counters\n");
+		goto bail;
+	}
+	
+
 	e1000_get_bus_info(hw);
 
 	hw->mac.autoneg            = TRUE;
@@ -670,6 +798,7 @@ bail:
 
 	free(ad->tx_ring.mem);
 	free(ad->rx_ring.mem);
+	free(ad->mc_refcnt);
 
 	if ( ad->irq.hdl ) {
 		(void)IRQREMV( &ad->irq );
@@ -1177,6 +1306,8 @@ uint32_t        ctrl, pba;
 
 	e1000_rar_set(hw, hw->mac.addr, 0);
 
+	drv_e1k_mcast_filter_clear(ad);
+
 	if ( e1000_82571 == hw->mac.type ) {
 		e1000_set_laa_state_82571(hw, TRUE);
 	}
@@ -1311,20 +1442,22 @@ hwsetup(int unit)
 #endif
 
 static struct IpBscLLDrv_ lldrv_e1k = {
-	tx_irq_msk:  E1000_IMS_TXDW,
-	rx_irq_msk:  E1000_IMS_RXT0 | E1000_IMS_RXDMT0 | E1000_IMS_RXSEQ,
-	ln_irq_msk:  E1000_IMS_LSC,
-	setup     :  (void*) drv_e1k_setup,
-	detach    :  (void*) drv_e1k_detach,
-	read_eaddr:  (void*) drv_e1k_read_eaddr,
-	init_hw   :  (void*) drv_e1k_init_hw,
-	ack_irqs  :  (void*) drv_e1k_ack_irqs,
-	enb_irqs  :  (void*) drv_e1k_enable_irqs,
-	ack_ln_chg:  (void*) drv_e1k_ack_link_chg,
-	swipe_tx  :  (void*) drv_e1k_swipe_tx,
-	swipe_rx  :  (void*) drv_e1k_swipe_rx,
-	send_buf  :  (void*) drv_e1k_send_buf,
-	med_ioctl :  (void*) drv_e1k_media_ioctl,
+	tx_irq_msk    :  E1000_IMS_TXDW,
+	rx_irq_msk    :  E1000_IMS_RXT0 | E1000_IMS_RXDMT0 | E1000_IMS_RXSEQ,
+	ln_irq_msk    :  E1000_IMS_LSC,
+	setup         :  (void*) drv_e1k_setup,
+	detach        :  (void*) drv_e1k_detach,
+	read_eaddr    :  (void*) drv_e1k_read_eaddr,
+	init_hw       :  (void*) drv_e1k_init_hw,
+	ack_irqs      :  (void*) drv_e1k_ack_irqs,
+	enb_irqs      :  (void*) drv_e1k_enable_irqs,
+	ack_ln_chg    :  (void*) drv_e1k_ack_link_chg,
+	swipe_tx      :  (void*) drv_e1k_swipe_tx,
+	swipe_rx      :  (void*) drv_e1k_swipe_rx,
+	send_buf      :  (void*) drv_e1k_send_buf,
+	med_ioctl     :  (void*) drv_e1k_media_ioctl,
+	mc_filter_add :  (void*) drv_e1k_mcast_filter_accept_add,
+	mc_filter_del :  (void*) drv_e1k_mcast_filter_accept_del,
 };
 
 LLDrv drvGnrethIpBasicLLDrv = &lldrv_e1k;
