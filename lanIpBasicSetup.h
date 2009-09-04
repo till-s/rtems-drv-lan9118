@@ -17,7 +17,7 @@ IpBscIf       lanIpIf;
 extern int	  lanIpUdpsd;
 
 /* Take down the network stack */
-void
+int
 lanIpTakedown();
 
 /* Initialize and start the network stack
