@@ -45,6 +45,12 @@ gnr_send_buf_locked(gnreth_drv gdrv, void *pbuf, void *data, int len);
 static inline void
 NETDRV_READ_ENADDR(struct IpBscIfRec_ *pif, uint8_t *buf);
 
+static inline void
+NETDRV_MC_FILTER_ADD(struct IpBscIfRec_ *pif, uint8_t *enaddr);
+
+static inline void
+NETDRV_MC_FILTER_DEL(struct IpBscIfRec_ *pif, uint8_t *enaddr);
+
 /*#define NETDRV_INCLUDE	<bsp/if_mve_pub.h>*/
 #define NETDRV_INCLUDE "gnreth_lldrv.h"
 
@@ -138,7 +144,7 @@ typedef struct gnreth_drv_s_ {
 } gnreth_drv_s;
 
 #define DRVLOCK(drv)   mutex_lock( (drv)->mutex )
-#define DRVUNLOCK(drv) mutex_unlock( (drv)->mutex )
+#define DRVUNLOCK(drv) mutex_unlk( (drv)->mutex )
 
 
 static inline int
@@ -161,6 +167,24 @@ static inline void NETDRV_READ_ENADDR(IpBscIf pif, uint8_t *buf)
 {
 gnreth_drv drvhdl = (gnreth_drv)pif->drv_p;
 	drvhdl->lldrv.read_eaddr(drvhdl->lldrv.dev, buf);
+}
+
+static inline void
+NETDRV_MC_FILTER_ADD(struct IpBscIfRec_ *pif, uint8_t *enaddr)
+{
+gnreth_drv drvhdl = (gnreth_drv)pif->drv_p;
+	DRVLOCK( drvhdl );
+		drvhdl->lldrv.mc_filter_add(drvhdl->lldrv.dev, enaddr);
+	DRVUNLOCK( drvhdl );
+}
+
+static inline void
+NETDRV_MC_FILTER_DEL(struct IpBscIfRec_ *pif, uint8_t *enaddr)
+{
+gnreth_drv drvhdl = (gnreth_drv)pif->drv_p;
+	DRVLOCK( drvhdl );
+		drvhdl->lldrv.mc_filter_del(drvhdl->lldrv.dev, enaddr);
+	DRVUNLOCK( drvhdl );
 }
 
 static void
@@ -245,16 +269,8 @@ uint32_t              irq_msk;
 	}
 
 	/* Create driver mutex */
-	sc = rtems_semaphore_create(
-				rtems_build_name('m','v','e','L'),
-				1,
-				RTEMS_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY
-				| RTEMS_NO_PRIORITY_CEILING | RTEMS_LOCAL,
-				0,
-				&gdrv->mutex);
-
-	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "drvGnrethIpBasic: unable to create driver mutex");
+	if ( ! (gdrv->mutex = bsem_create("ipbd", SEM_SMTX)) ) {
+		fprintf(stderr, "drvGnrethIpBasic: unable to create driver mutex");
 		goto egress;
 	}
 
@@ -300,6 +316,9 @@ uint32_t              irq_msk;
 			/* SUCCESSFUL EXIT (unit found and initialized) */
 			fprintf(stderr,"drvGnrethIpBasic: using device instance %u\n",unit);
 			gdrv->unit = unit - 1;
+
+			task_init( gdrv->tid );
+
 			return gdrv;
 		}
 	}
@@ -399,7 +418,7 @@ int                   media;
 
 	free(gdrv);
 
-	rtems_task_delete(RTEMS_SELF);
+	task_leave();
 }
 
 int
@@ -455,10 +474,12 @@ gnreth_drv gdrv = drv_p;
 		return 0;
 
 	if ( gdrv->ipbif_p ) {
+		task_killer killer;
+		killer.kill_event = KILL_EVENT;
+
 		/* Has already been started; driver task must cleanup */
-		rtems_event_send(gdrv->tid, KILL_EVENT);
-		/* hack: just wait instead of synchronizing */
-		rtems_task_wake_after(200);
+		task_pseudojoin( gdrv->tid, KILL_BY_EVENT, killer );
+
 	} else {
 		/* Not started yet */
 		gdrv_cleanup(gdrv);
