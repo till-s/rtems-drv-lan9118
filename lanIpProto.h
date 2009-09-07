@@ -24,7 +24,7 @@ typedef struct EthHeaderRec_ {
 	uint8_t		dst[6];
 	uint8_t		src[6];
 	uint16_t	type;
-} EthHeaderRec;
+} __attribute__((may_alias)) EthHeaderRec;
 
 typedef struct IpHeaderRec_ {
 	uint8_t		vhl;
@@ -37,14 +37,15 @@ typedef struct IpHeaderRec_ {
 	uint16_t	csum;
 	uint32_t	src;
 	uint32_t	dst;
-} IpHeaderRec;
+	uint32_t    opts[];
+} __attribute__((may_alias)) IpHeaderRec;
 
 typedef struct UdpHeaderRec_ {
 	uint16_t	sport;
 	uint16_t	dport;
 	uint16_t	len;
 	uint16_t	csum;
-} UdpHeaderRec;
+} __attribute__((may_alias)) UdpHeaderRec;
 
 typedef struct IpArpRec_ {
 	uint16_t	htype;
@@ -64,7 +65,14 @@ typedef struct IcmpHeaderRec_ {
 	uint16_t	csum;
 	uint16_t	ident;
 	uint16_t	seq;
-} IcmpHeaderRec;
+} __attribute__((may_alias)) IcmpHeaderRec;
+
+typedef struct IgmpV2HeaderRec_ {
+	uint8_t     type;
+    uint8_t     max_rtime;
+	uint16_t    csum;
+	uint32_t    gaddr;
+} __attribute__((may_alias)) IgmpV2HeaderRec;
 
 /*
  * Max. packet size incl. header, FCS-space and 2-byte padding (which is
@@ -91,6 +99,20 @@ typedef struct LanIpRec_ {
 	IpHeaderRec     ip;
 } LanIpRec, *LanIp;
 
+typedef struct LanIgmpV2Rec_ {
+	EthHeaderRec	ll;
+	IpHeaderRec		ip;
+	union {
+		struct {
+			uint32_t		ra_opt; /* router-alert IP option; logically part of IpHeaderRec */
+			IgmpV2HeaderRec igmp;
+		}           ip46;
+		struct {
+			IgmpV2HeaderRec igmp;
+		}           ip45;
+	}               igmp_u;
+} LanIgmpV2Rec, *LanIgmpV2;
+
 typedef struct LanIpHeaderRec_ {
 	LanIpRec        hdr;
 	uint8_t         pld[];
@@ -115,6 +137,7 @@ typedef union LanIpPacketHeaderRec_ {
 	LanIpHeaderRec		ip_S;
 	LanIcmpHeaderRec	icmp_S;
 	LanUdpHeaderRec		udp_S;
+	LanIgmpV2Rec        igmpv2_S;
 } LanIpPacketHeaderRec, *LanIpPacketHeader;
 
 typedef union LanIpPacketRec_ {
@@ -122,16 +145,20 @@ typedef union LanIpPacketRec_ {
 	char					raw[LANPKTMAX];
 } LanIpPacketRec, *LanIpPacket;
 
-#define lpkt_eth(p)		(p)->p_u.eth_S.ll
-#define lpkt_arp(p)	    (p)->p_u.arp_S.arp
-#define lpkt_ip(p)		(p)->p_u.ip_S.hdr.ip
-#define lpkt_udp(p)		(p)->p_u.udp_S.udp
-#define lpkt_icmp(p)	(p)->p_u.icmp_S.icmp
+#define lpkt_eth(p)				(p)->p_u.eth_S.ll
+#define lpkt_arp(p)				(p)->p_u.arp_S.arp
+#define lpkt_ip(p)				(p)->p_u.ip_S.hdr.ip
+#define lpkt_udp(p)				(p)->p_u.udp_S.udp
+#define lpkt_icmp(p)			(p)->p_u.icmp_S.icmp
+#define lpkt_igmpv2_ra(p)		(p)->p_u.igmpv2_S.igmp_u.ip46.igmp
+#define lpkt_igmpv2_nora(p)		(p)->p_u.igmpv2_S.igmp_u.ip45.igmp
 
-#define lpkt_iphdr(p)	(p)->p_u.ip_S.hdr
-#define lpkt_udphdr(p)	(p)->p_u.udp_S
+#define lpkt_iphdr(p)			(p)->p_u.ip_S.hdr
+#define lpkt_udphdr(p)			(p)->p_u.udp_S
+#define lpkt_igmpv2hdr(p)		(p)->p_u.igmpv2_S
 
 #define lpkt_eth_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.eth_S.pld)->x)
+#define lpkt_icmp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.icmp_S.pld)->x)
 #define lpkt_ip_pld(p,type)	    (((union { char c[sizeof(type)]; type x; } *)(p)->p_u.ip_S.pld)->x)
 #define lpkt_udp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.udp_S.pld)->x)
 

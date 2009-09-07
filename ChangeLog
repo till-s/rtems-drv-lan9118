@@ -1,4 +1,8 @@
 2009/09/07 (TS):
+ - lanIpProtol.h: added igmp (V2) header type. Added 'may_alias'
+   attribute to different header types.
+
+2009/09/07 (TS):
  - padProto.c, padProtoHost.c, udpComm.h, udpCommBSD.c:
    udpCommReturnPacket() now takes a socket-descriptor argument.
 
