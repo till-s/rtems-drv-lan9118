@@ -1,5 +1,5 @@
 2009/09/07 (TS):
- - padProto.c, padProtoHost.c, udpComm.h:
+ - padProto.c, padProtoHost.c, udpComm.h, udpCommBSD.c:
    udpCommReturnPacket() now takes a socket-descriptor argument.
 
 2009/09/07 (TS):

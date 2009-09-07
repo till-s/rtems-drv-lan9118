@@ -29,7 +29,6 @@
 typedef struct {
 	char   data[UDPCOMM_PKTSZ];
 	struct sockaddr sender;
-	int             rx_sd;
 	void            *raw_mem;
 } __attribute__((may_alias)) UdpCommBSDPkt;
 
@@ -46,7 +45,6 @@ UdpCommBSDPkt *p;
 
 	p          = (UdpCommBSDPkt*)(BUFALIGN(p_raw) + PADSZ);
 	p->raw_mem = p_raw;
-	p->rx_sd   = -1;
 	return p;
 }
 
@@ -103,7 +101,6 @@ socklen_t          len;
 		if ( ppeerport )
 			*ppeerport = ntohs(sa->sin_addr.s_addr);
 	}
-	p->rx_sd = sd;
 	return p;
 }
 
@@ -121,10 +118,10 @@ udpCommRecv(int sd, int timeout_ms)
 }
 
 void
-udpCommReturnPacket(UdpCommPkt p0, int len)
+udpCommReturnPacket(int sd, UdpCommPkt p0, int len)
 {
 UdpCommBSDPkt *p = (UdpCommBSDPkt *)p0;
-	sendto( p->rx_sd, p->data, len, 0, &p->sender, sizeof(p->sender));
+	sendto( sd, p->data, len, 0, &p->sender, sizeof(p->sender));
 }
 
 int
