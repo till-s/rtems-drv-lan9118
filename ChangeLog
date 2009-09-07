@@ -1,4 +1,8 @@
 2009/09/07 (TS):
+ - padProto.c, padProtoHost.c, udpComm.h:
+   udpCommReturnPacket() now takes a socket-descriptor argument.
+
+2009/09/07 (TS):
  - mve_lldrv.c: Added multicast-support driver entry points.
 
 2009/09/03 (TS):

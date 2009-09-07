@@ -109,7 +109,7 @@ udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port);
  * [coldfire/lan9118]).
  */
 STATICINLINE void
-udpCommReturnPacket(UdpCommPkt p, int len);
+udpCommReturnPacket(int sd, UdpCommPkt p, int len);
 
 /* Join and leave a MC group. This actually affects the interface
  * not just the socket 'sd'.
@@ -120,10 +120,10 @@ udpCommReturnPacket(UdpCommPkt p, int len);
  */
 
 STATICINLINE int
-udpCommJoinMcast(int sd, uint32_t mcaddr);
+udpCommJoinMcast(int sd, uint32_t mc_addr);
 
 STATICINLINE int
-udpCommLeaveMcast(int sd, uint32_t ifipaddr);
+udpCommLeaveMcast(int sd, uint32_t mc_addr);
 
 /*
  * Set the outgoing interface for sending multicast
@@ -154,12 +154,16 @@ udpCommLeaveMcast(int sd, uint32_t ifipaddr);
 STATICINLINE int
 udpCommSetIfMcast(int sd, uint32_t ifipaddr);
 
-/* This variable can be set to IP address of
- * receiving interface (if host has multiple NICs)
+/* This variable can be set to the IP address of
+ * the receiving interface (if host has multiple NICs)
  * in network byte order. Defaults to INADDR_ANY,
  * i.e., system picks a suitable IF.
  */
+#ifdef BSDSOCKET
 extern uint32_t udpCommMcastIfAddr;
+#else
+#define udpCommMcastIfAddr udpSockMcastIfAddr
+#endif
 
 
 /* Inline implementations for both BSD and udpSocks */
@@ -180,7 +184,7 @@ udpCommBufPtr(UdpCommPkt p)
 #ifdef BSDSOCKET
 	return (void*)p;
 #else
-	return (void*)lpkt_udphdr((LanIpPacket)p).pld;
+	return udpSockUdpBufPayload((LanIpPacket)p);
 #endif
 }
 
@@ -224,6 +228,7 @@ static __inline__ int ms2ticks(int ms)
 	}
 	return ms;
 }
+
 /* Inline implementation for udpSocks */
 static __inline__ int
 udpCommSocket(int port)
@@ -258,12 +263,44 @@ udpCommConnect(int sd, uint32_t diaddr, int port)
 }
 
 static __inline__ void
-udpCommReturnPacket(UdpCommPkt p, int len)
+udpCommReturnPacket(int sd, UdpCommPkt p, int len)
 {
-	udpSockHdrsReflect(p);	/* point headers back to sender */
-	udpSockSendBufRawIp(p); /* send off                     */
+IpBscIf intrf;
+	if ( (intrf = udpSockGetIf(sd)) ) {
+		udpSockHdrsReflect(p);	        /* point headers back to sender */
+		lanIpBscSendBufRawIp(intrf, p); /* send off                     */
+	}
 }
 
+static __inline__ int
+udpCommSendPkt(int sd, UdpCommPkt pkt, int len)
+{
+	return udpSockSendBuf(sd, pkt, len);
+}
+
+static __inline__ int
+udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port)
+{
+	return udpSockSendBufTo(sd, pkt, len, dipaddr, port);
+}
+
+static __inline__ int
+udpCommSetIfMcast(int sd, uint32_t ifipaddr)
+{
+	return udpSockSetIfMcast(sd, ifipaddr);
+}
+
+static __inline__ int
+udpCommJoinMcast(int sd, uint32_t mc_addr)
+{
+	return udpSockJoinMcast(sd, mc_addr);
+}
+
+static __inline__ int
+udpCommLeaveMcast(int sd, uint32_t mc_addr)
+{
+	return udpSockLeaveMcast(sd, mc_addr);
+}
 
 #endif
 
