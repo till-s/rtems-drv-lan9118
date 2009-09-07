@@ -5,6 +5,36 @@
 
 /* Basic IP/UDP socket */
 
+/* IMPORTANT NOTES REGARDING THREAD-SAFETY 
+ *
+ * The implementation serializes
+ *   - creation/destruction of sockets, i.e., two
+ *     threads may e.g., simultaneously create two sockets
+ *     but note that there is NO PROTECTION against 
+ *     one thread deleting a socket while a send or
+ *     receive operation on the same socket (by a 
+ *     different thread)  is in progress.
+ *     Such a scenario is is considered a programming
+ *     error.
+ *     Deletion of a socket is only permissible if it
+ *     is 'not in use'. This restriction exists for
+ *     efficiency-reasons.
+ *
+ *   - sending on a single socket by multiple threads
+ *
+ *   - receiving and sending by different threads
+ *     as well as receiving by multiple threads (but
+ *     that rarely makes sense). However, there exists
+ *     a race condition if different threads 
+ *     (simultaneously) use the udpSockRecv() and
+ *     updSockNRead() routines (see below).
+ *
+ * Note also that it is not safe nor permissible to
+ * destroy an interface that is still used by any
+ * socket. All sockets using an interface must have
+ * been destroyed before the interface can be deleted.
+ */ 
+
 #include <lanIpProto.h>
 #include <rtems.h>
 #include <stdio.h>
@@ -50,7 +80,8 @@ udpSockDestroy(int sd);
  * would not be atomic.
  *
  * Several threads just using udpSockRecv() can
- * safely share a socket.
+ * safely share a socket (but the usefulness of
+ * this is of course questionable).
  *
  * RETURNS: Total number of bytes available on socket
  *          or a value < 0 if there was an error.
@@ -123,20 +154,28 @@ udpSockSend(int sd, void *payload, int payload_len);
 int
 udpSockSendTo(int sd, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport);
 
-/* Send a buffer; EVERYTHING (all headers + payload must have been filled in)
- * len: total length (including all headers and initial 2-byte padding).
- * The buffer is taken over by the stack and released eventually.
- *
- * RETURNS: len
- */
-int
-udpSockSendBufRaw(LanIpPacket buf_p, int len);
+static __inline__ void*
+udpSockUdpBufPayload(LanIpPacket p)
+{
+	return lpkt_udphdr(p).pld;
+}
 
-/* Like SendBufRaw but assumes the packet is a UDP packet so that
- * the length can be extracted from the IP header.
+/* Send data w/o copying the payload.
+ * These entry points are just like
+ * udpSockSend() and udpSockSendTo() but the
+ * payload is passed in a buffer that previously
+ * had been obtained from udpSockGetBuf().
+ * 
+ * Note that the payload has to be stored
+ * into the buffer's payload area, i.e.,
+ * use udpSockUdpBufPayload() to obtain a pointer.
  */
 int
-udpSockSendBufRawIp(LanIpPacket buf_p);
+udpSockSendBuf(int sd, LanIpPacket b, int payload_len);
+
+int
+udpSockSendBufTo(int sd, LanIpPacket b, int payload_len, uint32_t ipaddr, uint16_t dport);
+
 
 /* Operations on packet headers: */
 
@@ -170,6 +209,23 @@ udpSockHdrsSetlen(LanUdpHeader p, int payload_len);
 void
 udpSockHdrsReflect(LanUdpHeader p);
 
+extern uint32_t udpSockMcastIfAddr;
+
+/*
+ *Choose interface for outgoing multicast traffic
+ */
+int
+udpSockSetIfMcast(int sd, uint32_t ifipaddr);
+
+/*
+ * Join and leave a multicast group.
+ */
+int
+udpSockJoinMcast(int sd, uint32_t mcaddr);
+
+int
+udpSockLeaveMcast(int sd, uint32_t mcaddr);
+
 /* Create private data (pass as rx callback closure pointer to drvLan9118Start)
  * 
  * This can be thought of as (and should better be called) an 'interface handle'.
@@ -187,6 +243,10 @@ lanIpBscIfCreate(LanIpBscDrv drv_p, char *ipaddr, char *netmask);
 LanIpBscDrv
 lanIpBscIfGetDrv(IpBscIf ipbif_p);
 
+/* Retrieve interface handle of a socket */
+IpBscIf
+udpSockGetIf(int sd);
+
 /* Tear down interface handle and release all resources associated
  * with it (but *not* the driver). The interface and driver handles
  * are separate objects ('drv_p' passed to lanIpBscIfCreate() is only
@@ -195,8 +255,23 @@ lanIpBscIfGetDrv(IpBscIf ipbif_p);
  * Usually, the driver must be shut-down prior to destroying the
  * interface handle.
  */
-void
+int
 lanIpBscIfDestroy(IpBscIf);
+
+/* Send a buffer; EVERYTHING (all headers + payload must have been filled in)
+ * len: total length (including all headers and initial 2-byte padding).
+ * The buffer is taken over by the stack and released eventually.
+ *
+ * RETURNS: len
+ */
+int
+lanIpBscSendBufRaw(IpBscIf intrf, LanIpPacket buf_p, int len);
+
+/* Like SendBufRaw but assumes the packet is a UDP packet so that
+ * the length can be extracted from the IP header.
+ */
+int
+lanIpBscSendBufRawIp(IpBscIf intrf, LanIpPacket buf_p);
 
 /* The ARP interface.
  * 
@@ -346,6 +421,14 @@ lanIpBscDrvStart(IpBscIf ipbif_p, int pri);
  */
 int
 lanIpBscDrvShutdown(LanIpBscDrv drv_p);
+
+/* Initialize and shut-down the stack
+ */
+int
+lanIpBscInit();
+
+int
+lanIpBscShutdown();
 
 #ifdef __cplusplus
 }

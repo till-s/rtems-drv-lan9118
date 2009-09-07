@@ -1,4 +1,19 @@
 2009/09/07 (TS):
+ - lanIpBasic.h:
+    o added comments regarding thread-safety.
+    o added 'udpSockUdpBufPayload()' 
+    o added 'udpSockSendBuf()' and 'udpSockSendBufTo()' which
+      allow buffers to be sent w/o copying.
+    o added udpSockSetIfMcast() 
+    o added udpSockJoinMcast()/udpSockLeaveMcast()
+    o added udpSockGetIf()
+    o added lanIpBscInit()/lanIpBscShutdown() which init/finialize
+      driver-independent stuff.
+    o lanIpBscIfDestroy() now returns status code
+    o renamed udpSockSendBufRaw/udpSockSendBufRawIp
+      -> lanIpBscSendBufRaw()/lanIpBscSendBufRawIp()
+
+2009/09/07 (TS):
  - lanIpProtol.h: added igmp (V2) header type. Added 'may_alias'
    attribute to different header types.
 
