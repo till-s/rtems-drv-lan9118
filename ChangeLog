@@ -1,3 +1,17 @@
+2009/09/10 (TS):
+ - lanIpBasicTest.c:
+    o lanIpTakedown() returns error status.
+    o driver is no longer started from lanIpSetup() nor
+      stopped from lanIpTakedown() but these steps are
+      now performed by lanIpBscIfCreate() and lanIpBscIfDestroy(),
+      respectively.
+    o lanIpSetup() and lanIpTakedown() call new initializer
+      and finalizer of lanIpBasic (general stuff that is not
+      associated with interface or driver), lanIpBscInit() and
+      lanIpBscShutdown().
+    o udpSockSendBufRawIp() was renamed to lanIpBscSendBufRawIp()
+      which now also takes an 'interface' argument.
+
 2009/09/07 (TS):
  - lanIpBasic.h:
     o added comments regarding thread-safety.

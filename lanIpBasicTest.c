@@ -22,21 +22,36 @@ void      *lanIpDrv  =  0;
 IpBscIf   lanIpIf    =  0;
 int		  lanIpUdpsd = -1;
 
-void
+int
 lanIpTakedown()
 {
 	if ( lanIpUdpsd >= 0 ) {
 		udpSockDestroy(lanIpUdpsd);
 		lanIpUdpsd = -1;
 	}
+
+	if ( lanIpIf ) {
+		if ( lanIpBscIfDestroy( lanIpIf ) ) {
+			fprintf(stderr,"Cannot shutdown\n");
+			return -1;
+		}
+		lanIpIf  = 0;
+		lanIpDrv = 0;
+	}
+
+#if 0
 	if ( lanIpDrv ) {
 		lanIpBscDrvShutdown(lanIpDrv);
 		lanIpDrv = 0;
 	}
-	if ( lanIpIf ) {
-		lanIpBscIfDestroy( lanIpIf );
-		lanIpIf = 0;
+#endif
+
+	if ( lanIpBscShutdown() ) {
+		fprintf(stderr,"Cannot shutdown; some resources still in use\n");		
+		return -1;
 	}
+
+	return 0;
 }
 
 int
@@ -52,6 +67,11 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		return -1;
 	}
 
+	if ( lanIpBscInit() ) {
+		fprintf(stderr,"lanIpBscInit() failed\n");
+		return -1;
+	}
+
 	lanIpDrv = lanIpBscDrvCreate(-1, enaddr);
 
 	if ( !lanIpDrv )
@@ -62,11 +82,13 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		goto egress;
 	}
 
+#if 0
 	/* Start driver */
 	if ( lanIpBscDrvStart(lanIpIf, 0) ) {
 		fprintf(stderr,"Unable to start driver\n");
 		goto egress;
 	}
+#endif
 
 	if ( port > 0 && (lanIpUdpsd = udpSockCreate(port)) < 0 ) {
 		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-lanIpUdpsd));
@@ -146,7 +168,7 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 			now  = Read_hwtimer();
 			then = lpkt_udp_pld(p,echodata)[idx];
 			lpkt_udp_pld(p,echodata)[idx] = now;
-			len = udpSockSendBufRawIp(p);
+			len = lanIpBscSendBufRawIp(lanIpIf, p);
 			post = Read_hwtimer();
 		} else {
 			now  = Read_hwtimer();
@@ -212,7 +234,7 @@ int         cnt = 4;
 				/* initialize timestamps */
 				lpkt_udp_pld(p,echodata)[0] = 0;
 				lpkt_udp_pld(p,echodata)[1] = Read_hwtimer();
-				udpSockSendBufRawIp(p);
+				lanIpBscSendBufRawIp(lanIpIf, p);
 			} else {
 				/* initialize timestamps */
 				lpkt_udp_pld(p,echodata)[0] = 0;
