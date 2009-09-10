@@ -1,4 +1,9 @@
 2009/09/10 (TS):
+ - lanIpBasic.c:
+     o moved IGMP checksum calculation to low-priority worker (processIgmp()).
+     o moved ICMP handling low-priority worker (processIcmp()).
+
+2009/09/10 (TS):
  - lanIpBasic.c: many changes and additions; multicast + IGMPv2
    support were added. In more detail:
     o added 'callout' facility (copy of my implementation for libbsdport)

@@ -612,7 +612,10 @@ static void
 igmp_v1timeo(void *arg0, void *arg1);
 
 static void
-processIgmp(IpBscIf intrf, rbuf_t *buf_p);
+processIcmp(IpBscIf intrf, rbuf_t *buf_p, int len);
+
+static void
+processIgmp(IpBscIf intrf, rbuf_t *buf_p, int len);
 
 static void
 igmp_timeo(void *arg0, void *arg1);
@@ -1866,7 +1869,7 @@ check_vhl(uint8_t vhl, uint8_t expected)
 static int
 handleIP(rbuf_t **ppbuf, IpBscIf intrf, int loopback)
 {
-int          rval = 0, l, nbytes, i, pldlen;
+int          rval = 0, l, nbytes, i;
 rbuf_t		 *p = *ppbuf;
 IpHeaderRec  *pip = &lpkt_ip(&p->pkt);
 uint16_t	 dport;
@@ -1937,33 +1940,14 @@ LanUdpHeader hdr;
 			if ( ! loopback )
 				NETDRV_READ_INCREMENTAL(intrf, picmp, l);
 			rval += l;
-			if ( picmp->type == 8 /* ICMP REQUEST */ && picmp->code == 0 ) {
-#ifdef DEBUG
-				if ( lanIpDebug & DEBUG_ICMP )
-					printf("handling ICMP ECHO request\n");
-#endif
-				picmp->type = 0; /* ICMP REPLY */
-				picmp->csum = 0;
-				picmp->csum = ipcsum((uint8_t*)picmp, nbytes-sizeof(*pip));
-				lpkt_eth(&p->pkt).type = htonsc(0x800); /* IP */
-
-				/* refresh peer's ARP entry */
-				if ( lanIpBscAutoRefreshARP ) {
-					arpPutEntry(intrf, lpkt_ip(&p->pkt).src, lpkt_eth(&p->pkt).src, 0);
-				}
-
-				src2dstIp(&lpkt_iphdr(&p->pkt));
-				fillinSrcCsumIp(intrf, &lpkt_iphdr(&p->pkt));
-
-				refrbuf(p);
-				NETDRV_ENQ_BUFFER(intrf, p, sizeof(EthHeaderRec) + nbytes);
-			}
+			scheduleLpWork(intrf, p);
+			/* worker thread took over the buffer */
+			*ppbuf = 0;
 		}
 		break;
 
 		case IP_PROT_IGMP :
 		{
-		IgmpV2HeaderRec *pigmp;
 
 			/* Hmm - the RFC says that all IGMP messages must have
 			 * the IP Router-Alert Option set but my linksys SLM2008
@@ -1984,47 +1968,6 @@ LanUdpHeader hdr;
 			if ( ! loopback )
 				NETDRV_READ_INCREMENTAL(intrf, &lpkt_igmpv2hdr( &p->pkt ).igmp_u, l);
 			rval += l;
-
-			/* This IP header has one option word */
-			pldlen = nbytes - sizeof(IpHeaderRec);
-
-			if ( 0x46 == pip->vhl ) {
-				if ( htonlc(IP_OPT_ROUTER_ALERT) != pip->opts[0] ) {
-#ifdef DEBUG
-					if ( lanIpDebug & (DEBUG_ICMP | DEBUG_IGMP) ) {
-						printf("Dropping IGMP packet w/o router alert (option[0]: 0x%08"PRIx32")\n",
-								ntohl(pip->opts[0]));
-					}
-#endif
-					return rval;
-
-				}
-				/* This IP header has one option word */
-				pigmp   = & lpkt_igmpv2_ra( &p->pkt ); 
-				pldlen -= sizeof(uint32_t);
-			} else {
-				pigmp   = & lpkt_igmpv2_nora( &p->pkt );
-			}
-
-
-			if ( pldlen < 8 ) {
-#ifdef DEBUG
-				if ( lanIpDebug & (DEBUG_ICMP | DEBUG_IGMP) ) {
-					printf("Dropping IGMP packet with length (ip payload %u < 8)\n", pldlen);
-				}
-#endif
-				return rval;
-			}
-
-			if ( ipcsum((uint8_t*) pigmp, pldlen) ) {
-#ifdef DEBUG
-				if ( lanIpDebug & (DEBUG_ICMP | DEBUG_IGMP) ) {
-					printf("Dropping IGMP packet with bad checksum\n");
-				}
-#endif
-				return rval;
-			}
-
 
 			scheduleLpWork(intrf, p);
 			/* worker thread took over the buffer */
@@ -3811,21 +3754,84 @@ IpBscMcAddr  mca = 0;
 }
 
 static void
-processIgmp(IpBscIf intrf, rbuf_t *buf_p)
+processIcmp(IpBscIf intrf, rbuf_t *p, int len)
+{
+IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
+
+	if ( picmp->type == 8 /* ICMP REQUEST */ && picmp->code == 0 ) {
+#ifdef DEBUG
+		if ( lanIpDebug & DEBUG_ICMP )
+			printf("handling ICMP ECHO request\n");
+#endif
+		picmp->type = 0; /* ICMP REPLY */
+		picmp->csum = 0;
+		picmp->csum = ipcsum((uint8_t*)picmp, len - sizeof(lpkt_ip( &p->pkt )));
+		lpkt_eth(&p->pkt).type = htonsc(0x800); /* IP */
+
+		/* refresh peer's ARP entry */
+		if ( lanIpBscAutoRefreshARP ) {
+			arpPutEntry(intrf, lpkt_ip(&p->pkt).src, lpkt_eth(&p->pkt).src, 0);
+		}
+
+		src2dstIp(&lpkt_iphdr(&p->pkt));
+		fillinSrcCsumIp(intrf, &lpkt_iphdr(&p->pkt));
+
+		refrbuf(p);
+		NETDRV_ENQ_BUFFER(intrf, p, sizeof(EthHeaderRec) + len);
+	}
+}
+
+static void
+processIgmp(IpBscIf intrf, rbuf_t *buf_p, int len)
 {
 IpBscMcAddr      mca,mcal;
 IgmpV2HeaderRec *pigmp;
 rtems_interval   ticks_per_s;
 uint32_t         report_dly_ticks;
+int              pldlen;
+LanIgmpV2        pkt;
 
-LanIgmpV2 pkt = &lpkt_igmpv2hdr( &buf_p->pkt );
+	pkt = &lpkt_igmpv2hdr( &buf_p->pkt );
 
 	assert( IP_PROT_IGMP == pkt->ip.prot );
 
+	/* This IP header has one option word */
+	pldlen = len - sizeof(IpHeaderRec);
+
 	if ( 0x46 == pkt->ip.vhl ) {
-		pigmp = & lpkt_igmpv2_ra( &buf_p->pkt );
+		if ( htonlc(IP_OPT_ROUTER_ALERT) != pkt->ip.opts[0] ) {
+#ifdef DEBUG
+			if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
+				printf("Dropping IGMP packet w/o router alert (option[0]: 0x%08"PRIx32")\n",
+						ntohl(pkt->ip.opts[0]));
+			}
+#endif
+			return;
+
+		}
+		/* This IP header has one option word */
+		pigmp   = & lpkt_igmpv2_ra( &buf_p->pkt ); 
+		pldlen -= sizeof(uint32_t);
 	} else {
-		pigmp = & lpkt_igmpv2_nora( &buf_p->pkt );
+		pigmp   = & lpkt_igmpv2_nora( &buf_p->pkt );
+	}
+
+	if ( pldlen < 8 ) {
+#ifdef DEBUG
+		if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
+			printf("Dropping IGMP packet with length (ip payload %u < 8)\n", pldlen);
+		}
+#endif
+		return;
+	}
+
+	if ( ipcsum((uint8_t*) pigmp, pldlen) ) {
+#ifdef DEBUG
+		if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
+			printf("Dropping IGMP packet with bad checksum\n");
+		}
+#endif
+		return;
 	}
 
 #ifdef DEBUG
@@ -4251,6 +4257,7 @@ rbuf_t     *buf_p;
 IpBscIf    intrf;
 LanIpPacket   pkt;
 IpArpRec  *pipa;
+int        len;
 
 	while ( ( buf_p = dequeueLpWork() ) ) {
 
@@ -4274,10 +4281,16 @@ IpArpRec  *pipa;
 			arpPutEntry(intrf, get_spa(pipa), pipa->sha, 0);
 
 		} else if ( htonsc(0x800) == lpkt_eth(pkt).type ) {
+
+			len = ntohs( lpkt_ip( pkt ).len );
 			switch ( lpkt_ip( pkt ).prot ) {
 
 				case IP_PROT_IGMP:
-					processIgmp(intrf, buf_p);
+					processIgmp(intrf, buf_p, len);
+				break;
+
+				case IP_PROT_ICMP:
+					processIcmp(intrf, buf_p, len);
 				break;
 
 				default:
