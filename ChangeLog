@@ -1,4 +1,52 @@
 2009/09/10 (TS):
+ - lanIpBasic.c: many changes and additions; multicast + IGMPv2
+   support were added. In more detail:
+    o added 'callout' facility (copy of my implementation for libbsdport)
+      for scheduling work/callbacks in the future.
+    o added htonsc(), htonlc() for byte-swapping constants. These
+      'routines' are designed to be optimized away by the compiler
+      (which can perform the swapping at compile-time).
+    o BUGFIX: RBUF_ALIGN() macro didn't really align...
+    o added 'refcnt' to 'rbuf's so they can be referenced by
+      multiple users. Buffer is released when the refcnt drops to 0.
+    o rbuf now also holds a pointer to the interface associated
+      with the buffer.
+    o added 'freeBufMem()' for cleaning up rbufs allocated from the
+      heap. This is executed when shutting down the stack.
+    o added support for IP4 multicast.
+    o implemented IGMP (v2; host-part only).
+    o added low-priority task for executing general work w/o real-time
+      requirements. 
+    o added convenience wrappers: task_spawn(), sem_create(), bsem_crate(),
+      mutex_lock(), mutex_unlk().
+    o added a workaround to enable us to synchronize with task termination
+      a la 'pthread_join()'. The respective routines are task_init(),
+      task_leave() (to be called by target task) and task_pseudojoin()
+      for the task that whishes to kill and wait.
+    o changed ARP implementation. We no longer send a request and delay
+      the calling task for a number of ticks but synchronize with
+      arrival of a reply.
+      Added 'arpTeardown()' for releasing resources when shutting down
+      the stack.
+    o replaced inet_ntop() with trivial implementation (avoid dependency
+      on BSD headers).
+    o added 'loopback' argument to 'handleIP()' to inform the routine
+      that the buffer already contains a packet (prevent chip drivers of
+      the 'FIFO' type from reading).
+    o lanIpBscIfDestroy() now returns status.
+    o lanIpBscIfCreate()/lanIpBscIfDestroy() call driver start/shutdown
+      entry points.
+    o created a generic udpSockSendTo_internal() routine which is called
+      by udpSockSend(), udpSockSendTo(), udpSockSendBuf(), udpSockSendBufTo()
+      wrappers.
+    o added udpSockGetIf()
+    o renamed udpSockSendBufRawIp() -> lanIpBscSendBufRawIp() and added
+      'interface' argument.
+    o added lanIpBscInit() and lanIpBscShutdown() procedures for initializing
+      and shutting down, respectively, driver- and interface-independent
+      resources.
+
+2009/09/10 (TS):
  - lanIpBasicTest.c:
     o lanIpTakedown() returns error status.
     o driver is no longer started from lanIpSetup() nor
