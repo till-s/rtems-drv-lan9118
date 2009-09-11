@@ -51,6 +51,12 @@ NETDRV_MC_FILTER_ADD(struct IpBscIfRec_ *pif, uint8_t *enaddr);
 static inline void
 NETDRV_MC_FILTER_DEL(struct IpBscIfRec_ *pif, uint8_t *enaddr);
 
+static inline int
+NETDRV_START(struct IpBscIfRec_ *pif, int pri);
+
+static inline int
+NETDRV_SHUTDOWN(void *drv_p);
+
 /*#define NETDRV_INCLUDE	<bsp/if_mve_pub.h>*/
 #define NETDRV_INCLUDE "gnreth_lldrv.h"
 
@@ -421,8 +427,8 @@ int                   media;
 	task_leave();
 }
 
-int
-lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
+static inline int
+NETDRV_START(IpBscIf ipbif_p, int pri)
 {
 gnreth_drv           gdrv = lanIpBscIfGetDrv(ipbif_p);
 rtems_status_code   sc;
@@ -465,8 +471,8 @@ rtems_task_priority op;
 	return (int)sc;
 }
 
-int
-lanIpBscDrvShutdown(LanIpBscDrv drv_p)
+static inline int
+NETDRV_SHUTDOWN(LanIpBscDrv drv_p)
 {
 gnreth_drv gdrv = drv_p;
 

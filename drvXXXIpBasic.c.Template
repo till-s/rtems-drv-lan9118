@@ -123,7 +123,7 @@ DrvXXX drv_p = (DrvXXX)ipbif_p->drv_p;
  *
  * lanIpBscDrvCreate(): allocates a driver slot and do first initialization.
  *
- * lanIpBscDrvStart() : create and start driver task(s) and other resources.
+ * NETDRV_START() :     create and start driver task(s) and other resources.
  *                      
  *                      Transmission: largely handled by SND_PACKET and 
  *                      ENQ_BUFFER macros above. If the driver and device
@@ -152,7 +152,7 @@ DrvXXX drv_p = (DrvXXX)ipbif_p->drv_p;
  *                           then pull data into the buffer on the fly
  *                           (and only as much as needed).
  *
- * lanIpBscDrvShutdown(): shutdown driver task and release all
+ * NETDRV_SHUTDOWN():     shutdown driver task and release all
  *                        resources owned by the driver.
  *                        Routine must be able to clean up a partially
  *                        initialized driver (e.g., created but not

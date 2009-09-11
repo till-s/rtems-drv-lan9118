@@ -1,4 +1,11 @@
 2009/09/10 (TS):
+ - drvAmdEthIpBasic.c, drvGnrIpBasic.c, drvLan9118IpBasic.c,
+   drvXXXIpBasic.c.Template, lanIpBasic.c, lanIpBasic.h,
+   lanIpBasicTest.c:
+   renamed lanIpBscDrvStart()/lanIpBscDrvShutdown() ->
+   NETDRV_START() / NETDRV_SHUTDOWN().
+
+2009/09/10 (TS):
  - drvLan9118.c, drvUdpSock.c, lanIpBasic.c, lanIpBasic.h,
    lanIpBasicTest.c, lanIpProto.h, padStream.c: renamed and
    restructured some of the protocol header structs (but I'm

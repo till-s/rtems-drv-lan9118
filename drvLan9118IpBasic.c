@@ -76,6 +76,12 @@ snd_packet_locked(struct IpBscIfRec_ *ipbif_p, void *phdr, int hdrsz, void *data
 #define NETDRV_MC_FILTER_DEL(ipbif_p, macaddr)							\
 	drvLan9118McFilterDel((DrvLan9118_tps)((ipbif_p)->drv_p), (macaddr))
 
+static inline int
+NETDRV_START(struct IpBscIfRec_ *ipbif_p, int pri);
+
+static inline int
+NETDRV_SHUTDOWN(void * drv_p);
+
 /* Driver header name with angle brackets e.g., <drvXXX.h> */
 #define NETDRV_INCLUDE	<drvLan9118.h>
 
@@ -112,7 +118,7 @@ int ltot;
  *
  * lanIpBscDrvCreate(): allocates a driver slot and do first initialization.
  *
- * lanIpBscDrvStart() : create and start driver task(s) and other resources.
+ * NETDRV_START() :     create and start driver task(s) and other resources.
  *                      
  *                      Transmission: largely handled by SND_PACKET and 
  *                      ENQ_BUFFER macros above. If the driver and device
@@ -141,7 +147,7 @@ int ltot;
  *                           then pull data into the buffer on the fly
  *                           (and only as much as needed).
  *
- * lanIpBscDrvShutdown(): shutdown driver task and release all
+ * NETDRV_SHUTDOWN():     shutdown driver task and release all
  *                        resources owned by the driver.
  *                        Routine must be able to clean up a partially
  *                        initialized driver (e.g., created but not
@@ -173,8 +179,8 @@ lanIpBscDrvCreate(int instance, uint8_t *enaddr_p)
 	return drvLan9118Setup(enaddr_p,0);
 }
 
-int
-lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
+static inline int
+NETDRV_START(IpBscIf ipbif_p, int pri)
 {
 DrvLan9118_tps drv_p = lanIpBscIfGetDrv(ipbif_p);
 
@@ -189,10 +195,10 @@ DrvLan9118_tps drv_p = lanIpBscIfGetDrv(ipbif_p);
                 0, 0);
 }
 
-int
-lanIpBscDrvShutdown(LanIpBscDrv drv_p)
+static inline int
+NETDRV_SHUTDOWN(LanIpBscDrv drv_p)
 {
 	if ( drv_p )
-        drvLan9118Shutdown((DrvLan9118_tps)drv_p);
+		drvLan9118Shutdown((DrvLan9118_tps)drv_p);
 	return 0;
 }

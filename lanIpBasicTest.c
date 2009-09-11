@@ -39,12 +39,6 @@ lanIpTakedown()
 		lanIpDrv = 0;
 	}
 
-#if 0
-	if ( lanIpDrv ) {
-		lanIpBscDrvShutdown(lanIpDrv);
-		lanIpDrv = 0;
-	}
-#endif
 
 	if ( lanIpBscShutdown() ) {
 		fprintf(stderr,"Cannot shutdown; some resources still in use\n");		
@@ -81,14 +75,6 @@ lanIpSetup(char *ip, char *nmsk, int port, uint8_t *enaddr)
 		fprintf(stderr,"Unable to create interface data struct\n");
 		goto egress;
 	}
-
-#if 0
-	/* Start driver */
-	if ( lanIpBscDrvStart(lanIpIf, 0) ) {
-		fprintf(stderr,"Unable to start driver\n");
-		goto egress;
-	}
-#endif
 
 	if ( port > 0 && (lanIpUdpsd = udpSockCreate(port)) < 0 ) {
 		fprintf(stderr,"Unable to create UDPSOCK: %s\n", strerror(-lanIpUdpsd));

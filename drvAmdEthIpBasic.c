@@ -47,6 +47,12 @@ NETDRV_MC_FILTER_ADD(struct IpBscIfRec_ *ipbif_p, uint8_t *macaddr);
 static inline void
 NETDRV_MC_FILTER_DEL(struct IpBscIfRec_ *ipbif_p, uint8_t *macaddr);
 
+static inline int
+NETDRV_START(struct IpBscIfRec_ *ipbif_p, int pri);
+
+static inline int
+NETDRV_SHUTDOWN(void *drv_p);
+
 #define NETDRV_INCLUDE	<amdeth.h>
 
 /* No alignment req. on RX buffers, AFAIK.
@@ -101,7 +107,7 @@ rbuf_t    *hd;
 
 	if ( hbuf ) {
 		/* driver assumes UDP header */
-		assert( hlen == sizeof(LanUdpHeaderRec) );
+		assert( hlen == sizeof(LanUdpPktRec) );
 		b0 = (void*)&hbuf->pkt + ETHERPADSZ;
 		l1 = dlen;
 		/* chain bufs together */
@@ -222,8 +228,8 @@ int                     st;
 	task_leave();
 }
 
-int
-lanIpBscDrvStart(IpBscIf ipbif_p, int pri)
+static inline int
+NETDRV_START(IpBscIf ipbif_p, int pri)
 {
 rtems_id          tid;
 amdeth_drv		  mdrv = lanIpBscIfGetDrv(ipbif_p);
@@ -318,8 +324,8 @@ egress:
 	return 0;
 }
 
-int
-lanIpBscDrvShutdown(LanIpBscDrv drv_p)
+static inline int
+NETDRV_SHUTDOWN(LanIpBscDrv drv_p)
 {
 amdeth_drv mdrv = (amdeth_drv)drv_p;
 rtems_id   tid  = mdrv->tid;

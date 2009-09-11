@@ -372,20 +372,20 @@ arpDumpCache(IpBscIf pd, FILE *f);
  *
  * setup and start stack and driver:
  *
+ *    // initialize stack core
+ *    lanIpBscInit();
  *    // create driver handle
  *    drv = lanIpBscDrvCreate(unit, &enaddr);
- *    // marry them and set interface address
+ *    // marry them and set interface address;
+ *    // driver is started by lanIpBscIfCreate().
  *    ifc = lanIpBscIfCreate(drv, "192.168.2.2", "255.255.255.0");
- *    if ( !ifc )
- *    	lanIpBscDrvShutdown(drv);
- *    // start driver and stack
- *    lanIpBscDrvStart(ifc, priority);
  *
  * take down driver and stack:
  *
- *    // shutdow driver and destroy interface
- *    lanIpBscDrvShutdown(lanIpBscIfGetDrv(ifc));
+ *    // destroy interface and shutdown stack;
+ *    // driver is shut down from lanIpBscIfDestroy()
  *    lanIpBscIfDestroy(ifc);
+ *    lanIpBscShutdown();
  */
 
 /* Create and setup driver instance. Note that this routine must not
@@ -399,28 +399,6 @@ arpDumpCache(IpBscIf pd, FILE *f);
  */
 LanIpBscDrv
 lanIpBscDrvCreate(int instance, uint8_t *enaddr_p);
-
-/* Start driver with priority 'pri'. The driver must previously have
- * been 'attached' to the interface by lanIpBscIfInit().
- *
- * RETURNS: 0 on success, nonzero on error.
- */
-int
-lanIpBscDrvStart(IpBscIf ipbif_p, int pri);
-
-/* Shutdown driver (if running) and release resources.
- * The driver handle is not valid anymore if this routine
- * returns successfully.
- *
- * The routine returns 0 and does nothing if drv_p == NULL.
- *
- * RETURNS: 0 on success, nonzero on error.
- *
- * NOTE: The interface structure must be torn down
- *       separately.
- */
-int
-lanIpBscDrvShutdown(LanIpBscDrv drv_p);
 
 /* Initialize and shut-down the stack
  */
