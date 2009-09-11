@@ -157,7 +157,7 @@ udpSockSendTo(int sd, void *payload, int payload_len, uint32_t ipaddr, uint16_t 
 static __inline__ void*
 udpSockUdpBufPayload(LanIpPacket p)
 {
-	return lpkt_udphdr(p).pld;
+	return lpkt_udp_hdrs(p).pld;
 }
 
 /* Send data w/o copying the payload.
@@ -195,19 +195,19 @@ udpSockSendBufTo(int sd, LanIpPacket b, int payload_len, uint32_t ipaddr, uint16
  * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
  */
 int
-udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
+udpSockHdrsInit(int sd, LanUdpPkt p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
 
 /* Set length and IP checksum
  * Note: other fields must have been initialized already
  */
 void
-udpSockHdrsSetlen(LanUdpHeader p, int payload_len);
+udpSockHdrsSetlen(LanUdpPkt p, int payload_len);
 
 /* Flip source -> dest and fill-in local source addresses
  * (at ethernet, IP and UDP level) and IP checksum.
  */
 void
-udpSockHdrsReflect(LanUdpHeader p);
+udpSockHdrsReflect(LanUdpPkt p);
 
 extern uint32_t udpSockMcastIfAddr;
 

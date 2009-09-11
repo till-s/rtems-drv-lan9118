@@ -84,24 +84,28 @@ typedef struct IgmpV2HeaderRec_ {
 #define UDPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(UdpHeaderRec))
 #define ICMPPAYLOADSIZE		(IPPAYLOADSIZE - sizeof(IcmpHeaderRec))
 
-typedef struct LanEtherRec_ {
+typedef struct LanEtherPktRec_ {
 	EthHeaderRec    ll;
 	uint8_t			pld[];
-} LanEtherRec, *LanEther;
+} LanEtherPktRec, *LanEtherPkt;
 
-typedef struct LanArpRec_ {
+typedef struct LanArpPktRec_ {
 	EthHeaderRec    ll;
 	IpArpRec		arp;
-} LanArpRec, *LanArp;
+} LanArpPktRec, *LanArpPkt;
 
-typedef struct LanIpRec_ {
+typedef struct LanIpPartRec_ {
 	EthHeaderRec    ll;
 	IpHeaderRec     ip;
-} LanIpRec, *LanIp;
+} LanIpPartRec, *LanIpPart;
 
-typedef struct LanIgmpV2Rec_ {
-	EthHeaderRec	ll;
-	IpHeaderRec		ip;
+typedef struct LanIpPktRec_ {
+	LanIpPartRec    ip_part;
+	uint8_t         pld[];
+} LanIpPktRec, *LanIpPkt;
+
+typedef struct LanIgmpV2PktRec_ {
+	LanIpPartRec    ip_part;
 	union {
 		struct {
 			uint32_t		ra_opt; /* router-alert IP option; logically part of IpHeaderRec */
@@ -111,33 +115,28 @@ typedef struct LanIgmpV2Rec_ {
 			IgmpV2HeaderRec igmp;
 		}           ip45;
 	}               igmp_u;
-} LanIgmpV2Rec, *LanIgmpV2;
+} LanIgmpV2PktRec, *LanIgmpV2Pkt;
 
-typedef struct LanIpHeaderRec_ {
-	LanIpRec        hdr;
-	uint8_t         pld[];
-} LanIpHeaderRec, *LanIpHeader;
-
-typedef struct LanIcmpHeaderRec_ {
-	LanIpRec        hdr;
+typedef struct LanIcmpPktRec_ {
+	LanIpPartRec    ip_part;
 	IcmpHeaderRec	icmp;
 	uint8_t			pld[];
-} LanIcmpHeaderRec, *LanIcmpHeader;
+} LanIcmpPktRec, *LanIcmpPkt;
 
-/* sizeof(LanUdpHeaderRec) is 44 */
-typedef struct LanUdpHeaderRec_ {
-	LanIpRec		hdr;
+/* sizeof(LanUdp) is 44 */
+typedef struct LanUdpPktRec_ {
+	LanIpPartRec    ip_part;
 	UdpHeaderRec	udp;
 	uint8_t			pld[];
-} LanUdpHeaderRec, *LanUdpHeader;
+} LanUdpPktRec, *LanUdpPkt;
 
 typedef union LanIpPacketHeaderRec_ {
-	LanEtherRec			eth_S;
-	LanArpRec			arp_S;
-	LanIpHeaderRec		ip_S;
-	LanIcmpHeaderRec	icmp_S;
-	LanUdpHeaderRec		udp_S;
-	LanIgmpV2Rec        igmpv2_S;
+	LanEtherPktRec     eth_S;
+	LanArpPktRec       arp_S;
+	LanIpPktRec        ip_S;
+	LanIcmpPktRec      icmp_S;
+	LanUdpPktRec       udp_S;
+	LanIgmpV2PktRec    igmpv2_S;
 } LanIpPacketHeaderRec, *LanIpPacketHeader;
 
 typedef union LanIpPacketRec_ {
@@ -147,14 +146,15 @@ typedef union LanIpPacketRec_ {
 
 #define lpkt_eth(p)				(p)->p_u.eth_S.ll
 #define lpkt_arp(p)				(p)->p_u.arp_S.arp
-#define lpkt_ip(p)				(p)->p_u.ip_S.hdr.ip
+#define lpkt_ip(p)				(p)->p_u.ip_S.ip_part.ip
 #define lpkt_udp(p)				(p)->p_u.udp_S.udp
 #define lpkt_icmp(p)			(p)->p_u.icmp_S.icmp
 #define lpkt_igmpv2_ra(p)		(p)->p_u.igmpv2_S.igmp_u.ip46.igmp
 #define lpkt_igmpv2_nora(p)		(p)->p_u.igmpv2_S.igmp_u.ip45.igmp
 
-#define lpkt_iphdr(p)			(p)->p_u.ip_S.hdr
-#define lpkt_udphdr(p)			(p)->p_u.udp_S
+#define lpkt_arp_pkt(p)         (p)->p_u.arp_S
+#define lpkt_ip_hdrs(p)			(p)->p_u.ip_S.ip_part
+#define lpkt_udp_hdrs(p)		(p)->p_u.udp_S
 #define lpkt_igmpv2hdr(p)		(p)->p_u.igmpv2_S
 
 #define lpkt_eth_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.eth_S.pld)->x)

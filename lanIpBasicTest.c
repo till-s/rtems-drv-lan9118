@@ -130,7 +130,7 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 	}
 
 	if ( !lpkt_ip(&dummy).src ) {
-		if ( (rval = udpSockHdrsInit(sd, &lpkt_udphdr(&dummy), 0, 0, 0)) ) {
+		if ( (rval = udpSockHdrsInit(sd, &lpkt_udp_hdrs(&dummy), 0, 0, 0)) ) {
 			fprintf(stderr,"udpSocketEcho - Unable to initialize headers: %s\n", strerror(-rval));
 			return rval;
 		}
@@ -163,7 +163,7 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 
 			}
 			} else {
-				udpSockHdrsReflect(&lpkt_udphdr(p));
+				udpSockHdrsReflect(&lpkt_udp_hdrs(p));
 			}
 			now  = Read_hwtimer();
 			then = lpkt_udp_pld(p,echodata)[idx];
@@ -228,8 +228,8 @@ int         cnt = 4;
 			}
 			if ( raw ) {
 				/* fillin headers */
-				udpSockHdrsInit(lanIpUdpsd, &lpkt_udphdr(p), dipaddr, dport, 0);
-				udpSockHdrsSetlen(&lpkt_udphdr(p), PAYLDLEN);
+				udpSockHdrsInit(lanIpUdpsd, &lpkt_udp_hdrs(p), dipaddr, dport, 0);
+				udpSockHdrsSetlen(&lpkt_udp_hdrs(p), PAYLDLEN);
 
 				/* initialize timestamps */
 				lpkt_udp_pld(p,echodata)[0] = 0;

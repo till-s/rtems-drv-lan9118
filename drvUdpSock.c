@@ -191,7 +191,7 @@ typedef struct {
 			return (SOCK_NBLK & d->flags) ? RTEMS_TIMEOUT : RTEMS_INVALID_NAME ;
 		}
 
-		d->off = lpkt_udphdr(d->pkt).pld;
+		d->off = lpkt_udp_hdrs(d->pkt).pld;
 		d->avl = ((unsigned short)ntohs(lpkt_udp(d->pkt).len)) - sizeof(UdpHeaderRec);
 
 		/* Remember the sender if we are not connected. */

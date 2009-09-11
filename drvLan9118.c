@@ -59,6 +59,11 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.32  2009/08/30 01:53:13  strauman
+		2009/08/29 (TS):
+		 - drvLan9118.c: create a semaphore and block until driver task exits
+		   when shutting-down the driver.
+		
 		Revision 1.31  2009/08/28 03:36:24  strauman
 		2009/08/27 (TS):
 		 - drvLan9118.h, drvLan9118.c, drvLan9118IpBasic.c: Added support for
@@ -2000,7 +2005,9 @@ drvLan9118E2PErase(DrvLan9118_tps plan_ps)
 int
 drvLan9118DumpHeaderRxCb(DrvLan9118_tps plan_ps, uint32_t len, void *closure_p)
 {
-LanUdpHeaderRec	udph;
+LanUdpPktRec	pkt;
+LanIpPart       ipp = &pkt.ip_part;
+
 FILE			*f_p = (FILE*)closure_p;
 int				tmp;
 char			ipbuf_a[20];
@@ -2009,56 +2016,56 @@ struct in_addr	sa;
 	if ( !f_p )
 		f_p = stdout;
 
-	if ( len < sizeof(udph.hdr.ll) ) {
+	if ( len < sizeof(ipp->ll) ) {
 		fprintf(f_p,"Packet shorter than an ethernet header ???\n");
 		goto bail;
 	}
-	memcpy(&udph.hdr.ll, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.hdr.ll));
+	memcpy(&ipp->ll, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(ipp->ll));
 #if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
-	drvLan9118BufRev((void*)&udph.hdr.ll, sizeof(udph.hdr.ll)/4);
+	drvLan9118BufRev((void*)&ipp->ll, sizeof(ipp->ll)/4);
 #endif
-	len -= sizeof(udph.hdr.ll);
-	prether(f_p,udph.hdr.ll.src); fprintf(f_p," -> "); prether(f_p,udph.hdr.ll.dst);
-	if ( 0x800 != (tmp = (unsigned short)ntohs(udph.hdr.ll.type)) ) {
+	len -= sizeof(ipp->ll);
+	prether(f_p,ipp->ll.src); fprintf(f_p," -> "); prether(f_p,ipp->ll.dst);
+	if ( 0x800 != (tmp = (unsigned short)ntohs(ipp->ll.type)) ) {
 		fprintf(f_p," Ethernet type/lenght %#x\n", tmp);
 	} else {
 		fprintf(f_p," (IP)\n");
-		if ( len < sizeof(udph.hdr.ip) ) {
+		if ( len < sizeof(ipp->ip) ) {
 			fprintf(f_p,"  Packet shorter than an IP header ???\n");
 			goto bail;
 		}
-		memcpy(&udph.hdr.ip, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.hdr.ip));
+		memcpy(&ipp->ip, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(ipp->ip));
 #if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
-		drvLan9118BufRev((void*)&udph.hdr.ip, sizeof(udph.hdr.ip)/4);
+		drvLan9118BufRev((void*)&ipp->ip, sizeof(ipp->ip)/4);
 #endif
-		len -= sizeof(udph.hdr.ip);
-		if ( udph.hdr.ip.vhl >> 4 != 4 ) {
+		len -= sizeof(ipp->ip);
+		if ( ipp->ip.vhl >> 4 != 4 ) {
 			fprintf(f_p,"  IP header not version 4 ???\n");
 			goto bail;
 		}
-		sa.s_addr = udph.hdr.ip.src;
+		sa.s_addr = ipp->ip.src;
 		ipbuf_a[0]=0;
 		inet_ntop(AF_INET, &sa, ipbuf_a, sizeof(ipbuf_a));
 		fprintf(f_p,"  IP -- src %s -> ",ipbuf_a);
-		sa.s_addr = udph.hdr.ip.dst;
+		sa.s_addr = ipp->ip.dst;
 		ipbuf_a[0]=0;
 		inet_ntop(AF_INET, &sa, ipbuf_a, sizeof(ipbuf_a));
 		fprintf(f_p,"%s PROTO ",ipbuf_a);
-		if ( 17 == udph.hdr.ip.prot ) {
+		if ( 17 == ipp->ip.prot ) {
 			fprintf(f_p,"UDP\n");
-			if ( len < sizeof(udph.udp) ) {
+			if ( len < sizeof(pkt.udp) ) {
 				fprintf(f_p,"    Packet shorter than UDP header ???\n");
 				goto bail;
 			}
-			memcpy(&udph.udp, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(udph.udp));
+			memcpy(&pkt.udp, (void*)(plan_ps->base + FIFO_ALIAS), sizeof(pkt.udp));
 #if defined(HW_BYTES_NOT_SWAPPED) && BYTE_ORDER == BIG_ENDIAN
-			drvLan9118BufRev((void*)&udph.udp, sizeof(udph.udp)/4);
+			drvLan9118BufRev((void*)&pkt.udp, sizeof(pkt.udp)/4);
 #endif
-			len -= sizeof(udph.udp);
+			len -= sizeof(pkt.udp);
 			fprintf(f_p,"    UDP -- SPORT: %u -> DPORT: %u; payload %lu bytes\n",
-				ntohs(udph.udp.sport), ntohs(udph.udp.dport), ntohs(udph.udp.len) - sizeof(udph.udp));
+				ntohs(pkt.udp.sport), ntohs(pkt.udp.dport), ntohs(pkt.udp.len) - sizeof(pkt.udp));
 		} else {
-			fprintf(f_p,"%u LEN %u\n", udph.hdr.ip.prot, ntohs(udph.hdr.ip.len));
+			fprintf(f_p,"%u LEN %u\n", ipp->ip.prot, ntohs(ipp->ip.len));
 		}
 	}
 bail:
