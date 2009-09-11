@@ -40,6 +40,12 @@
 #include "hwtmr.h"
 #endif
 
+#define IP_PROT_ICMP		1
+#define IP_PROT_IGMP		2
+#define IP_PROT_UDP			17
+
+#define IP_OPT_ROUTER_ALERT	0x94040000
+
 /* Alias helper types */
 typedef uint32_t	uint32_a_t __attribute__((__may_alias__));
 typedef  int32_t	 int32_a_t __attribute__((__may_alias__));
@@ -1831,11 +1837,45 @@ check_vhl(uint8_t vhl, uint8_t expected)
 	return 0;
 }
 
-#define IP_PROT_ICMP		1
-#define IP_PROT_IGMP		2
-#define IP_PROT_UDP			17
+/* They want us to refresh/create an ARP entry.
+ * We mock up a fake UDP packet and schedule the real work
+ * (arpPutEntry()) for the low-priority worker task.
+ */
 
-#define IP_OPT_ROUTER_ALERT	0x94040000
+static void
+scheduleRefreshArp(IpBscIf intrf, LanUdpPkt pudp)
+{
+rbuf_t       *nbuf;
+	if ( (nbuf = getrbuf()) ) { 
+		/* fake up a new buffer; copy just enough info for the
+		 * low-priority worker...
+		 *
+		 * Unfortunately, we can't just refrbuf() and pass the
+		 * same buffer on since the user might receive and
+		 * modify it (user 'owns' received buffer).
+		 */
+
+		/* It's IPv4 */
+		lpkt_eth( &nbuf->pkt ).type = htonsc(0x800);
+
+		/* It's UDP */
+		lpkt_ip( &nbuf->pkt ).prot  = IP_PROT_UDP;
+
+		/* Just because the length is read by lpWorker... */
+		lpkt_ip( &nbuf->pkt ).len   = pudp->ip_part.ip.len;
+
+		/* Copy the relevant addresses */
+		lpkt_ip( &nbuf->pkt ).src   = pudp->ip_part.ip.src;
+		memcpy(
+			lpkt_eth( &nbuf->pkt ).src,
+			pudp->ip_part.ll.src,
+			sizeof(lpkt_eth( &nbuf->pkt ).src)
+		);
+
+		/* There it goes */
+		scheduleLpWork(intrf, nbuf);
+	}
+}
 
 static int
 handleIP(rbuf_t **ppbuf, IpBscIf intrf, int loopback)
@@ -1886,7 +1926,7 @@ LanUdpPkt    hdr;
 	nbytes = ntohs(pip->len);
 
 	/* Check length and reject packets that wouldn't fit
-	 * in and 'rbuf_t'
+	 * in an 'rbuf_t'
 	 */
 	if ( nbytes > sizeof( p->pkt ) - sizeof(EthHeaderRec) ) {
 #ifdef DEBUG
@@ -1902,14 +1942,12 @@ LanUdpPkt    hdr;
 	switch ( pip->prot ) {
 		case IP_PROT_ICMP :
 		{
-		IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
-
 			/* reject non-V4 headers or headers with length > 5 */
 			if ( check_vhl(pip->vhl, 0x45) )
 				return rval;
 
 			if ( ! loopback )
-				NETDRV_READ_INCREMENTAL(intrf, picmp, l);
+				NETDRV_READ_INCREMENTAL(intrf, &lpkt_icmp(&p->pkt), l);
 			rval += l;
 			scheduleLpWork(intrf, p);
 			/* worker thread took over the buffer */
@@ -1969,6 +2007,15 @@ LanUdpPkt    hdr;
 				printf("from %s:%i ...", buf, ntohs(pudp->udp.sport));
 			}
 #endif
+
+			/* Scan the table of sockets for one that matches the destination
+			 * port of this packet.
+			 * If we find one, then we do some filtering (connected sockets
+			 * only accept data from the peer), read the full payload (drivers
+			 * of the FIFO type which define NETDRV_READ_INCREMENTAL) and
+			 * dispatch the packet to the socket's message queue.
+			 */
+			
 			_Thread_Disable_dispatch();
 			for ( i=0; i<NSOCKS; i++ ) {
 				if ( socks[i].port == dport ) {
@@ -1987,6 +2034,7 @@ LanUdpPkt    hdr;
 						}
 					}
 					_Thread_Enable_dispatch();
+
 					/* slurp data */
 					if ( ! loopback )
 						NETDRV_READ_INCREMENTAL(intrf, pudp->pld, l);
@@ -1994,7 +2042,7 @@ LanUdpPkt    hdr;
 
 					/* Refresh peer's ARP entry */
 					if ( lanIpBscAutoRefreshARP ) {
-						arpPutEntry(intrf, pudp->ip_part.ip.src, pudp->ip_part.ll.src, 0);
+						scheduleRefreshArp(intrf, pudp);
 					}
 
 					_Thread_Disable_dispatch();
@@ -2003,6 +2051,8 @@ LanUdpPkt    hdr;
 						UdpSockMsgRec msg;
 						msg.pkt = p;
 						msg.len = nbytes - sizeof(IpHeaderRec) - sizeof(UdpHeaderRec);
+
+						/* post to user */
 						if ( RTEMS_SUCCESSFUL == rtems_message_queue_send(socks[i].msgq, &msg, sizeof(msg)) ) {
 							socks[i].nbytes += msg.len;
 							/* they now own the buffer */
@@ -2053,7 +2103,7 @@ uint16_t        tt;
 		len -= handleArp(pprb, pd);
 	} else if ( htonsc(0x800) == tt ) {
 		/* IP  */
-		len -= handleIP(pprb, pd, 0 /* not loopback */);
+		len -= handleIP(pprb, pd, 0 /* this is not a looped-back buffer */);
 	} else {
 #ifdef DEBUG
 			if (lanIpDebug & DEBUG_IP) {
@@ -2200,7 +2250,7 @@ IpBscIf           ipbif_p;
 
 	lanIpCallout_init( &ipbif_p->mcIgmpV1RtrSeen );
 
-	if ( lanIpBscDrvStart(ipbif_p, 0) ) {
+	if ( NETDRV_START(ipbif_p, 0) ) {
 		fprintf(stderr,"Unable to start driver\n");
 		lanIpBscIfDestroy(ipbif_p);
 		return 0;
@@ -2256,7 +2306,7 @@ lanIpBscIfDestroy(IpBscIf pd)
 		lanIpCallout_stop( &pd->mcIgmpV1RtrSeen );
 
 		if ( pd->drv_p ) {
-			if ( lanIpBscDrvShutdown(pd->drv_p) ) {
+			if ( NETDRV_SHUTDOWN(pd->drv_p) ) {
 				fprintf(stderr,"lanIpBscIfDestroy(): Unable to shutdown driver\n");
 				return -1;
 			}
@@ -4304,6 +4354,14 @@ int        len;
 
 				case IP_PROT_ICMP:
 					processIcmp(intrf, buf_p, len);
+				break;
+
+				case IP_PROT_UDP:
+					/* WARNING: we never get a full UDP packet here; just a 
+					 *          dummied-up one when they want us to store
+					 *          some peer's info in the arp cache.
+					 */
+					arpPutEntry(intrf, lpkt_ip(pkt).src, lpkt_eth(pkt).src, 0);
 				break;
 
 				default:

@@ -1,4 +1,8 @@
 2009/09/10 (TS):
+ - lanIpBasic.c: moved 'arpPutEntry()' from UDP handling
+   in handleIP() to low-priority worker.
+
+2009/09/10 (TS):
  - drvAmdEthIpBasic.c, drvGnrIpBasic.c, drvLan9118IpBasic.c,
    drvXXXIpBasic.c.Template, lanIpBasic.c, lanIpBasic.h,
    lanIpBasicTest.c:
