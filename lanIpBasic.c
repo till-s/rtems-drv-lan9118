@@ -572,7 +572,7 @@ typedef struct IpBscIfRec_ {
 	rtems_id		mutx;
 	uint32_t		ipaddr;
 	uint32_t		nmask;
-	LanArpRec		arpreq;
+	LanArpPktRec	arpreq;
 	rbuf_t          *arpbuf;
 	LHTbl           mctable;
 	IpBscMcRef      mclist;
@@ -610,6 +610,9 @@ nxtmca (IpBscMcAddr mca)
 
 static void
 igmp_v1timeo(void *arg0, void *arg1);
+
+static void
+processArp(IpBscIf intrf, rbuf_t *buf_p);
 
 static void
 processIcmp(IpBscIf intrf, rbuf_t *buf_p, int len);
@@ -756,7 +759,7 @@ typedef struct UdpSockRec_ {
 	rtems_id		  msgq;
 	rtems_id		  mutx;
 	unsigned          flags;
-	LanUdpHeaderRec   hdr;    /* a header for 'sendto' */
+	LanUdpPktRec      hdr;    /* a header for 'sendto' */
 	volatile unsigned nbytes; /* count bytes queued for supporting FIONREAD */
 } UdpSockRec, *UdpSock;
 
@@ -1753,7 +1756,7 @@ ArpEntry              e;
  */
 
 static inline void
-fillinSrcCsumIp(IpBscIf ifc, LanIp buf_p)
+fillinSrcCsumIp(IpBscIf ifc, LanIpPart buf_p)
 {
 	memcpy(buf_p->ll.src, &ifc->arpreq.ll.src, sizeof(buf_p->ll.src));
 	buf_p->ip.src              = ifc->ipaddr;
@@ -1763,32 +1766,31 @@ fillinSrcCsumIp(IpBscIf ifc, LanIp buf_p)
 }
 
 static inline void
-fillinSrcCsumUdp(IpBscIf ifc, LanUdpHeader buf_p, int port)
+fillinSrcCsumUdp(IpBscIf ifc, LanUdpPkt buf_p, int port)
 {
 	buf_p->udp.sport = htons(port);
 	buf_p->udp.csum = 0;
-	fillinSrcCsumIp(ifc, &buf_p->hdr);
+	fillinSrcCsumIp(ifc, &buf_p->ip_part);
 }
 
 /* Copy IP and MAC src->dest */
 static inline void
-src2dstIp(LanIp p)
+src2dstIp(LanIpPart p)
 {
 	memcpy(p->ll.dst, p->ll.src, sizeof(p->ll.dst));
 	p->ip.dst = p->ip.src;
 }
 
 static inline void
-src2dstUdp(LanUdpHeader p)
+src2dstUdp(LanUdpPkt p)
 {
-	src2dstIp(&p->hdr);
+	src2dstIp(&p->ip_part);
 	p->udp.dport = p->udp.sport;
 }
 
 static int
 handleArp(rbuf_t **ppbuf, IpBscIf pd)
 {
-int			isreq = 0;
 rbuf_t		*p    = *ppbuf;
 IpArpRec	*pipa = &lpkt_arp(&p->pkt);
 uint32_t    xx;
@@ -1802,47 +1804,16 @@ uint32_t    xx;
 	xx = * ( (uint32_a_t *) pipa + 1 );
 
 	/* 0x06 hw addr len, 0x04 proto len, 0x0001 ARP REQUEST */
-	if        ( htonlc(0x06040001) == xx ) {
-		isreq = 1;
 	/* 0x06 hw addr len, 0x04 proto len, 0x0002 ARP REPLY   */
-	} else if ( htonlc(0x06040002) != xx ) {
+	if ( htonlc(0x06040001) != xx && htonlc(0x06040002) != xx ) {
 		return 8;
 	}
 
 	/* Fill rest of ARP packet            */
 	NETDRV_READ_INCREMENTAL(pd, pipa->sha, 5*4);
 
-	if ( isreq ) {
-#ifdef DEBUG
-		if ( lanIpDebug & DEBUG_ARP )
-			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
-#endif
-		if ( get_tpa(pipa) != pd->ipaddr )
-			return sizeof(*pipa);
-
-		/* they mean us; send reply */
-		memcpy( pd->arprep.ll.dst,  pipa->sha, 6);
-		memcpy( pd->arprep.arp.tha, pipa->sha, 10);
-
-#if defined(DEBUG)
-		if ( lanIpDebug & DEBUG_ARP ) {
-			printf("MATCH -> sending\n");
-#if 0
-			{
-			extern void md(void*,int);
-			md(&pd->arprep, sizeof(pd->arprep));
-			}
-#endif
-		}
-#endif
-
-		refrbuf( pd->arpbuf );
-		NETDRV_ENQ_BUFFER(pd, pd->arpbuf, sizeof(pd->arprep));
-	} else {
-		/* a reply to our request */
-		scheduleLpWork(pd, p);
-		*ppbuf = 0; 
-	}
+	scheduleLpWork(pd, p);
+	*ppbuf = 0; 
 
 	return sizeof(*pipa);
 }
@@ -1875,7 +1846,7 @@ IpHeaderRec  *pip = &lpkt_ip(&p->pkt);
 uint16_t	 dport;
 int			 isbcst = 0;
 int          ismcst = 0;
-LanUdpHeader hdr;
+LanUdpPkt    hdr;
 
 	if ( ! loopback )
 		NETDRV_READ_INCREMENTAL(intrf, pip, sizeof(*pip));
@@ -1978,7 +1949,7 @@ LanUdpHeader hdr;
 
 		case IP_PROT_UDP  :
 		{
-		LanUdpHeader pudp = &lpkt_udphdr(&p->pkt);
+		LanUdpPkt pudp = &lpkt_udp_hdrs(&p->pkt);
 
 			/* reject non-V4 headers or headers with length > 5 */
 			if ( check_vhl(pip->vhl, 0x45) )
@@ -1994,7 +1965,7 @@ LanUdpHeader hdr;
 			if ( lanIpDebug & DEBUG_UDP ) {
 				char buf[4*4];
 				printf("handling UDP packet (dport %i%s)\n", dport, isbcst ? ", BCST":"");
-				lanIpBscNtop(pudp->hdr.ip.src, buf, sizeof(buf));
+				lanIpBscNtop(pudp->ip_part.ip.src, buf, sizeof(buf));
 				printf("from %s:%i ...", buf, ntohs(pudp->udp.sport));
 			}
 #endif
@@ -2005,7 +1976,7 @@ LanUdpHeader hdr;
 						hdr = &socks[i].hdr;
 						/* filter source IP and port */
 						if (    hdr->udp.dport  != pudp->udp.sport
-							|| (hdr->hdr.ip.dst != pudp->hdr.ip.src && ! ISBCST(hdr->hdr.ip.dst, socks[i].intrf->nmask)) ) {
+							|| (hdr->ip_part.ip.dst != pudp->ip_part.ip.src && ! ISBCST(hdr->ip_part.ip.dst, socks[i].intrf->nmask)) ) {
 							_Thread_Enable_dispatch();
 #ifdef DEBUG
 							if ( lanIpDebug & DEBUG_UDP ) {
@@ -2023,7 +1994,7 @@ LanUdpHeader hdr;
 
 					/* Refresh peer's ARP entry */
 					if ( lanIpBscAutoRefreshARP ) {
-						arpPutEntry(intrf, pudp->hdr.ip.src, pudp->hdr.ll.src, 0);
+						arpPutEntry(intrf, pudp->ip_part.ip.src, pudp->ip_part.ll.src, 0);
 					}
 
 					_Thread_Disable_dispatch();
@@ -2056,7 +2027,7 @@ LanUdpHeader hdr;
 	return rval;
 }
 
-/* Handle ARP and ICMP echo (ping) requests
+/* Handle ARP, IGMP and ICMP echo (ping) requests
  * Dispatch UDP packets to trivial 'sockets'
  *
  * Need to pass a pointer to the buffer pointer;
@@ -2313,36 +2284,36 @@ const uint8_t srcenaddr[6] = { 0x08,0x00,0x56,0x00,0x01,0x00 };
 #endif
 
 void
-udpSockHdrsSetlen(LanUdpHeader p, int payload_len)
+udpSockHdrsSetlen(LanUdpPkt p, int payload_len)
 {
-	p->hdr.ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
-	p->hdr.ip.csum  = 0;
+	p->ip_part.ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
+	p->ip_part.ip.csum  = 0;
 	
-	p->hdr.ip.csum  = in_cksum_hdr((void*)&p->hdr.ip);
+	p->ip_part.ip.csum  = in_cksum_hdr((void*)&p->ip_part.ip);
 
 	p->udp.len      = htons(payload_len + sizeof(UdpHeaderRec));
 }
 
 int
-udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
+udpSockHdrsInit(int sd, LanUdpPkt p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
 {
 int rval = 0;
 
 	if ( dipaddr ) 
-		rval = arpLookup(socks[sd].intrf, dipaddr, p->hdr.ll.dst, 0);
+		rval = arpLookup(socks[sd].intrf, dipaddr, p->ip_part.ll.dst, 0);
 	else /* they want to leave it blank */
-		memset(p->hdr.ll.dst,0,6);
+		memset(p->ip_part.ll.dst,0,6);
 
-	p->hdr.ll.type  = htonsc(0x0800);	/* IP */
+	p->ip_part.ll.type  = htonsc(0x0800);	/* IP */
 
-	p->hdr.ip.vhl   = 0x45;	/* version 4, 5words length */
-	p->hdr.ip.tos   = 0x30; 	/* priority, minimize delay */
-	p->hdr.ip.len   = 0;
-	p->hdr.ip.id    = htons(ip_id);/* ? */
-	p->hdr.ip.off   = htonsc(0);
-	p->hdr.ip.ttl   = 4;
-	p->hdr.ip.prot  = IP_PROT_UDP;	/* UDP */
-	p->hdr.ip.dst   = dipaddr;
+	p->ip_part.ip.vhl   = 0x45;	/* version 4, 5words length */
+	p->ip_part.ip.tos   = 0x30; 	/* priority, minimize delay */
+	p->ip_part.ip.len   = 0;
+	p->ip_part.ip.id    = htons(ip_id);/* ? */
+	p->ip_part.ip.off   = htonsc(0);
+	p->ip_part.ip.ttl   = 4;
+	p->ip_part.ip.prot  = IP_PROT_UDP;	/* UDP */
+	p->ip_part.ip.dst   = dipaddr;
 
 	p->udp.dport = htons(dport);
 	p->udp.len   = 0;
@@ -2350,13 +2321,13 @@ int rval = 0;
 	fillinSrcCsumUdp(socks[sd].intrf, p, sd >= 0 ? socks[sd].port : 0);
 
 	/* reset checksum; length is not correct yet */
-	p->hdr.ip.csum  = 0;
+	p->ip_part.ip.csum  = 0;
 
 	return rval;
 }
 
 void
-udpSockHdrsReflect(LanUdpHeader p)
+udpSockHdrsReflect(LanUdpPkt p)
 {
 uint16_t  port = ntohs(p->udp.dport);
 	src2dstUdp(p);
@@ -2681,7 +2652,8 @@ static int
 udpSockSendTo_internal(int sd, LanIpPacket buf_p, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport)
 {
 int          rval;
-LanUdpHeader h;
+LanUdpPkt    h;
+LanIpPart    ipp;
 int          do_mc_loopback = 0;
 PRFDECL;
 
@@ -2701,11 +2673,13 @@ PRFDECL;
 	 * there.
 	 */
 	if ( buf_p ) {
-		h = & lpkt_udphdr( buf_p );
+		h = & lpkt_udp_hdrs( buf_p );
 		memcpy( h, &socks[sd].hdr, sizeof(*h) );
 	} else {
 		h = &socks[sd].hdr;
 	}
+
+	ipp = & h->ip_part;
 
 	dodiff(2);
 
@@ -2715,11 +2689,11 @@ PRFDECL;
 			SOCKUNLOCK( &socks[sd] );
 			return -ENOTCONN;
 		}
-		ipaddr = h->hdr.ip.dst;
+		ipaddr = ipp->ip.dst;
 	} else {
 		/* if the socket is already connected only allow sending to peer */
 		if ( (FLG_ISCONN & socks[sd].flags) ) {
-			if (   h->hdr.ip.dst != ipaddr
+			if (   ipp->ip.dst != ipaddr
 				|| (unsigned short)ntohs( h->udp.dport ) != dport ) {
 
 				rval = -EISCONN;
@@ -2729,7 +2703,7 @@ PRFDECL;
 				return rval;
 			}
 		} else {
-			h->hdr.ip.dst = ipaddr;
+			ipp->ip.dst = ipaddr;
 			h->udp.dport  = htons((unsigned short)dport);
 		}
 	}
@@ -2751,7 +2725,7 @@ PRFDECL;
 		 * Check the cache; if not found then unlock the socket,
 		 * do a slow lookup and start over
 		 */
-		if ( arpLookup(socks[sd].intrf, h->hdr.ip.dst, h->hdr.ll.dst, 1) ) {
+		if ( arpLookup(socks[sd].intrf, ipp->ip.dst, ipp->ll.dst, 1) ) {
 			SOCKUNLOCK( &socks[sd] );
 
 			if ( arpLookup(socks[sd].intrf, ipaddr, dummy, 0) ) {
@@ -2770,13 +2744,13 @@ PRFDECL;
 
 			cacheonly = ! (FLG_ISCONN & socks[sd].flags);
 
-			if ( arpLookup(socks[sd].intrf, h->hdr.ip.dst, h->hdr.ll.dst, cacheonly) ) {
+			if ( arpLookup(socks[sd].intrf, ipp->ip.dst, ipp->ll.dst, cacheonly) ) {
 				SOCKUNLOCK( &socks[sd] );
 				return -ENOTCONN;
 			}
 		}
 	} else {
-		if ( arpLookup(socks[sd].intrf, h->hdr.ip.dst, h->hdr.ll.dst, 0) ) {
+		if ( arpLookup(socks[sd].intrf, ipp->ip.dst, ipp->ll.dst, 0) ) {
 			SOCKUNLOCK( &socks[sd] );
 			return -ENOTCONN;
 		}
@@ -2788,7 +2762,7 @@ PRFDECL;
 
 	dodiff(5);
 
-	do_mc_loopback = mcListener( socks[sd].intrf, h->hdr.ip.dst );
+	do_mc_loopback = mcListener( socks[sd].intrf, ipp->ip.dst );
 
 	if ( ! buf_p ) {
 #ifdef NETDRV_SND_PACKET
@@ -2802,8 +2776,8 @@ PRFDECL;
 				SOCKUNLOCK( &socks[sd] );
 				return -ENOBUFS;
 			}
-			memcpy( &lpkt_udphdr( buf_p ), h, sizeof(*h) );
-			memcpy(  lpkt_udphdr( buf_p ).pld,  payload, payload_len );
+			memcpy( &lpkt_udp_hdrs( buf_p ), h, sizeof(*h) );
+			memcpy(  lpkt_udp_hdrs( buf_p ).pld,  payload, payload_len );
 		}
 	}
 #ifdef NETDRV_SND_PACKET
@@ -3631,10 +3605,11 @@ igmp_v1_rtr_seen(IpBscIf intrf)
 static void
 igmp_prepare_msg(IpBscIf intrf, rbuf_t *buf_p, uint32_t gaddr, uint8_t type)
 {
-LanIgmpV2 pigmp = &lpkt_igmpv2hdr( &buf_p->pkt );
-uint32_t  opt;
-uint16_t  s1, s2;
-uint32_t  daddr;
+LanIgmpV2Pkt pigmp = &lpkt_igmpv2hdr( &buf_p->pkt );
+uint32_t     opt;
+uint16_t     s1, s2;
+uint32_t     daddr;
+LanIpPart    ipp   = &pigmp->ip_part;
 
 	if( IGMP_TYPE_LEAVE == type ) {
 		daddr = htonlc(IP_GRP_ALL_ROUTERS);
@@ -3645,25 +3620,25 @@ uint32_t  daddr;
 
 
 	/* Prepare Ethernet Header -- src address is filled-in later */
-	ipmc2ethermc(daddr, pigmp->ll.dst);
-	pigmp->ll.type = htonsc(0x800); /* IP */
+	ipmc2ethermc(daddr, ipp->ll.dst);
+	ipp->ll.type = htonsc(0x800); /* IP */
 
-	pigmp->ip.vhl     = 0x46;          /* v4, header + rtr-alert option */
-	pigmp->ip.tos     = 0x00;
-	pigmp->ip.len     = htonsc(sizeof(IpHeaderRec) + 4 + sizeof(IgmpV2HeaderRec));
-	pigmp->ip.id      = htonsc(0);
-	pigmp->ip.off     = htonsc(0);
-	pigmp->ip.ttl     = 1;
-	pigmp->ip.prot    = IP_PROT_IGMP;
-	/* pigmp->ip.csum   filled in later */
-	/* pigmp->ip.src    filled in later */
-	pigmp->ip.dst     = daddr;
-	pigmp->ip.opts[0] = opt = htonlc(IP_OPT_ROUTER_ALERT);
+	ipp->ip.vhl     = 0x46;          /* v4, header + rtr-alert option */
+	ipp->ip.tos     = 0x00;
+	ipp->ip.len     = htonsc(sizeof(IpHeaderRec) + 4 + sizeof(IgmpV2HeaderRec));
+	ipp->ip.id      = htonsc(0);
+	ipp->ip.off     = htonsc(0);
+	ipp->ip.ttl     = 1;
+	ipp->ip.prot    = IP_PROT_IGMP;
+	/* ipp->ip.csum   filled in later */
+	/* ipp->ip.src    filled in later */
+	ipp->ip.dst     = daddr;
+	ipp->ip.opts[0] = opt = htonlc(IP_OPT_ROUTER_ALERT);
 
 	/* Set source IP and ethernet addresses and compute
 	 * header checksum (w/o router-alert option)
 	 */
-	fillinSrcCsumIp( intrf, &lpkt_iphdr( &buf_p->pkt ) );
+	fillinSrcCsumIp( intrf, &lpkt_ip_hdrs( &buf_p->pkt ) );
 
 	/* Adjust the checksum for the router alert option */
 	s1                = (opt>>16);
@@ -3671,12 +3646,12 @@ uint32_t  daddr;
 	if ( (s1 += s2) < s1 )
 		s1++;
 	
-	s2                = ~pigmp->ip.csum;
+	s2                = ~ipp->ip.csum;
 
 	if ( (s1 += s2) < s1 )
 		s1++;
 
-	pigmp->ip.csum    = ~s1;
+	ipp->ip.csum    = ~s1;
 
 	pigmp->igmp_u.ip46.igmp.type  = type;
 	pigmp->igmp_u.ip46.igmp.max_rtime = 0;
@@ -3754,6 +3729,55 @@ IpBscMcAddr  mca = 0;
 }
 
 static void
+processArp(IpBscIf intrf, rbuf_t *p)
+{
+IpArpRec	*pipa = &lpkt_arp(&p->pkt);
+uint32_t    xx;
+
+	xx = * ( (uint32_a_t *) pipa + 1 );
+
+	if        ( htonsc(0x0001) == pipa->oper ) {
+		/* REQUEST */
+#ifdef DEBUG
+		if ( lanIpDebug & DEBUG_ARP )
+			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
+#endif
+		if ( get_tpa(pipa) != intrf->ipaddr )
+			return;
+
+		/* they mean us; send reply */
+		memcpy( intrf->arprep.ll.dst,  pipa->sha, 6);
+		memcpy( intrf->arprep.arp.tha, pipa->sha, 10);
+
+#if defined(DEBUG)
+		if ( lanIpDebug & DEBUG_ARP ) {
+			printf("MATCH -> sending\n");
+		}
+#endif
+
+		/* must copy 'arprep' into rbuf which we re-use for sending;
+		 * we cannot enqueue arprep itself since we might need it 
+		 * again before the buffer has made it out of the transmitter.
+		 */
+		memcpy( &lpkt_arp_pkt(&p->pkt), &intrf->arprep, sizeof(intrf->arprep) );
+
+		refrbuf( p );
+		NETDRV_ENQ_BUFFER(intrf, p, sizeof(intrf->arprep));
+	} else if ( htonsc(0x0002) == pipa->oper ) {
+		/* REPLY   */
+
+#ifdef DEBUG
+		if ( lanIpDebug & DEBUG_ARP ) {
+			printf("got ARP reply from "); prether(stdout, pipa->sha);
+			printf("\n");
+		}
+#endif
+
+		arpPutEntry(intrf, get_spa(pipa), pipa->sha, 0);
+	}
+}
+
+static void
 processIcmp(IpBscIf intrf, rbuf_t *p, int len)
 {
 IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
@@ -3773,8 +3797,8 @@ IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
 			arpPutEntry(intrf, lpkt_ip(&p->pkt).src, lpkt_eth(&p->pkt).src, 0);
 		}
 
-		src2dstIp(&lpkt_iphdr(&p->pkt));
-		fillinSrcCsumIp(intrf, &lpkt_iphdr(&p->pkt));
+		src2dstIp(&lpkt_ip_hdrs(&p->pkt));
+		fillinSrcCsumIp(intrf, &lpkt_ip_hdrs(&p->pkt));
 
 		refrbuf(p);
 		NETDRV_ENQ_BUFFER(intrf, p, sizeof(EthHeaderRec) + len);
@@ -3789,21 +3813,23 @@ IgmpV2HeaderRec *pigmp;
 rtems_interval   ticks_per_s;
 uint32_t         report_dly_ticks;
 int              pldlen;
-LanIgmpV2        pkt;
+LanIgmpV2Pkt     pkt;
+LanIpPart        ipp;
 
 	pkt = &lpkt_igmpv2hdr( &buf_p->pkt );
+	ipp = &pkt->ip_part;
 
-	assert( IP_PROT_IGMP == pkt->ip.prot );
+	assert( IP_PROT_IGMP == ipp->ip.prot );
 
 	/* This IP header has one option word */
 	pldlen = len - sizeof(IpHeaderRec);
 
-	if ( 0x46 == pkt->ip.vhl ) {
-		if ( htonlc(IP_OPT_ROUTER_ALERT) != pkt->ip.opts[0] ) {
+	if ( 0x46 == ipp->ip.vhl ) {
+		if ( htonlc(IP_OPT_ROUTER_ALERT) != ipp->ip.opts[0] ) {
 #ifdef DEBUG
 			if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
 				printf("Dropping IGMP packet w/o router alert (option[0]: 0x%08"PRIx32")\n",
-						ntohl(pkt->ip.opts[0]));
+						ntohl(ipp->ip.opts[0]));
 			}
 #endif
 			return;
@@ -3840,8 +3866,8 @@ LanIgmpV2        pkt;
 			pigmp->type, pigmp->max_rtime);
 		prip(stdout, pigmp->gaddr); fputc('\n', stdout);
 
-		printf("  SRC: "); prip(stdout,pkt->ip.src); fputc('\n', stdout);
-		printf("  DST: "); prip(stdout,pkt->ip.dst); fputc('\n', stdout);
+		printf("  SRC: "); prip(stdout,ipp->ip.src); fputc('\n', stdout);
+		printf("  DST: "); prip(stdout,ipp->ip.dst); fputc('\n', stdout);
 	}
 #endif
 	
@@ -3855,7 +3881,7 @@ LanIgmpV2        pkt;
 #ifdef DEBUG
 				if ( lanIpDebug & (DEBUG_IGMP) ) {
 					printf("Report to ");   prip(stdout, pigmp->gaddr);
-					printf(" seen (src: "); prip(stdout, pkt->ip.src);
+					printf(" seen (src: "); prip(stdout, ipp->ip.src);
 					printf(") SUPPRESSING my reports\n");
 				}
 #endif
@@ -3902,7 +3928,7 @@ LanIgmpV2        pkt;
 			report_dly_ticks /= 10;
 
 			if (   htonlc(0) == pigmp->gaddr
-				&& ISMCST_ALLSYS(pkt->ip.dst)   ) {
+				&& ISMCST_ALLSYS(ipp->ip.dst)   ) {
 #ifdef DEBUG
 				if ( lanIpDebug & (DEBUG_IGMP) ) {
 					printf("GENERAL\n");
@@ -4256,7 +4282,6 @@ lpWorker(void *arg)
 rbuf_t     *buf_p;
 IpBscIf    intrf;
 LanIpPacket   pkt;
-IpArpRec  *pipa;
 int        len;
 
 	while ( ( buf_p = dequeueLpWork() ) ) {
@@ -4265,20 +4290,8 @@ int        len;
 		pkt   = & buf_p->pkt;
 
 		if ( htonsc(0x806) == lpkt_eth(pkt).type ) {
-			/* ARP; must be a reply we received and that
-			 * they wanted us to store in the cache...
-			 */
 
-			pipa = &lpkt_arp( pkt );
-
-#ifdef DEBUG
-			if ( lanIpDebug & DEBUG_ARP ) {
-				printf("got ARP reply from "); prether(stdout, pipa->sha);
-				printf("\n");
-			}
-#endif
-
-			arpPutEntry(intrf, get_spa(pipa), pipa->sha, 0);
+			processArp( intrf, buf_p );
 
 		} else if ( htonsc(0x800) == lpkt_eth(pkt).type ) {
 

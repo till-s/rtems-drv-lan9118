@@ -1,4 +1,19 @@
 2009/09/10 (TS):
+ - drvLan9118.c, drvUdpSock.c, lanIpBasic.c, lanIpBasic.h,
+   lanIpBasicTest.c, lanIpProto.h, padStream.c: renamed and
+   restructured some of the protocol header structs (but I'm
+   still not quite happy).
+
+2009/09/10 (TS):
+ - lanIpBasic.c:
+     o moved ARP handling to low-priority worker.
+     o BUGFIX: cannot use 'arprep' buffer for sending ARP reply
+       since a new request may arrive before our reply has made
+       it out of the TX. Instead, we re-use the received packet
+       but must copy arprep there (no issue since we do this
+       from the low-priority worker anyways).
+
+2009/09/10 (TS):
  - lanIpBasic.c:
      o moved IGMP checksum calculation to low-priority worker (processIgmp()).
      o moved ICMP handling low-priority worker (processIcmp()).
