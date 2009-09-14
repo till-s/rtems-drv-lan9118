@@ -1,3 +1,11 @@
+2009/09/14 (TS):
+ - udpComm.h, padProto.c, udpCommBSD.c: removed socket-descriptor argument
+   from udpCommReturnPacket() again.
+   We can store the receiving interface hidden in the buffer.
+
+ - udpComm.h: Paranoia protection again overflow of multiplication in ms2ticks().
+ - lanIpBasic.h: Added 'udpSockGetBufIf()'.
+
 2009/09/10 (TS):
  - lanIpBasic.c: moved 'arpPutEntry()' from UDP handling
    in handleIP() to low-priority worker.

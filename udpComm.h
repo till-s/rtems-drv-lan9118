@@ -109,7 +109,7 @@ udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port);
  * [coldfire/lan9118]).
  */
 STATICINLINE void
-udpCommReturnPacket(int sd, UdpCommPkt p, int len);
+udpCommReturnPacket(UdpCommPkt p, int len);
 
 /* Join and leave a MC group. This actually affects the interface
  * not just the socket 'sd'.
@@ -222,9 +222,16 @@ static __inline__ int ms2ticks(int ms)
 	if ( ms > 0 ) {
 		rtems_interval rate;
 		rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &rate);
-		ms *= rate;
-		if ( 0 == (ms /= 1000) )
+		if ( ms > 50000 ) {
+			ms /= 1000;
+			ms *= rate;
+		} else {
+			ms *= rate;
+			ms /= 1000;
+		}
+		if ( 0 == ms ) {
 			ms = 1;
+		}
 	}
 	return ms;
 }
@@ -263,10 +270,10 @@ udpCommConnect(int sd, uint32_t diaddr, int port)
 }
 
 static __inline__ void
-udpCommReturnPacket(int sd, UdpCommPkt p, int len)
+udpCommReturnPacket(UdpCommPkt p, int len)
 {
 IpBscIf intrf;
-	if ( (intrf = udpSockGetIf(sd)) ) {
+	if ( (intrf = udpSockGetBufIf(p)) ) {
 		udpSockHdrsReflect(p);	        /* point headers back to sender */
 		lanIpBscSendBufRawIp(intrf, p); /* send off                     */
 	}

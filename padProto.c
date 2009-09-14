@@ -250,7 +250,7 @@ uint32_t	peerip;
 			err = padProtoHandler((PadRequest)udpCommBufPtr(p), me, (int*)&padudpkilled, peerip);
 			if ( 0 < err ) {
 				/* OK to send packet */
-				udpCommReturnPacket(sd, p, ntohs(((PadReply)udpCommBufPtr(p))->nBytes));
+				udpCommReturnPacket(p, ntohs(((PadReply)udpCommBufPtr(p))->nBytes));
 			} else {
 				/* release buffer */
 				udpCommFreePacket(p);

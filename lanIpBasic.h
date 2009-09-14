@@ -247,6 +247,12 @@ lanIpBscIfGetDrv(IpBscIf ipbif_p);
 IpBscIf
 udpSockGetIf(int sd);
 
+/* Retrieve interface where a packet was received; 
+ * calling this on a new buffer yields NULL.
+ */
+IpBscIf
+udpSockGetBufIf(LanIpPacket buf_p);
+
 /* Tear down interface handle and release all resources associated
  * with it (but *not* the driver). The interface and driver handles
  * are separate objects ('drv_p' passed to lanIpBscIfCreate() is only
