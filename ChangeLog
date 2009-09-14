@@ -1,4 +1,9 @@
 2009/09/14 (TS):
+ - drvGnrIpBasic.c: removed dead code. Moved inclusion of header to after
+   inclusion of lanIpBasic.c so that we are sure <rtems.h> has not been
+   included yet.
+
+2009/09/14 (TS):
  - udpComm.h, padProto.c, udpCommBSD.c: removed socket-descriptor argument
    from udpCommReturnPacket() again.
    We can store the receiving interface hidden in the buffer.

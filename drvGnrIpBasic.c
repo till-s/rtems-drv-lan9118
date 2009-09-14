@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <rtems/rtems_mii_ioctl.h>
 
 typedef struct gnreth_drv_s_ *gnreth_drv;
 
@@ -57,7 +56,6 @@ NETDRV_START(struct IpBscIfRec_ *pif, int pri);
 static inline int
 NETDRV_SHUTDOWN(void *drv_p);
 
-/*#define NETDRV_INCLUDE	<bsp/if_mve_pub.h>*/
 #define NETDRV_INCLUDE "gnreth_lldrv.h"
 
 /* RX buffers must be 64-bit aligned (8 byte)
@@ -85,8 +83,9 @@ NETDRV_SHUTDOWN(void *drv_p);
 
 #define TX_RING_SIZE (N_SATELLITES/4 + 1)
 
-
 #include "lanIpBasic.c"
+
+#include <rtems/rtems_mii_ioctl.h>
 
 #define IF_FLG_STOPPED	(1<<0)
 
