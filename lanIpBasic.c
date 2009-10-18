@@ -228,18 +228,19 @@ typedef union LanIpCalloutRef_ {
  *             these fields make it out to memory.
  *
  */
+
+struct _rbuf_ {
+	uint8_t           mem[sizeof(LanIpPacketRec)];
+	struct timespec   tstmp;
+	IpBscIf           intrf;
+	union rbuf_       *next;
+	uint8_t          refcnt;
+};
+
 typedef union rbuf_ {
 	LanIpPacketRec pkt;
-	struct {
-		uint8_t      mem[sizeof(LanIpPacketRec)];
-		IpBscIf      intrf;
-		union rbuf_  *next;
-		uint8_t      refcnt;
-	}              buf;
-	uint8_t        raw[ RBUF_ALGN(  sizeof(LanIpPacketRec)
-                                  + sizeof(union rbuf_*)
-                                  + sizeof(uint8_t)
-	                             ) ];
+	struct _rbuf_  buf;
+	uint8_t        raw[ RBUF_ALGN(  sizeof(struct _rbuf_) ) ];
 } rbuf_t;
 
 /* Struct describing an ARP table entry                                       */
@@ -333,7 +334,7 @@ ArpHash h;
 #ifdef BYTE_ORDER_UNKOWN
 	ipaddr = htohl(ipaddr);
 #elif  BYTE_ORDER == LITTLE_ENDIAN
-	ipaddr >> = 16;
+	ipaddr >>= 16;
 #endif
 	h  = ipaddr;
 	h += ipaddr >> 8;
@@ -380,6 +381,7 @@ typedef struct UdpSockRec_ {
 	unsigned          flags;          /* Flags                                */
 	LanUdpPktRec      hdr;            /* A packet header for 'sendto'         */
 	volatile unsigned nbytes;         /* # bytes queued (FIONREAD support)    */
+	int               mclpbk;         /* Loop-back MC packets sent from here  */
 } UdpSockRec, *UdpSock;
 
 /* Flag to indicate that a socket is 'connected' (has a fixed peer)           */
@@ -683,8 +685,15 @@ char nm[4];
 
 #define SEM_SYNC 1  /* Binary semaphore for synchronization (initially emtpy) */
 #define SEM_MUTX 2  /* Nesting mutex (initially full)                         */
-#define SEM_SMTX 3  /* Simple non-nesting mutex (initially full)              */
-#define SEM_CNTG 4  /* General-purpose, counting mutex                        */
+#define SEM_CNTG 3  /* General-purpose, counting mutex                        */
+
+static const char *semtype[4]=
+{
+	"",
+	"SYNC",
+	"MUTEX",
+	"COUNTING"
+};
 
 /* Create any type of semaphore                                               */
 
@@ -703,7 +712,6 @@ rtems_attribute   atts = 0;
 			atts = RTEMS_BINARY_SEMAPHORE;
 		break;
 
-		case SEM_SMTX:
 		case SEM_SYNC:
 			atts = RTEMS_SIMPLE_BINARY_SEMAPHORE;
 		break;
@@ -713,7 +721,7 @@ rtems_attribute   atts = 0;
 		break;
 	}
 
-	if ( SEM_SYNC != type && SEM_CNTG != type ) {
+	if ( SEM_MUTX == type ) {
 		atts |= RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY;
 	}
 
@@ -725,7 +733,7 @@ rtems_attribute   atts = 0;
 			&rval);
 
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "creating binary semaphore %s failed\n", nullchk(name));
+		rtems_error(sc, "creating %s semaphore %s failed\n", semtype[type], nullchk(name));
 		rval = 0;
 	}
 	return rval;
@@ -1432,10 +1440,18 @@ static inline void
 fillinSrcCsumIp(IpBscIf ifc, LanIpPart buf_p)
 {
 	memcpy(buf_p->ll.src, &ifc->arpreq.ll.src, sizeof(buf_p->ll.src));
-	buf_p->ip.src              = ifc->ipaddr;
+	buf_p->ip.src  = ifc->ipaddr;
 
-	buf_p->ip.csum             = 0;
-	buf_p->ip.csum             = in_cksum_hdr((void*)&buf_p->ip);
+#if 0
+	/* alias-rule is quite nasty. Even though the 'IpHeaderRec' is
+	 * given the 'may_alias' attribute I still found that gcc
+	 * optimizes initialization of the checksum away.
+	 */
+    buf_p->ip.csum = 0;
+#else
+	memset( &buf_p->ip.csum, 0, 2);
+#endif
+	buf_p->ip.csum = in_cksum_hdr((void*)&buf_p->ip);
 }
 
 /* Fill-in our source addresses (MAC, IP, UDP SPORT), IP header checksum      */
@@ -1475,6 +1491,25 @@ check_vhl(uint8_t vhl, uint8_t expected)
 		return -1;
 	}
 	return 0;
+}
+
+static inline int ms2ticks(int ms)
+{
+	if ( ms > 0 ) {
+		rtems_interval rate;
+		rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &rate);
+		if ( ms > 50000 ) {
+			ms /= 1000;
+			ms *= rate;
+		} else {
+			ms *= rate;
+			ms /= 1000;
+		}
+		if ( 0 == ms ) {
+			ms = 1;
+		}
+	}
+	return ms;
 }
 
 #warning 'debugging code still present'
@@ -1586,6 +1621,24 @@ void *p;
 	while ( (p = rbuf_mem) ) {
 		rbuf_mem = *(void**)rbuf_mem;
 		free(p);
+	}
+}
+
+/* Inofficial / non-public helpers for profiling                              */
+
+void
+lanIpBscGetBufTstmp(rbuf_t *p_buf, struct timespec *pts)
+{
+	*pts = p_buf->buf.tstmp;	
+}
+
+void
+lanIpBscSetBufTstmp(rbuf_t *p_buf, struct timespec *pts)
+{
+	if ( pts ) {
+		p_buf->buf.tstmp = *pts;
+	} else {
+		rtems_clock_get_uptime( &p_buf->buf.tstmp );
 	}
 }
 
@@ -2680,7 +2733,7 @@ LanIpPart    ipp   = &pigmp->ip_part;
 	ipp->ip.tos     = 0x00;
 	ipp->ip.len     = htonsc(sizeof(IpHeaderRec) + 4 + sizeof(IgmpV2HeaderRec));
 	ipp->ip.id      = htonsc(0);
-	ipp->ip.off     = htonsc(0);
+	ipp->ip.off     = htonsc(0x4000); /* set DF flag */
 	ipp->ip.ttl     = 1;
 	ipp->ip.prot    = IP_PROT_IGMP;
 	/* ipp->ip.csum   filled in later */
@@ -2691,17 +2744,17 @@ LanIpPart    ipp   = &pigmp->ip_part;
 	/* Set source IP and ethernet addresses and compute
 	 * header checksum (w/o router-alert option)
 	 */
-	fillinSrcCsumIp( intrf, &lpkt_ip_hdrs( &buf_p->pkt ) );
+	fillinSrcCsumIp( intrf, ipp );
 
 	/* Adjust the checksum for the router alert option */
 	s1                = (opt>>16);
 	s2                =  opt;
-	if ( (s1 += s2) < s1 )
+	if ( (s1 += s2) < s2 )
 		s1++;
 	
 	s2                = ~ipp->ip.csum;
 
-	if ( (s1 += s2) < s1 )
+	if ( (s1 += s2) < s2 )
 		s1++;
 
 	ipp->ip.csum    = ~s1;
@@ -2929,18 +2982,43 @@ LanUdpPkt    hdr;
 	if (   ! (pip->dst == pif->ipaddr)
 		&& ! (ismcst = mcListener(pif, pip->dst))
         && ! (isbcst = ISBCST(pip->dst, pif->nmask))
-	   )
+	   ) {
+#ifdef DEBUG
+		if ( (lanIpDebug & DEBUG_IP) ) {
+			printf("dropping IP to ");
+			prip(stdout, pip->dst);
+			printf(" (proto %i)\n", pip->prot);
+			{
+				l = ntohs(pip->len);
+				for ( i=0; i<l; ) {
+					printf("%02x ",*((char*)pip + i));	
+					i++;
+					if ( 0 == (i & 0xf) )
+						printf("\n");
+				}
+				if ( (i & 0xf) )
+					printf("\n");
+			}
+		}
+#endif
 		return rval;
+	}
 
 #ifdef DEBUG
 	if ( (lanIpDebug & DEBUG_IP) ) {
+		printf("accepting IP ");
 		if ( pip->dst == pif->ipaddr ) {
-			printf("accepting IP unicast, proto %i\n", pip->prot);
+			printf("unicast, ");
 		} else if ( ismcst ) {
-			printf("accepting IP multicast (");
+			printf("multicast (");
 			prip(stdout, pip->dst);
-			printf(") , proto %i\n", pip->prot);
+			printf("), ");
+		} else {
+			printf("broadcast (");
+			prip(stdout, pip->dst);
+			printf("), ");
 		}
+		printf("proto %i\n", pip->prot);
 	}
 #endif
 
@@ -3074,7 +3152,7 @@ LanUdpPkt    hdr;
 					rval += l;
 
 					/* Refresh peer's ARP entry */
-					if ( lanIpBscAutoRefreshARP ) {
+					if ( lanIpBscAutoRefreshARP && ! loopback ) {
 						scheduleRefreshArp(pif, pudp);
 					}
 
@@ -3134,11 +3212,28 @@ lanIpProcessBuffer(IpBscIf pif, rbuf_t **pprb, int len)
 rbuf_t         *prb = *pprb;
 EthHeaderRec   *pll = &lpkt_eth(&prb->pkt);
 uint16_t        tt;
+int             i;
 
 	prb->buf.intrf = pif;
+#ifdef ENABLE_PROFILE
+	rtems_clock_get_uptime( &prb->buf.tstmp );
+#endif
+
+	i    = len;
+	len -= sizeof(*pll);
+	if ( len < 0 ) {
+		return i;
+	}
 
 	NETDRV_READ_INCREMENTAL(pif, prb, sizeof(*pll));
-	len -= sizeof(*pll);
+
+	if (lanIpDebug & DEBUG_IP) {
+		int i;
+		printf("Ethernet: got 0x%04x\n", ntohs(pll->type));
+		for (i=0; i<sizeof(*pll); i++)
+			printf("%02x ", *(((char*)pll)+i));
+			printf("\n");
+	}
 
 	tt = pll->type;
 	if ( htonsc(0x806) == tt ) {
@@ -3149,13 +3244,13 @@ uint16_t        tt;
 		len -= handleIP(pprb, pif, 0 /* this is not a looped-back buffer */);
 	} else {
 #ifdef DEBUG
-			if (lanIpDebug & DEBUG_IP) {
-				int i;
-				printf("Ethernet: dropping 0x%04x\n", ntohs(pll->type));
-				for (i=0; i<20; i++)
-				printf("%02x ", *(((char*)prb)+i));
+		if (lanIpDebug & DEBUG_IP) {
+			int i;
+			printf("Ethernet: dropping 0x%04x\n", ntohs(pll->type));
+			for (i=0; i<sizeof(*pll); i++)
+				printf("%02x ", *(((char*)pll)+i));
 				printf("\n");
-			}
+		}
 #endif
 	}
 
@@ -3212,6 +3307,12 @@ uint32_t    xx;
 #endif
 
 		arpPutEntry(intrf, get_spa(pipa), pipa->sha, 0);
+	} else {
+#ifdef DEBUG
+		if ( lanIpDebug & DEBUG_ARP ) {
+			printf("dropping unknown ARP (oper 0x%04x)\n", ntohs(pipa->oper));
+		}
+#endif
 	}
 }
 
@@ -3242,6 +3343,11 @@ IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
 
 		refrbuf(p);
 		NETDRV_ENQ_BUFFER(intrf, p, sizeof(EthHeaderRec) + len);
+	} else {
+#ifdef DEBUG
+		if ( lanIpDebug & DEBUG_ICMP )
+			printf("dropping ICMP (type %u, code %u)\n", picmp->type, picmp->code);
+#endif
 	}
 }
 
@@ -3543,7 +3649,7 @@ rtems_interrupt_level	key;
 		goto bail;
 
 
-	if ( ! (rval->mutx = bsem_create("ipmx", SEM_SMTX)) ) {
+	if ( ! (rval->mutx = bsem_create("ipmx", SEM_MUTX)) ) {
 		fprintf(stderr, "lanIpCb: unable to create mutex\n");
 		goto bail;
 	}
@@ -3774,6 +3880,10 @@ lanIpBscSendBufRawIp(IpBscIf pif, LanIpPacket buf_p)
 int	len ;
 int do_mc_loopback;
 
+	/* We are outside of the scope of sockets -- hence we
+     * can't check a socket's multicast-loopback flag
+	 * Just do it...
+	 */
 	do_mc_loopback = mcListener( pif, lpkt_ip(buf_p).dst );
 
 	if ( do_mc_loopback )
@@ -3846,7 +3956,7 @@ uint32_t       report_dly_ticks;
 				 */
 				igmp_send_msg(intrf, mcaddr, IGMP_TYPE_REPORT_V2);
 
-				mca->mc_flags |= MC_FLG_IGMP_LEAVE;
+				mcan->mc_flags |= MC_FLG_IGMP_LEAVE;
 
 				/*
 				 * If random delay is 0 then lanIpCallout_reset()
@@ -4076,10 +4186,10 @@ int rval = 0;
 	p->ip_part.ip.vhl   = 0x45;	/* version 4, 5words length */
 	p->ip_part.ip.tos   = 0x30; /* priority, minimize delay */
 	p->ip_part.ip.len   = 0;
-	p->ip_part.ip.id    = htons(ip_id);/* ? */
-	p->ip_part.ip.off   = htonsc(0);
+	p->ip_part.ip.id    = htons(ip_id);   /* ? */
+	p->ip_part.ip.off   = htonsc(0x4000); /* set DF flag */
 	p->ip_part.ip.ttl   = 4;
-	p->ip_part.ip.prot  = IP_PROT_UDP;	/* UDP */
+	p->ip_part.ip.prot  = IP_PROT_UDP;	  /* UDP */
 	p->ip_part.ip.dst   = dipaddr;
 
 	p->udp.dport = htons(dport);
@@ -4140,7 +4250,7 @@ rtems_id  m = 0;
 		goto egress;
 	}
 
-	if ( ! (m = bsem_create( "udpl", SEM_SMTX )) ) {
+	if ( ! (m = bsem_create( "udpl", SEM_MUTX )) ) {
 		rval = -ENOSPC;
 		goto egress;
 	}
@@ -4184,6 +4294,7 @@ again:
 	socks[rval].mutx   = m;
 	socks[rval].flags  = 0;
 	socks[rval].nbytes = 0;
+	socks[rval].mclpbk = 1;
 
 	udpSockHdrsInit(rval, &socks[rval].hdr, 0, 0, 0);
 
@@ -4424,6 +4535,9 @@ int          do_mc_loopback = 0;
 IpBscIf      pif;
 PRFDECL;
 
+	if ( payload_len > UDPPAYLOADSIZE )
+		return -EMSGSIZE;
+
 	if ( sd < 0 || sd >= NSOCKS )
 		return -EBADF;
 
@@ -4520,7 +4634,7 @@ try_again:
 
 	dodiff(5);
 
-	do_mc_loopback = mcListener( pif, ipp->ip.dst );
+	do_mc_loopback = socks[sd].mclpbk && mcListener( pif, ipp->ip.dst );
 
 	if ( ! buf_p ) {
 #ifdef NETDRV_SND_PACKET
@@ -4605,7 +4719,7 @@ udpSockFreeBuf(LanIpPacketRec *b)
 	relrbuf((rbuf_t*)b);
 }
 
-LanIpPacketRec *
+LanIpPacket
 udpSockGetBuf()
 {
 	return &getrbuf()->pkt;
@@ -4645,6 +4759,33 @@ int rval      = -1;
 	/* this is in fact unimplemented; we only support a single IF */
 	rval = ifipaddr && ifipaddr != socks[sd].intrf->ipaddr ? - EADDRNOTAVAIL : 0;
 
+	SOCKUNLOCK( & socks[sd] );
+
+	return rval;
+}
+
+int
+udpSockSetMcastLoopback(int sd, int val)
+{
+int rval;
+
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	if ( 0 == socks[sd].port )
+		return -EBADF;
+
+	SOCKLOCK( & socks[sd] );
+
+	/* This flag should be set on the socket, not the interface --
+	 * but then we'd need to change the 'ReturnPacket' API to
+	 * be passed a 'socket' argument....
+	 */
+	rval = socks[sd].mclpbk;
+	if ( val >= 0 ) {
+		/* if val < 0 they want to just read the current state */
+		socks[sd].mclpbk = val;	
+	}
 	SOCKUNLOCK( & socks[sd] );
 
 	return rval;
@@ -4741,9 +4882,11 @@ task_killer           killer;
 
 	killer.kill_resource = workSema;
 
-	task_pseudojoin( workTask, KILL_BY_SEMA, killer );
+	if ( workTask ) {
+		task_pseudojoin( workTask, KILL_BY_SEMA, killer );
 
-	workTask = 0;
+		workTask = 0;
+	}
 
 	/* Interface and driver should be down by now. Hence,
 	 * no more low-priority work can be scheduled and it
@@ -4762,5 +4905,117 @@ task_killer           killer;
 	return 0;
 }
 
+/**** UDPCOMM API *************************************************************/
+
+/* The reason for having two very similar APIs (udpSock and udpComm) are
+ * mostly historical. 
+ * However, udpComm is a slightly higher abstraction which is also implemented
+ * over BSD sockets.
+ * OTOH, udpSock has stronger typing and offers more features.
+ */
+
+/* Redefine stuff for which we create aliases so that we can let the compiler
+ * check prototypes.
+ */
+
+#define UdpCommPkt        LanIpPacket
+
+int     udpCommSocket(int port)
+ 		__attribute__(( alias("udpSockCreate") ));
+#define udpCommSocket          udpSockCreate
+
+int     udpCommClose(int sd)
+		__attribute__(( alias("udpSockDestroy")));
+#define udpCommClose           udpSockDestroy
+
+int     udpCommConnect(int sd, uint32_t diaddr, int port)
+		__attribute__(( alias("udpSockConnect") ));
+#define udpCommConnect         udpSockConnect
+
+UdpCommPkt
+udpCommAllocPacket()
+		__attribute__(( alias("udpSockGetBuf") ));
+#define udpCommAllocPacket     udpSockGetBuf
+
+void
+udpCommFreePacket(UdpCommPkt p)
+		__attribute__(( alias("udpSockFreeBuf") ));
+#define udpCommFreePacket      udpSockFreeBuf
+
+int
+udpCommJoinMcast(int sd, uint32_t mc_addr)
+		__attribute__(( alias("udpSockJoinMcast") ));
+#define udpCommJoinMcast       udpSockJoinMcast
+
+int
+udpCommLeaveMcast(int sd, uint32_t mc_addr)
+		__attribute__(( alias("udpSockLeaveMcast") ));
+#define udpCommLeaveMcast      udpSockLeaveMcast
+
+int
+udpCommSetIfMcast(int sd, uint32_t mc_addr)
+		__attribute__(( alias("udpSockSetIfMcast") ));
+#define udpCommSetIfMcast      udpSockSetIfMcast
+
+extern uint32_t udpCommMcastIfAddr
+		__attribute__(( alias("udpSockMcastIfAddr") ));
+#define udpCommMcastIfAddr     udpSockMcastIfAddr;
+
+#include <udpComm.h>
+
+UdpCommPkt
+udpCommRecv(int sd, int timeout_ms)
+{
+	return udpSockRecv(sd, ms2ticks(timeout_ms));
+}
+
+UdpCommPkt
+udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
+{
+LanIpPacket rval;
+
+	rval = udpSockRecv(sd, timeout_ms);
+
+	if ( rval ) {
+		if ( ppeerip )
+			*ppeerip   = lpkt_ip(rval).src;
+		if ( ppeerport )
+			*ppeerport = ntohs(lpkt_udp(rval).sport);
+	}
+	return rval;
+}
+
+void *
+udpCommBufPtr(UdpCommPkt p)
+{
+	return udpSockUdpBufPayload((LanIpPacket)p);
+}
+
+int
+udpCommSend(int sd, void *payload, int payload_len)
+{
+	return udpSockSendTo_internal(sd, 0, payload, payload_len, 0, 0);
+}
 
 
+int
+udpCommSendPkt(int sd, UdpCommPkt b, int payload_len)
+{
+	return udpSockSendTo_internal(sd, b, 0, payload_len, 0, 0);
+}
+
+int
+udpCommSendPktTo(int sd, UdpCommPkt b, int payload_len, uint32_t ipaddr, int dport)
+{
+	return udpSockSendTo_internal(sd, b, 0, payload_len, ipaddr, dport);
+}
+
+void
+udpCommReturnPacket(UdpCommPkt p, int len)
+{
+IpBscIf pif;
+	if ( (pif = udpSockGetBufIf(p)) ) {
+		udpSockHdrsReflect(&lpkt_udp_hdrs((LanIpPacket)p));	      /* point headers back to sender */
+		lanIpBscSendBufRawIp(pif, p); /* send off                     */
+	}
+}
