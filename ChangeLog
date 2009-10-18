@@ -1,3 +1,48 @@
+2009/10/17 (TS):
+ - drvAmdEthIpBasic.c: fixed typo. SEM_SMTX semphore type was removed;
+   use SEM_MUTX (ordinary binary semaphore with priority inheritance)
+   instead.
+ - drvGnrEthIpBasic.c:
+    o Replaced SEM_SMTX by SEM_MUTX (see above).
+    o Driver now supports two tasks with different priorities (lower
+      priority for link events and TX cleanup). This uses the new 
+      low-level API of the 'beatnik' (and mvme3100) ethernet drivers.
+    o Don't stop sending if link is down (loopback/debug mode may not
+      have a valid link).
+ - drvLan9118.c: Replaced SEM_SMTX by SEM_MUTX (see above).
+ - e1k_lldrv.c:
+    o Renaming some stuff.
+    o Changed timing tuneup for lower latencies ('int_delay' variable
+      default values.
+    o Driver now implements new API allowing the higher level driver
+      to use different tasks for RX and less important TX/Link work.
+ - gnreth_lldrv.h, mve_lldrv.h:
+   Removed 'transparent_union' magic. Instead, the user defines the
+   LLDev type to match the low-level driver's declaration.
+ - hostStream.c: Need to #include <stdlib.h>
+ - hwtmr.h: Added 64-bit timers; added hr-timer for x86.
+ - lanIpBasic.c:
+    o Reworked math to align rbufs properly.
+    o SEM_SMTX was removed; simple binary semaphores do not support
+      priority inheritance. Silently ignored under pre-4.10; semaphore
+      creation fails under 4.10.
+    o Added yet another work-around for nasty alias-rule problem when
+      computing IP checksum!
+    o Set DF (don't fragment) in IP headers.
+    o Fixed bug when extending IP header checksum to cover RA option word.
+    o Added more verbosity in debug mode.
+    o Added MC-loopback flag to socket data structure and a call to change
+      the value (udpSockSetMcastLoopback()).
+ - udpComm.h, lanIpBasic.c, udpCommBSD.c:
+   UDPCOMM API is now macro/inline free. Apps compiled against UDPCOMM
+   are binary-compatible with lanIpBasic or udpCommBSD.
+ - lanIpBasic.h: Added udpSockSetMcastLoopback() declaration.
+ - padProtoHost.c: udpCommReturnPacket() now requires a socket-descriptor
+   argument.
+ - padStream.c: Replaced SEM_SMTX by SEM_MUTX (see above).
+     
+   
+
 2009/09/14 (TS):
  - lanIpBasic.c: re-arranged source code to group logically connected parts.
    Added more comments.
