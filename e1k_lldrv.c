@@ -47,12 +47,14 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <inttypes.h>
 #include <libcpu/byteorder.h>
 
+#define  lldrv_pvt e1k_private
 #include <gnreth_lldrv.h>
 
 /* 
  * If the 'em' driver library was built w/o 82542 support
  * then there are no access methods for the 82542 and
- * we'll get a link error.
+ * we'll get a link error if not defining NO_82542_SUPPORT.
+ *
  * If the library does have 82542 support then defining
  * this is still OK (but you have to undefine to get
  * this driver to work on a 82542).
@@ -126,15 +128,16 @@ struct ring {
 	int                    av;
 };
 
-struct adapter {
+struct e1k_private {
 	struct e1000_hw          hw;
 	struct ring              tx_ring;
 	struct ring              rx_ring;
 	uint32_t                 txd_cmd;
-	rtems_id                 tid;
 	int                      num_rx_ring;
 	int                      num_tx_ring;
 	int                      unit;
+	void                     (*isr)(void *isr_arg);
+	void                     *isr_arg;
 	void                     (*cleanup_txbuf)(void *usr_p, void *cleanup_txbuf_arg, int error_on_tx_occurred);
 	void                    *cleanup_txbuf_arg;
 	void                    *(*alloc_rxbuf)(int *p_size, unsigned long *p_data_addr);
@@ -157,11 +160,26 @@ struct adapter {
 
 int      drv_e1k_debug = 1;
 
+/*
+ * Value is calculated as DEFAULT_ITR = 1/(MAX_INTS_PER_SEC * 256ns)
+ */
+
+#define MAX_INTS_PER_SEC	8000
+#define DEFAULT_ITR	     1000000000/(MAX_INTS_PER_SEC * 256)
+
+/* Due to the way our driver works:
+ *  1) ISR disables interrupts, posts signal to task.
+ *  2) Task does work as long as there is work to do
+ *  3) Task re-enables interrupts
+ * there is 'automatic' moderation of interrupts.
+ */
+
 /* not exactly microseconds but who cares ... */
-uint32_t drv_e1k_tx_int_delay_us     = 20;
-uint32_t drv_e1k_tx_abs_int_delay_us = 20;
-uint32_t drv_e1k_rx_int_delay_us     = 20;
-uint32_t drv_e1k_rx_abs_int_delay_us = 20;
+uint32_t drv_e1k_tx_int_delay_us     = 10;
+uint32_t drv_e1k_tx_abs_int_delay_us = 40;
+uint32_t drv_e1k_rx_int_delay_us     =  0;
+uint32_t drv_e1k_rx_abs_int_delay_us =  0;
+uint32_t drv_e1k_min_int_period_us   =  2;
 
 static void
 cring(struct ring *r, int n)
@@ -258,7 +276,7 @@ uint16_t phy_tmp = 0;
 }
 
 static void
-update_link_status(struct adapter *ad)
+update_link_status(struct e1k_private *ad)
 {
 struct e1000_hw *hw = &ad->hw;
 int      tarc0;
@@ -292,7 +310,7 @@ int      tarc0;
 }
 
 static void
-put_rxb(struct adapter *ad, uint32_t buf)
+put_rxb(struct e1k_private *ad, uint32_t buf)
 {
 struct e1000_leg_desc *d;
 
@@ -307,7 +325,7 @@ struct e1000_leg_desc *d;
 }
 
 void
-dtxring(struct adapter *ad)
+dtxring(struct e1k_private *ad)
 {
 int                    i;
 struct e1000_leg_desc *d;
@@ -325,7 +343,7 @@ struct e1000_leg_desc *d;
 }
 
 void
-drxring(struct adapter *ad)
+drxring(struct e1k_private *ad)
 {
 int                    i;
 struct e1000_leg_desc *d;
@@ -343,7 +361,7 @@ struct e1000_leg_desc *d;
 }
 
 void
-drv_e1k_dump_stats(struct adapter *ad, FILE *f)
+drv_e1k_dump_stats(struct e1k_private *ad, FILE *f)
 {
 	if ( !f )
 		f = stdout;
@@ -357,24 +375,28 @@ drv_e1k_dump_stats(struct adapter *ad, FILE *f)
 	);
 }
 
-void
-drv_e1k_disable_irqs(struct adapter *ad)
+uint32_t
+drv_e1k_disable_irqs(struct e1k_private *ad, uint32_t mask)
 {
-	E1000_WRITE_REG(&ad->hw, E1000_IMC, 0xffffffff);
+uint32_t rval = E1000_READ_REG(&ad->hw, E1000_IMS);
+	E1000_WRITE_REG(&ad->hw, E1000_IMC, mask);
+	return rval;
 }
 
 void
-drv_e1k_enable_irqs(struct adapter *ad)
+drv_e1k_enable_irqs(struct e1k_private *ad, uint32_t mask)
 {
-	E1000_WRITE_REG(&ad->hw, E1000_IMS, ad->irq_msk);
+	E1000_WRITE_REG(&ad->hw, E1000_IMS, ad->irq_msk & mask);
 }
 
 static void noop(const rtems_irq_connect_data *unused)  {           }
 static int  noop1(const rtems_irq_connect_data *unused) { return -1;}
 
+static struct IpBscLLDrv_ lldrv_e1k;
+
 static void e1k_isr(void *arg)
 {
-struct adapter  *ad = arg;
+struct e1k_private  *ad = arg;
 uint32_t        icr;
 
 	icr = E1000_READ_REG(&ad->hw, E1000_ICR);
@@ -386,10 +408,7 @@ uint32_t        icr;
 		return;
 	}
 		
-	drv_e1k_disable_irqs(ad);
-
 	ad->stats.irqs++;
-
 	ad->pending |= icr & ad->irq_msk;
 
 #ifdef DEBUG_LL
@@ -397,8 +416,7 @@ uint32_t        icr;
 		printk("IRQ (0x%08x)\n",icr);
 #endif
 
-	if ( ad->tid )
-		rtems_event_send( ad->tid, 1<<ad->unit );
+	ad->isr(ad->isr_arg);
 }
 
 /* e1000_mta_clr() is modelled after e1000_mta_set() which is implemented
@@ -459,7 +477,7 @@ e1000_mta_clr(struct e1000_hw *hw, u32 hash_value)
 }
 
 void
-drv_e1k_mcast_filter_clear(struct adapter *ad)
+drv_e1k_mcast_filter_clear(struct e1k_private *ad)
 {
 struct e1000_hw *hw = &ad->hw;
 int              i;
@@ -482,7 +500,7 @@ static const char bcst[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 }
 
 void
-drv_e1k_mcast_filter_accept_add(struct adapter *ad, uint8_t *enaddr)
+drv_e1k_mcast_filter_accept_add(struct e1k_private *ad, uint8_t *enaddr)
 {
 struct e1000_hw *hw = &ad->hw;
 uint32_t         hash;
@@ -498,7 +516,7 @@ uint32_t         hash;
 }
 
 void
-drv_e1k_mcast_filter_accept_del(struct adapter *ad, uint8_t *enaddr)
+drv_e1k_mcast_filter_accept_del(struct e1k_private *ad, uint8_t *enaddr)
 {
 struct e1000_hw *hw = &ad->hw;
 uint32_t         hash;
@@ -598,10 +616,11 @@ unsigned rid;
 	return 0;
 }
 
-struct adapter *
+struct e1k_private *
 drv_e1k_setup(
 	int      unit,
-	rtems_id driver_tid,
+	void     (*isr)(void *isr_arg),
+	void     *isr_arg,
 	void     (*cleanup_txbuf)(void *, void *, int),
 	void    *cleanup_txbuf_arg,
 	void    *(*alloc_rxbuf)(int *, unsigned long *),
@@ -612,11 +631,16 @@ drv_e1k_setup(
 	int     irq_mask
 )
 {
-struct adapter        *ad;
+struct e1k_private        *ad;
 uint32_t               val;
 struct e1000_hw       *hw;
 int                    b,s,f;
 uint8_t                line;
+
+	if ( ! isr && irq_mask ) {
+		errpr("Need an ISR if irq_mask != 0\n");
+		return 0;
+	}
 
 	ad = calloc(1, sizeof(*ad));
 	hw = &ad->hw;
@@ -627,7 +651,9 @@ uint8_t                line;
 		return 0;	
 	}
 
-	ad->tid               = driver_tid;
+	ad->isr               = isr;
+	ad->isr_arg           = isr_arg;
+
 	ad->cleanup_txbuf     = cleanup_txbuf;
 	ad->cleanup_txbuf_arg = cleanup_txbuf_arg;
 	ad->alloc_rxbuf       = alloc_rxbuf;
@@ -812,7 +838,7 @@ bail:
 #define GIFMEDIA 0
 
 int
-drv_e1k_media_ioctl(struct adapter *ad, int cmd, int *pmedia)
+drv_e1k_media_ioctl(struct e1k_private *ad, int cmd, int *pmedia)
 {
 
 	if ( GIFMEDIA != cmd ) {
@@ -855,13 +881,13 @@ drv_e1k_media_ioctl(struct adapter *ad, int cmd, int *pmedia)
 }
 
 int
-drv_e1k_ack_link_chg(struct adapter *ad, int *pmedia)
+drv_e1k_ack_link_chg(struct e1k_private *ad, int *pmedia)
 {
 	return drv_e1k_media_ioctl(ad, GIFMEDIA, pmedia);
 }
 
 static void
-txrm(struct adapter *ad, uint32_t sta)
+txrm(struct e1k_private *ad, uint32_t sta)
 {
 uint32_t buf;
 
@@ -877,7 +903,7 @@ uint32_t buf;
 }
 
 static int
-txrpl(struct adapter *ad)
+txrpl(struct e1k_private *ad)
 {
 uint32_t sta;
 
@@ -894,7 +920,7 @@ uint32_t sta;
 }
 
 static void
-free_tx_structs(struct adapter *ad)
+free_tx_structs(struct e1k_private *ad)
 {
 	while ( ad->tx_ring.av < ad->tx_ring.sz ) {
 		txrm(ad, -1);
@@ -902,7 +928,7 @@ free_tx_structs(struct adapter *ad)
 }
 
 static void
-free_rx_structs(struct adapter *ad)
+free_rx_structs(struct e1k_private *ad)
 {
 int             i;
 	for ( i = ad->rx_ring.hd; ad->rx_ring.av; ad->rx_ring.av-- ) {
@@ -914,7 +940,7 @@ int             i;
 }
 
 int
-drv_e1k_swipe_tx(struct adapter *ad)
+drv_e1k_swipe_tx(struct e1k_private *ad)
 {
 int      org = ad->tx_ring.av;
 
@@ -926,7 +952,7 @@ int      org = ad->tx_ring.av;
 }
 
 int
-drv_e1k_swipe_rx(struct adapter *ad)
+drv_e1k_swipe_rx(struct e1k_private *ad)
 {
 int                    rval = 0;
 struct e1000_leg_desc  *d;
@@ -1007,7 +1033,7 @@ int                    err;
 }
 
 int
-drv_e1k_send_buf(struct adapter *ad, void *p_usr, void *buf, int len)
+drv_e1k_send_buf(struct e1k_private *ad, void *p_usr, void *buf, int len)
 {
 struct   e1000_leg_desc *d;
 
@@ -1042,7 +1068,7 @@ struct   e1000_leg_desc *d;
 }
 
 void
-drv_e1k_read_eaddr(struct adapter *ad, unsigned char *eaddr)
+drv_e1k_read_eaddr(struct e1k_private *ad, unsigned char *eaddr)
 {
 	memcpy(eaddr, ad->hw.mac.addr, 6);
 }
@@ -1050,7 +1076,7 @@ drv_e1k_read_eaddr(struct adapter *ad, unsigned char *eaddr)
 static void
 txinit(struct e1000_hw *hw)
 {
-struct adapter *ad = (struct adapter *)hw;
+struct e1k_private *ad = (struct e1k_private *)hw;
 uint32_t       tipg, tarc, tctl;
 
 	/* setup TX ring */
@@ -1130,7 +1156,7 @@ uint32_t       tipg, tarc, tctl;
 static void
 rxinit(struct e1000_hw *hw)
 {
-struct adapter *ad = (struct adapter *)hw;
+struct e1k_private *ad = (struct e1k_private *)hw;
 uint32_t        rctl;
 
 	/*
@@ -1143,12 +1169,10 @@ uint32_t        rctl;
 	if(hw->mac.type >= e1000_82540) {
 		E1000_WRITE_REG(hw, E1000_RADV, drv_e1k_rx_abs_int_delay_us);
 		/*
-		 * Set the interrupt throttling rate. Value is calculated
-		 * as DEFAULT_ITR = 1/(MAX_INTS_PER_SEC * 256ns)
+		 * Set the interrupt throttling rate. This is in 256ns units
+		 * which we round to 250ns...
 		 */
-#define MAX_INTS_PER_SEC	8000
-#define DEFAULT_ITR	     1000000000/(MAX_INTS_PER_SEC * 256)
-		E1000_WRITE_REG(hw, E1000_ITR, DEFAULT_ITR);
+		E1000_WRITE_REG(hw, E1000_ITR, drv_e1k_min_int_period_us * 4);
 	}
 
 	/* Setup the Base and Length of the Rx Descriptor Ring */
@@ -1171,6 +1195,7 @@ uint32_t        rctl;
 
 	rctl &= ~E1000_RCTL_LPE;
 
+#if 0
 	/*
 	** XXX TEMPORARY WORKAROUND: on some systems with 82573
 	** long latencies are observed, like Lenovo X60. This
@@ -1180,6 +1205,9 @@ uint32_t        rctl;
 	*/
 	if (hw->mac.type == e1000_82573)
 		E1000_WRITE_REG(hw, E1000_RDTR, 0x20);
+#else
+	E1000_WRITE_REG(hw, E1000_RDTR, drv_e1k_rx_int_delay_us);
+#endif
 
 	/*
 	 * Setup the HW Rx Head and
@@ -1195,14 +1223,14 @@ uint32_t        rctl;
 
 
 static int
-setup_tx_structs(struct adapter *ad)
+setup_tx_structs(struct e1k_private *ad)
 {
 	return 0;
 }
 
 
 static int
-setup_rx_structs(struct adapter *ad)
+setup_rx_structs(struct e1k_private *ad)
 {
 int                    i,sz;
 void                  *nbuf;
@@ -1246,11 +1274,11 @@ struct e1000_leg_desc *d;
 }
 
 static void
-hwstop(struct adapter *ad)
+hwstop(struct e1k_private *ad)
 {
 struct e1000_hw *hw = &ad->hw;
 
-	drv_e1k_disable_irqs(ad);
+	drv_e1k_disable_irqs(ad, -1);
 	e1000_reset_hw(hw);
 	free_tx_structs(ad);
 	free_rx_structs(ad);
@@ -1259,7 +1287,7 @@ struct e1000_hw *hw = &ad->hw;
 }
 
 void
-drv_e1k_init_hw(struct adapter *ad,  int prom, unsigned char *enaddr)
+drv_e1k_init_hw(struct e1k_private *ad,  int prom, unsigned char *enaddr)
 {
 struct e1000_hw *hw = &ad->hw;
 uint32_t        ctrl, pba;
@@ -1350,26 +1378,26 @@ uint32_t        ctrl, pba;
 
 	hw->phy.reset_disable = TRUE;
 
-	drv_e1k_enable_irqs(ad);
+	drv_e1k_enable_irqs(ad, -1);
 }
 
 uint32_t
-drv_e1k_ack_irqs(struct adapter *ad)
+drv_e1k_ack_irqs(struct e1k_private *ad, uint32_t mask)
 {
 uint32_t rval, key;
 	rtems_interrupt_disable(key);
 		rval = ad->pending;
-		ad->pending = 0;
+		ad->pending &= ~mask;
 	rtems_interrupt_enable(key);
 	return rval;
 }
 
 int
-drv_e1k_detach(struct adapter *ad)
+drv_e1k_detach(struct e1k_private *ad)
 {
 struct e1000_hw *hw = &ad->hw;
 
-	drv_e1k_disable_irqs(ad);
+	drv_e1k_disable_irqs(ad, -1);
 
 	if ( ad->irq.hdl ) {
 		if ( ! IRQREMV( &ad->irq ) ) {
@@ -1432,7 +1460,7 @@ void nulc(void *usr_buf, void *closure, int err)
 {
 }
 
-struct adapter *
+struct e1k_private *
 hwsetup(int unit)
 {
 	if ( 0 == unit )
@@ -1445,19 +1473,20 @@ static struct IpBscLLDrv_ lldrv_e1k = {
 	tx_irq_msk    :  E1000_IMS_TXDW,
 	rx_irq_msk    :  E1000_IMS_RXT0 | E1000_IMS_RXDMT0 | E1000_IMS_RXSEQ,
 	ln_irq_msk    :  E1000_IMS_LSC,
-	setup         :  (void*) drv_e1k_setup,
-	detach        :  (void*) drv_e1k_detach,
-	read_eaddr    :  (void*) drv_e1k_read_eaddr,
-	init_hw       :  (void*) drv_e1k_init_hw,
-	ack_irqs      :  (void*) drv_e1k_ack_irqs,
-	enb_irqs      :  (void*) drv_e1k_enable_irqs,
-	ack_ln_chg    :  (void*) drv_e1k_ack_link_chg,
-	swipe_tx      :  (void*) drv_e1k_swipe_tx,
-	swipe_rx      :  (void*) drv_e1k_swipe_rx,
-	send_buf      :  (void*) drv_e1k_send_buf,
-	med_ioctl     :  (void*) drv_e1k_media_ioctl,
-	mc_filter_add :  (void*) drv_e1k_mcast_filter_accept_add,
-	mc_filter_del :  (void*) drv_e1k_mcast_filter_accept_del,
+	setup         :  drv_e1k_setup,
+	detach        :  drv_e1k_detach,
+	read_eaddr    :  drv_e1k_read_eaddr,
+	init_hw       :  drv_e1k_init_hw,
+	ack_irqs      :  drv_e1k_ack_irqs,
+	dis_irqs      :  drv_e1k_disable_irqs,
+	enb_irqs      :  drv_e1k_enable_irqs,
+	ack_ln_chg    :  drv_e1k_ack_link_chg,
+	swipe_tx      :  drv_e1k_swipe_tx,
+	swipe_rx      :  drv_e1k_swipe_rx,
+	send_buf      :  drv_e1k_send_buf,
+	med_ioctl     :  drv_e1k_media_ioctl,
+	mc_filter_add :  drv_e1k_mcast_filter_accept_add,
+	mc_filter_del :  drv_e1k_mcast_filter_accept_del,
 };
 
 LLDrv drvGnrethIpBasicLLDrv = &lldrv_e1k;
