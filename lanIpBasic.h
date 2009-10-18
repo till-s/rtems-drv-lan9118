@@ -212,10 +212,25 @@ udpSockHdrsReflect(LanUdpPkt p);
 extern uint32_t udpSockMcastIfAddr;
 
 /*
- *Choose interface for outgoing multicast traffic
+ * Choose interface for outgoing multicast traffic
  */
 int
 udpSockSetIfMcast(int sd, uint32_t ifipaddr);
+
+/*
+ * Read and set the value of the 'multicast-loopback' flag.
+ * This flag defines whether locally sent multicast packets
+ * are looped-back to local sockets.
+ *
+ * RETURNS: Previous value of the flag (>=0) or a negative
+ *          error status.
+ *
+ * NOTE:    If 'val' < 0 then the value is not actually set.
+ *          This can be used to read the current state of the
+ *          flag.
+ */
+int
+udpSockSetMcastLoopback(int sd, int val);
 
 /*
  * Join and leave a multicast group.
