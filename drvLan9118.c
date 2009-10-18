@@ -59,6 +59,13 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.33  2009/09/11 01:03:03  strauman
+		2009/09/10 (TS):
+		 - drvLan9118.c, drvUdpSock.c, lanIpBasic.c, lanIpBasic.h,
+		   lanIpBasicTest.c, lanIpProto.h, padStream.c: renamed and
+		   restructured some of the protocol header structs (but I'm
+		   still not quite happy).
+		
 		Revision 1.32  2009/08/30 01:53:13  strauman
 		2009/08/29 (TS):
 		 - drvLan9118.c: create a semaphore and block until driver task exits
@@ -1243,7 +1250,7 @@ rtems_status_code sc;
 		sc = rtems_semaphore_create(
 			rtems_build_name('l','a','n','d'), 
 			1,
-			RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+			RTEMS_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
 			0,
 			&plan_ps->mutx);
 		if ( RTEMS_SUCCESSFUL != sc ) {
@@ -1254,7 +1261,7 @@ rtems_status_code sc;
 		sc = rtems_semaphore_create(
 			rtems_build_name('l','a','n','t'), 
 			1,
-			RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+			RTEMS_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
 			0,
 			&plan_ps->tmutx);
 		if ( RTEMS_SUCCESSFUL != sc ) {
