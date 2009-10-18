@@ -19,7 +19,7 @@ union  rbuf_;
 		if ( b ) {															\
 			amdeth_drv mdrv = (amdeth_drv)(pif)->drv_p;						\
 			int l_ = sizeof((pif)->arpreq);									\
-			memcpy(&b->pkt, &(pd)->arpreq, sizeof((pif)->arpreq));			\
+			memcpy(&b->pkt, &(pif)->arpreq, sizeof((pif)->arpreq));			\
 			set_tpa( &lpkt_arp( &b->pkt ), ipaddr);							\
 			memcpy( lpkt_arp( &b->pkt ).tpa, &ipaddr, sizeof(ipaddr) );		\
 			amd_send_buf_locked(mdrv, 0, 0, b, l_);							\
@@ -277,7 +277,7 @@ amdeth_drv            mdrv = 0;
 
 	mdrv->mutex = 0;
 
-	if ( ! (mdrv->mutex = bsem_create("amdL", SEM_SMTX)) ) {
+	if ( ! (mdrv->mutex = bsem_create("amdL", SEM_MUTX)) ) {
 			goto egress;
 	}
 
