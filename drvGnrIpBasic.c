@@ -89,60 +89,22 @@ NETDRV_SHUTDOWN(void *drv_p);
 
 #define IF_FLG_STOPPED	(1<<0)
 
-#if 0
-typedef struct IpBscLLDrv_ *LLDrv;
-typedef void               *LLDev;
+#define KILL_EVENT RTEMS_EVENT_7
+#define IRQ_EVENT  RTEMS_EVENT_0
 
-struct IpBscLLDrv_ {
-	LLDev        dev;
-	uint32_t     tx_irq_msk;
-	uint32_t     rx_irq_msk;
-	uint32_t     ln_irq_msk;
-	void    	*(*setup)(
-					int      unit,
-					rtems_id tid,
-               		void     (*cleanup_txbuf)(void*, void*, int),
-					void     *cleanup_txbuf_arg,
-					void     *(*alloc_rxbuf)(int*, unsigned long*),
-					void     (*consume_rxbuf)(void*, void*, int),
-					void     *consume_rxbuf_arg,
-					int      rx_ring_size,
-					int      tx_ring_size,
-					uint32_t irq_mask);
-	int     	(*detach)(void*);
-	void    	(*read_eaddr)(void *, unsigned char *);
-	void    	(*init_hw)(void*, int, unsigned char *);	
-	uint32_t    (*ack_irqs)(void*);
-	void        (*enb_irqs)(void*);
-	int         (*ack_ln_chg)(void*, int*);
-	int         (*swipe_tx)(void*);
-	int         (*swipe_rx)(void*);
-	int         (*send_buf)(void*, void*, void*, int);
-	int         (*med_ioctl)(void*, int, int*);
-} ipBscLLDrvMve = {
-	tx_irq_msk:  BSP_MVE_IRQ_TX,
-	rx_irq_msk:  BSP_MVE_IRQ_RX,
-	ln_irq_msk:  /* BSP_MVE_IRQ_LINK */ 0,
-	setup     :  (void*) BSP_mve_setup,
-	detach    :  (void*) BSP_mve_detach,
-	read_eaddr:  (void*) BSP_mve_read_eaddr,
-	init_hw   :  (void*) BSP_mve_init_hw,
-	ack_irqs  :  (void*) BSP_mve_ack_irqs,
-	enb_irqs  :  (void*) BSP_mve_enable_irqs,
-	ack_ln_chg:  (void*) BSP_mve_ack_link_chg,
-	swipe_tx  :  (void*) BSP_mve_swipe_tx,
-	swipe_rx  :  (void*) BSP_mve_swipe_rx,
-	send_buf  :  (void*) BSP_mve_send_buf,
-	med_ioctl :  (void*) BSP_mve_media_ioctl,
-};
+#ifndef SIOCGIFMEDIA
+/* media_ioctl() aliases '0' to SIOCGIFMEDIA :-) */
+#define SIOCGIFMEDIA 0
 #endif
+
 
 typedef struct gnreth_drv_s_ {
 	IpBscIf              ipbif_p;
 	rtems_id             mutex;
 	int                  unit; /* zero based */
 	unsigned             flags;
-	rtems_id             tid;
+	rtems_id             rx_tid;
+	rtems_id             tx_tid;
 	int8_t               hasenaddr;
 	uint8_t              enaddr[6];
 	struct IpBscLLDrv_   lldrv;
@@ -151,13 +113,16 @@ typedef struct gnreth_drv_s_ {
 #define DRVLOCK(drv)   mutex_lock( (drv)->mutex )
 #define DRVUNLOCK(drv) mutex_unlk( (drv)->mutex )
 
-
 static inline int
 gnr_send_buf_locked(gnreth_drv gdrv, void *pbuf, void *data, int len)
 {
 int rval;
 	DRVLOCK(gdrv);
-		if ( (gdrv->flags & IF_FLG_STOPPED) ) {
+		/* For now - never drop.  Sometimes it is useful to switch
+		 * the PHY to 'loopback' mode in which case the link goes
+		 * 'away' but we still want to send.
+		 */
+		if ( 0 && (gdrv->flags & IF_FLG_STOPPED) ) {
 			/* drop */
 			rval = 0;
 		} else
@@ -200,14 +165,42 @@ cleanup_txbuf(void *buf, void *closure, int error_on_tx_occurred)
 }
 
 static void *
-alloc_rxbuf(int *p_size, unsigned long *p_data_addr)
+alloc_rxbuf(int *p_size, uintptr_t *p_data_addr)
 {
-	*p_size = (*p_data_addr = (unsigned long)getrbuf()) ? LANPKTMAX : 0;
+	*p_size = (*p_data_addr = (uintptr_t)getrbuf()) ? LANPKTMAX : 0;
 	return (void*) *p_data_addr;
 }
 
 int drvGnrethIpBasicRxErrs  = 0;
 int drvGnrethIpBasicRxDrop  = 0;
+
+static void
+gdrv_isr(void *arg)
+{
+gnreth_drv gdrv = arg;
+uint32_t   pending;
+
+	/* Findout what interrupts are pending w/o clearing them */
+	pending = gdrv->lldrv.ack_irqs(gdrv->lldrv.dev, 0);
+
+	/* Disable pending interrupts                            */
+	pending &= gdrv->lldrv.dis_irqs(gdrv->lldrv.dev, pending);
+
+	/* Post IRQ event to tasks. Note that this could lead to
+	 * an event being sent multiple times but that is not 
+	 * considered harmful since the driver task polls for the
+	 * interrupt cause:
+	 *    TX irq raised, detected pending, event posted.
+	 * If at this point an RX interrupt happens (before the
+	 * TX task has cleared the TX interrupt) then an RX event
+	 * but also a second TX event is posted (since the TX irq is
+	 * still pending).
+	 */
+	if ( (pending & (gdrv->lldrv.tx_irq_msk | gdrv->lldrv.ln_irq_msk)) )
+		rtems_event_send(gdrv->tx_tid, IRQ_EVENT);
+	if ( (pending & gdrv->lldrv.rx_irq_msk) )
+		rtems_event_send(gdrv->rx_tid, IRQ_EVENT);
+}
 
 static void
 consume_rxbuf(void *buf, void *closure, int len)
@@ -238,10 +231,15 @@ gdrv_cleanup(gnreth_drv gdrv)
 		rtems_semaphore_delete(gdrv->mutex);
 		gdrv->mutex = 0;
 	}
-	if ( gdrv->tid ) {
-		rtems_task_delete(gdrv->tid);
-		gdrv->tid = 0;
+	if ( gdrv->rx_tid ) {
+		rtems_task_delete(gdrv->rx_tid);
+		gdrv->rx_tid = 0;
 	}
+	if ( gdrv->tx_tid ) {
+		rtems_task_delete(gdrv->tx_tid);
+		gdrv->tx_tid = 0;
+	}
+	free(gdrv);
 }
 
 LanIpBscDrv
@@ -274,27 +272,40 @@ uint32_t              irq_msk;
 	}
 
 	/* Create driver mutex */
-	if ( ! (gdrv->mutex = bsem_create("ipbd", SEM_SMTX)) ) {
+	if ( ! (gdrv->mutex = bsem_create("ipbd", SEM_MUTX)) ) {
 		fprintf(stderr, "drvGnrethIpBasic: unable to create driver mutex");
 		goto egress;
 	}
 
-	/* Create driver task but don't start yet */
+	/* Create driver tasks but don't start yet */
 	sc = rtems_task_create(
-				rtems_build_name('i','p','b','d'),
+				rtems_build_name('i','p','b','R'),
 				20,
 				10000,
 				RTEMS_DEFAULT_MODES,
 				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
-				&gdrv->tid);
+				&gdrv->rx_tid);
 
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "drvGnrethIpBasic: unable to create driver task");
+		rtems_error(sc, "drvGnrethIpBasic: unable to create RX driver task");
 		goto egress;
 	}
 
-	/* Initialize low-level driver; it needs a task ID already -- that's
-	 * why we had to create the task upfront.
+	sc = rtems_task_create(
+				rtems_build_name('i','p','b','T'),
+				80,
+				10000,
+				RTEMS_DEFAULT_MODES,
+				RTEMS_FLOATING_POINT | RTEMS_LOCAL,
+				&gdrv->tx_tid);
+
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "drvGnrethIpBasic: unable to create TX driver task");
+		goto egress;
+	}
+
+	/* Initialize low-level driver; it may already generate interrupts
+	 * -- that's why we had to create the tasks upfront.
 	 */
 	if ( unit < 0 ) {
 		minu = 1;
@@ -312,7 +323,7 @@ uint32_t              irq_msk;
 
 	for ( unit=minu; unit < maxu; unit++ ) {
 		if ( (gdrv->lldrv.dev = gdrv->lldrv.setup(unit,
-								gdrv->tid,
+								gdrv_isr, gdrv,
 								cleanup_txbuf, gdrv,
 								alloc_rxbuf,
 								consume_rxbuf, gdrv,
@@ -322,7 +333,10 @@ uint32_t              irq_msk;
 			fprintf(stderr,"drvGnrethIpBasic: using device instance %u\n",unit);
 			gdrv->unit = unit - 1;
 
-			task_init( gdrv->tid );
+			gdrv->lldrv.init_hw( gdrv->lldrv.dev, 0, gdrv->hasenaddr ? gdrv->enaddr : 0 );
+
+			task_init( gdrv->rx_tid );
+			task_init( gdrv->tx_tid );
 
 			return gdrv;
 		}
@@ -336,16 +350,8 @@ uint32_t              irq_msk;
 egress:
 
 	gdrv_cleanup(gdrv);
-	free(gdrv);
 	return 0;
 }
-
-#define KILL_EVENT RTEMS_EVENT_7
-
-#ifndef SIOCGIFMEDIA
-/* media_ioctl() aliases '0' to SIOCGIFMEDIA :-) */
-#define SIOCGIFMEDIA 0
-#endif
 
 LLDev
 drvGnrethLLDev(gnreth_drv gdrv)
@@ -354,24 +360,65 @@ drvGnrethLLDev(gnreth_drv gdrv)
 }
 
 void
-drvGnrethIpBasicTask(rtems_task_argument arg)
+drvGnrethIpBasicRXTask(rtems_task_argument arg)
 {
 IpBscIf               ipbif_p = (IpBscIf)arg;
 gnreth_drv            gdrv    = lanIpBscIfGetDrv(ipbif_p);
 LLDev                 lldev   = gdrv->lldrv.dev;
 LLDrv                 lldrv   = &gdrv->lldrv;
-rtems_event_set       ev_mask = (1<<gdrv->unit) | KILL_EVENT;
+rtems_event_set       ev_mask = IRQ_EVENT | KILL_EVENT;
 rtems_event_set       evs;
 uint32_t              irqs;
+
+#ifdef DEBUG
+	if ( lanIpDebug & DEBUG_TASK ) {
+		printf("IP RX task starting up\n");
+	}
+#endif
+
+	do {
+		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
+
+		irqs = lldrv->ack_irqs(lldev, lldrv->rx_irq_msk);
+
+		if ( (irqs & lldrv->rx_irq_msk) ) {
+			/* alloc_rxbuf, consume_rxbuf */
+			lldrv->swipe_rx(lldev);
+		}
+		lldrv->enb_irqs(lldev, lldrv->rx_irq_msk);
+
+	} while ( ! (evs & KILL_EVENT) );
+
+#ifdef DEBUG
+	if ( lanIpDebug & DEBUG_TASK ) {
+		printf("IP RX task received shutting down\n");
+	}
+#endif
+
+	/* prevent this task from being deleted in cleanup routine */
+	gdrv->rx_tid = 0;
+
+	task_leave();
+}
+
+/* The TX task does lower-priority work */
+void
+drvGnrethIpBasicTXTask(rtems_task_argument arg)
+{
+IpBscIf               ipbif_p = (IpBscIf)arg;
+gnreth_drv            gdrv    = lanIpBscIfGetDrv(ipbif_p);
+LLDev                 lldev   = gdrv->lldrv.dev;
+LLDrv                 lldrv   = &gdrv->lldrv;
+rtems_event_set       ev_mask = IRQ_EVENT | KILL_EVENT;
+rtems_event_set       evs;
+uint32_t              irqs, my_irqs;
 int                   media;
 
 #ifdef DEBUG
 	if ( lanIpDebug & DEBUG_TASK ) {
-		printf("IP task starting up\n");
+		printf("IP TX task starting up\n");
 	}
 #endif
-
-	lldrv->init_hw( lldev, 0, gdrv->hasenaddr ? gdrv->enaddr : 0 );
 
 	if ( 0 == lldrv->med_ioctl( lldev, SIOCGIFMEDIA, &media ) ) {
 		if ( (IFM_LINK_OK & media) ) {
@@ -380,21 +427,19 @@ int                   media;
 	} else {
 		fprintf(stderr,"WARNING: unable to determine link state; may be unable to send\n");
 	}
+	
+	my_irqs = lldrv->ln_irq_msk | lldrv->tx_irq_msk;
 
 	do {
 		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
 
-		irqs = lldrv->ack_irqs(lldev);
+		irqs = lldrv->ack_irqs(lldev, my_irqs);
 
 		if ( (irqs & lldrv->tx_irq_msk) ) {
 		DRVLOCK(gdrv);
 			/* cleanup_txbuf */
 			lldrv->swipe_tx(lldev);
 		DRVUNLOCK(gdrv);
-		}
-		if ( (irqs & lldrv->rx_irq_msk) ) {
-			/* alloc_rxbuf, consume_rxbuf */
-			lldrv->swipe_rx(lldev);
 		}
 		if ( (irqs & lldrv->ln_irq_msk) ) {
 			/* propagate link change to serial port */
@@ -407,21 +452,17 @@ int                   media;
 			}
 		DRVUNLOCK(gdrv);
 		}
-		lldrv->enb_irqs(lldev);
+		lldrv->enb_irqs(lldev, my_irqs);
 	} while ( ! (evs & KILL_EVENT) );
 
 #ifdef DEBUG
 	if ( lanIpDebug & DEBUG_TASK ) {
-		printf("IP task received shutting down\n");
+		printf("IP TX task received shutting down\n");
 	}
 #endif
 
 	/* prevent this task from being deleted in cleanup routine */
-	gdrv->tid = 0;
-
-	gdrv_cleanup(gdrv);
-
-	free(gdrv);
+	gdrv->tx_tid = 0;
 
 	task_leave();
 }
@@ -448,9 +489,9 @@ rtems_task_priority op;
 	}
 
 	if ( pri > 0 ) {
-		sc = rtems_task_set_priority(gdrv->tid, pri, &op);
+		sc = rtems_task_set_priority(gdrv->rx_tid, pri, &op);
 		if ( RTEMS_SUCCESSFUL != sc ) {
-			rtems_error(sc,"drvGnrethIpBasic: unable to change driver task priority");
+			rtems_error(sc,"drvGnrethIpBasic: unable to change driver RX task priority");
 			return sc;
 		}
 	}
@@ -460,10 +501,20 @@ rtems_task_priority op;
 	 */
 	gdrv->ipbif_p = ipbif_p;
 
-	sc = rtems_task_start( gdrv->tid, drvGnrethIpBasicTask, (rtems_task_argument)ipbif_p);
+	sc = rtems_task_start( gdrv->rx_tid, drvGnrethIpBasicRXTask, (rtems_task_argument)ipbif_p);
 	if ( RTEMS_SUCCESSFUL != sc ) {
-		rtems_error(sc, "drvGnrethIpBasic: unable to start driver task");
+		rtems_error(sc, "drvGnrethIpBasic: unable to start driver RX task");
 		gdrv->ipbif_p = 0; /* mark as not started */
+		return sc;
+	}
+
+	sc = rtems_task_start( gdrv->tx_tid, drvGnrethIpBasicTXTask, (rtems_task_argument)ipbif_p);
+	if ( RTEMS_SUCCESSFUL != sc ) {
+		rtems_error(sc, "drvGnrethIpBasic: unable to start driver TX task");
+		gdrv->ipbif_p = 0; /* mark as not started */
+		rtems_panic("drvGnrethIpBasic: cannot recover\n");
+		/* NEVER GET HERE */
+		return sc;
 	}
 
 	/* don't clean the driver struct; leave everything as it was on entry */
@@ -482,13 +533,13 @@ gnreth_drv gdrv = drv_p;
 		task_killer killer;
 		killer.kill_event = KILL_EVENT;
 
-		/* Has already been started; driver task must cleanup */
-		task_pseudojoin( gdrv->tid, KILL_BY_EVENT, killer );
+		/* Has already been started */
+		task_pseudojoin( gdrv->rx_tid, KILL_BY_EVENT, killer );
+		task_pseudojoin( gdrv->tx_tid, KILL_BY_EVENT, killer );
 
 	} else {
 		/* Not started yet */
-		gdrv_cleanup(gdrv);
-		free(gdrv);
 	}
+	gdrv_cleanup(gdrv);
 	return 0;
 }
