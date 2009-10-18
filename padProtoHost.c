@@ -132,7 +132,7 @@ int         T = timeout_ms <= 0 ? 1000 : timeout_ms;
 			err = padProtoHandler((PadRequest)udpCommBufPtr(p), chan, (int*)&padudpkilled, peerip);
 			if ( 0 < err ) {
 				/* OK to send packet */
-				udpCommReturnPacket(sd, p, ntohs(((PadReply)udpCommBufPtr(p))->nBytes));
+				udpCommReturnPacket(p, ntohs(((PadReply)udpCommBufPtr(p))->nBytes));
 			} else {
 				/* release buffer */
 				udpCommFreePacket(p);
