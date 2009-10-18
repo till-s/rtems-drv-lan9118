@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <netinet/in.h> /* for ntohs & friends */
+
 #define NCHNS	4	/* channels on a PAD */
 
 #include <padStream.h>
@@ -55,7 +57,7 @@ rtems_status_code sc;
 	sc = rtems_semaphore_create(
 			rtems_build_name('p','a','d','S'),
 			1,
-            RTEMS_SIMPLE_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
+            RTEMS_BINARY_SEMAPHORE | RTEMS_PRIORITY | RTEMS_INHERIT_PRIORITY,
 			0,
 			&mutex);
 
