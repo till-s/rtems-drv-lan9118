@@ -7,31 +7,22 @@
  * the lanIpBasic 'stack'.
  */
 
-#ifdef BSDSOCKET
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <unistd.h>
-#include <stdlib.h>
-#define STATICINLINE
-#else
-#include <lanIpBasic.h>
-#define STATICINLINE static __inline__
-#endif
-#include <netinet/in.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifndef UdpCommPkt
 typedef void * UdpCommPkt;
+#endif
 
 /* Create */
-STATICINLINE int
+int
 udpCommSocket(int port);
 
 /* Close  */
-static __inline__ int
+int
 udpCommClose(int sd);
 
 /* Connect socket to a peer
@@ -39,38 +30,33 @@ udpCommClose(int sd);
  * NOTE: 'dipaddr' is the peer's IP address in *network* byte order
  *       'port'    is the peer's port number in *host*   byte order
  */
-STATICINLINE int
+int
 udpCommConnect(int sd, uint32_t diaddr, int port);
 
-
 /* Receive a packet */
-STATICINLINE UdpCommPkt
+UdpCommPkt
 udpCommRecv(int sd, int timeout_ms);
 
 /* Receive a packet and sender information
  *
  * NOTE: port is in host, IP address in network byte order.
  */
-STATICINLINE UdpCommPkt
+UdpCommPkt
 udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport);
 
 /* Allocate a packet (for sending with udpCommSendPktTo) */
-STATICINLINE UdpCommPkt
+UdpCommPkt
 udpCommAllocPacket();
 
-/* Release packet (obtained from Recv) when done */
-STATICINLINE void
+/* Release packet (obtained from Recv) when done       */
+void
 udpCommFreePacket(UdpCommPkt p);
 
-#ifdef BSDSOCKET
-/* Payload size = 3*512 (<MTU) - eth, ip and udp header sizes) */
-#define UDPCOMM_PKTSZ (3*512 - 16 - 20 - 8)
-#else
-#define UDPCOMM_PKTSZ UDPPAYLOADSIZE
-#endif
+/* Payload size = eth MTU - ip and udp header sizes    */
+#define UDPCOMM_PKTSZ (1500 - 20 - 8)
 
 /* Obtain pointer to data area in buffer (UDP payload) */
-static __inline__ void *
+void *
 udpCommBufPtr(UdpCommPkt p);
 
 /* Send packet to connected peer; 
@@ -78,7 +64,7 @@ udpCommBufPtr(UdpCommPkt p);
  * into the 'lanIpBasic' stack (no-op
  * when using BSD sockets).
  */
-static __inline__ int
+int
 udpCommSend(int sd, void *buf, int len);
 
 /* Send packet w/o extra copy step.
@@ -91,7 +77,7 @@ udpCommSend(int sd, void *buf, int len);
  *       this call (regardless of the
  *       return value).
  */
-STATICINLINE int
+int
 udpCommSendPkt(int sd, UdpCommPkt pkt, int len);
 
 /*
@@ -101,14 +87,14 @@ udpCommSendPkt(int sd, UdpCommPkt pkt, int len);
  * NOTE: 'dipaddr' is the peer's IP address in *network* byte order
  *       'port'    is the peer's port number in *host*   byte order
  */
-STATICINLINE int
+int
 udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port);
 
 /* Return packet to sender (similar to 'send'; 
  * this interface exists for efficiency reasons
  * [coldfire/lan9118]).
  */
-STATICINLINE void
+void
 udpCommReturnPacket(UdpCommPkt p, int len);
 
 /* Join and leave a MC group. This actually affects the interface
@@ -119,10 +105,10 @@ udpCommReturnPacket(UdpCommPkt p, int len);
  * RETURNS: zero on success, -errno on failure.
  */
 
-STATICINLINE int
+int
 udpCommJoinMcast(int sd, uint32_t mc_addr);
 
-STATICINLINE int
+int
 udpCommLeaveMcast(int sd, uint32_t mc_addr);
 
 /*
@@ -151,7 +137,7 @@ udpCommLeaveMcast(int sd, uint32_t mc_addr);
  *          The 'ifipaddr' is as usual given in
  *          network-byte order.
  */
-STATICINLINE int
+int
 udpCommSetIfMcast(int sd, uint32_t ifipaddr);
 
 /* This variable can be set to the IP address of
@@ -159,157 +145,7 @@ udpCommSetIfMcast(int sd, uint32_t ifipaddr);
  * in network byte order. Defaults to INADDR_ANY,
  * i.e., system picks a suitable IF.
  */
-#ifdef BSDSOCKET
 extern uint32_t udpCommMcastIfAddr;
-#else
-#define udpCommMcastIfAddr udpSockMcastIfAddr
-#endif
-
-
-/* Inline implementations for both BSD and udpSocks */
-
-static __inline__ int
-udpCommClose(int sd)
-{
-#ifdef BSDSOCKET
-	return close(sd);
-#else
-	return udpSockDestroy(sd);
-#endif
-}
-
-static __inline__ void *
-udpCommBufPtr(UdpCommPkt p)
-{
-#ifdef BSDSOCKET
-	return (void*)p;
-#else
-	return udpSockUdpBufPayload((LanIpPacket)p);
-#endif
-}
-
-#ifndef BSDSOCKET
-static __inline__ UdpCommPkt
-udpCommAllocPacket()
-{
-	return udpSockGetBuf();
-}
-#endif
-
-
-#ifndef BSDSOCKET
-static __inline__ void
-udpCommFreePacket(UdpCommPkt p)
-{
-	udpSockFreeBuf(p);
-}
-#endif
-
-static __inline__ int
-udpCommSend(int sd, void *buf, int len)
-{
-#ifdef BSDSOCKET
-	return send(sd, buf, len, 0);
-#else
-	return udpSockSend(sd, buf, len);
-#endif
-}
-
-#ifndef BSDSOCKET
-
-static __inline__ int ms2ticks(int ms)
-{
-	if ( ms > 0 ) {
-		rtems_interval rate;
-		rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &rate);
-		if ( ms > 50000 ) {
-			ms /= 1000;
-			ms *= rate;
-		} else {
-			ms *= rate;
-			ms /= 1000;
-		}
-		if ( 0 == ms ) {
-			ms = 1;
-		}
-	}
-	return ms;
-}
-
-/* Inline implementation for udpSocks */
-static __inline__ int
-udpCommSocket(int port)
-{
-	return udpSockCreate(port);
-}
-
-static __inline__ UdpCommPkt
-udpCommRecv(int sd, int timeout_ms)
-{
-	return udpSockRecv(sd, ms2ticks(timeout_ms));
-}
-
-STATICINLINE UdpCommPkt
-udpCommRecvFrom(int sd, int timeout_ms, uint32_t *ppeerip, uint16_t *ppeerport)
-{
-UdpCommPkt rval;
-	rval = udpSockRecv(sd, ms2ticks(timeout_ms));
-	if ( rval ) {
-		if ( ppeerip )
-			*ppeerip = lpkt_ip((LanIpPacket)rval).src;
-		if ( ppeerport )
-			*ppeerport = ntohs(lpkt_udp((LanIpPacket)rval).sport);
-	}
-	return rval;
-}
-
-static __inline__ int
-udpCommConnect(int sd, uint32_t diaddr, int port)
-{
-	return udpSockConnect(sd, diaddr, port);
-}
-
-static __inline__ void
-udpCommReturnPacket(UdpCommPkt p, int len)
-{
-IpBscIf intrf;
-	if ( (intrf = udpSockGetBufIf(p)) ) {
-		udpSockHdrsReflect(p);	        /* point headers back to sender */
-		lanIpBscSendBufRawIp(intrf, p); /* send off                     */
-	}
-}
-
-static __inline__ int
-udpCommSendPkt(int sd, UdpCommPkt pkt, int len)
-{
-	return udpSockSendBuf(sd, pkt, len);
-}
-
-static __inline__ int
-udpCommSendPktTo(int sd, UdpCommPkt pkt, int len, uint32_t dipaddr, int port)
-{
-	return udpSockSendBufTo(sd, pkt, len, dipaddr, port);
-}
-
-static __inline__ int
-udpCommSetIfMcast(int sd, uint32_t ifipaddr)
-{
-	return udpSockSetIfMcast(sd, ifipaddr);
-}
-
-static __inline__ int
-udpCommJoinMcast(int sd, uint32_t mc_addr)
-{
-	return udpSockJoinMcast(sd, mc_addr);
-}
-
-static __inline__ int
-udpCommLeaveMcast(int sd, uint32_t mc_addr)
-{
-	return udpSockLeaveMcast(sd, mc_addr);
-}
-
-#endif
 
 #ifdef __cplusplus
 }

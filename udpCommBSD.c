@@ -11,9 +11,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 
 /* to get alignment only */
 #include <lanIpProto.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
 
 
 #define DO_ALIGN(x,a) (((uintptr_t)(x) + ((a)-1)) & ~((a)-1))
@@ -140,6 +146,12 @@ struct sockaddr_in they;
 }
 
 int
+udpCommSend(int sd, void *buf, int len)
+{
+	return send(sd, buf, len, 0);
+}
+
+int
 udpCommSendPkt(int sd, UdpCommPkt pkt, int len)
 {
 UdpCommBSDPkt *p = (UdpCommBSDPkt*) pkt;
@@ -228,4 +240,16 @@ struct in_addr  arg;
 	}
 
 	return 0;
+}
+
+int
+udpCommClose(int sd)
+{
+	return close(sd);
+}
+
+void *
+udpCommBufPtr(UdpCommPkt p)
+{
+	return p;
 }
