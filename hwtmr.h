@@ -25,12 +25,40 @@ uint32_t tb;
 	return tb;
 }
 
+static __inline__ uint64_t
+Read_hwtimer_long()
+{
+	return PPC_Get_timebase_register();
+}
+
+#elif defined(__rtems__) && defined(__i386__)
+
+#include <libcpu/cpuModel.h>
+
+static __inline__ uint32_t
+Read_hwtimer()
+{
+	return rdtsc();
+}
+
+static __inline__ uint64_t
+Read_hwtimer_long()
+{
+	return rdtsc();
+}
+
 #else
 
 static __inline__ uint32_t 
 Read_hwtimer()
 {
 	return 0xdeadbeef;
+}
+
+static __inline__ uint64_t 
+Read_hwtimer_long()
+{
+	return 0xdeadbeefaffecafeLL;
 }
 
 #endif
