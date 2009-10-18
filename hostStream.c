@@ -2,6 +2,7 @@
 #include <padProto.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <netinet/in.h>
 
