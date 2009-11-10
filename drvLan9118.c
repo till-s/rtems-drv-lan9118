@@ -59,6 +59,11 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.34  2009/10/18 02:17:42  strauman
+		
+		2009/10/17 (TS):
+		 - drvLan9118.c: Replaced SEM_SMTX by SEM_MUTX (see above).
+		
 		Revision 1.33  2009/09/11 01:03:03  strauman
 		2009/09/10 (TS):
 		 - drvLan9118.c, drvUdpSock.c, lanIpBasic.c, lanIpBasic.h,
@@ -1314,7 +1319,7 @@ rtems_status_code sc;
 	wr9118Reg(plan_ps->base, HW_CFG, rd9118Reg(plan_ps->base, HW_CFG) | HW_CFG_SF);
 
 	/* Setup the MAC but don't start the receiver */
-	macCsrWrite(plan_ps, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | MAC_CR_HPFILT | (flags & LAN9118_FLAG_BCDIS ? MAC_CR_BCAST : 0));
+	macCsrWrite(plan_ps, MAC_CR, MAC_CR_FDPX | MAC_CR_TXEN | MAC_CR_HPFILT | ((flags & LAN9118_FLAG_BCDIS) ? MAC_CR_BCAST : 0));
 
 	if ( enaddr_pa ) {
 		tmp = (enaddr_pa[5]<<8) | enaddr_pa[4];
