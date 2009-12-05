@@ -653,7 +653,7 @@ fillinSrcCsumIp(IpBscIf ifc, LanIp buf_p)
 	memcpy(buf_p->ll.src, &ifc->arpreq.ll.src, sizeof(buf_p->ll.src));
 	buf_p->ip.src              = ifc->ipaddr;
 
-	buf_p->ip.csum             = 0;
+	memset( & buf_p->ip.csum, 0, sizeof(buf_p->ip.csum) );
 	buf_p->ip.csum             = htons(in_cksum_hdr((void*)&buf_p->ip));
 }
 
@@ -1072,20 +1072,22 @@ void
 udpSockHdrsSetlen(LanUdpHeader p, int payload_len)
 {
 	p->hdr.ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
-	p->hdr.ip.csum  = 0;
+
+	memset( & p->hdr.ip.csum, 0, sizeof(p->hdr.ip.csum) );
 	
 	p->hdr.ip.csum  = in_cksum_hdr((void*)&p->hdr.ip);
 
-	p->udp.len  = htons(payload_len + sizeof(UdpHeaderRec));
+	p->udp.len      = htons(payload_len + sizeof(UdpHeaderRec));
+	p->udp.csum     = 0;
 }
 
 int
-udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
+udpSockHdrsInitFromIf(IpBscIf intrf, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t sport, uint16_t ip_id)
 {
 int rval = 0;
 
 	if ( dipaddr ) 
-		rval = arpLookup(socks[sd].intrf, dipaddr, p->hdr.ll.dst, 0);
+		rval = arpLookup(intrf, dipaddr, p->hdr.ll.dst, 0);
 	else /* they want to leave it blank */
 		memset(p->hdr.ll.dst,0,6);
 
@@ -1103,12 +1105,21 @@ int rval = 0;
 	p->udp.dport = htons(dport);
 	p->udp.len   = 0;
 
-	fillinSrcCsumUdp(socks[sd].intrf, p, sd >= 0 ? socks[sd].port : 0);
+	fillinSrcCsumUdp(intrf, p, sport);
 
 	/* reset checksum; length is not correct yet */
 	p->hdr.ip.csum  = 0;
 
 	return rval;
+}
+
+int
+udpSockHdrsInit(int sd, LanUdpHeader p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id)
+{
+	if ( sd < 0 || sd >= NSOCKS )
+		return -EBADF;
+
+	return udpSockHdrsInitFromIf( socks[sd].intrf, p, dipaddr, dport, socks[sd].port, ip_id);
 }
 
 void
@@ -1210,7 +1221,7 @@ again:
 	socks[rval].flags  = 0;
 	socks[rval].nbytes = 0;
 
-	udpSockHdrsInit(rval, &socks[rval].hdr, 0, 0, 0);
+	udpSockHdrsInitFromIf(intrf, &socks[rval].hdr, 0, 0, port, 0);
 
 	q             = 0;
 	m             = 0;
@@ -1304,7 +1315,7 @@ int rval      = -1;
 		}
 #endif
 
-		if ( udpSockHdrsInit(sd, &socks[sd].hdr, dipaddr, dport, 0) ) {
+		if ( udpSockHdrsInitFromIf(socks[sd].intrf, &socks[sd].hdr, dipaddr, dport, socks[sd].port, 0) ) {
 			/* ARP lookup failure; BSD sockets probably would not
 			 * fail here...
 			 */

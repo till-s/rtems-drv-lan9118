@@ -1,3 +1,17 @@
+2009/12/05 (TS):
+ - BUGFIX: padStreamStart() would call udpSockHdrsInit() with a socket arg
+   of (-1). This is invalid since the socket arg is needed to find
+   an interface structure from where the source IP and ethernet
+   addresses can be loaded. Bogus IP and ethernet addresses were used!
+   Thanks to the networking group - they reported seeing identical and bad
+   MAC addresses.
+   Added new udpSockHdrsInitFromIf() routine to be used by padStream
+   (which for efficiency reasons does not use 'sockets').
+ - Let udpSockHdrsSetlen() clear the UDP checksum (for sake of consistency
+   since the routine also computes and sets the IP checksum).
+ - Always use 'memcpy' to initialize IP checksum to zero before
+   computing it (via assembly code). Hopefully this solves the
+   alias problems...
 2008/10/29 (TS): Fix problems reported by Stephen Norum (beatnik)
  - TX ring was apparently exhausted (send returning -ENOSPC). This
    occurred due to corruption because the driver task swiped the TX
