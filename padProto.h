@@ -134,6 +134,7 @@ padUdpHandler(int port, int chnl);
  *      'chnl': target channel/slot (may be broadcast)
  *      'type': command
  *       'xid': transaction ID - value is returned in reply
+ * 'tsHi/tsLo': timestamp
  *   'cmdData': parameter to command
  * 'wantReply': if non-NULL then q reply from the peer is requested and
  *              returned in *wantReply.
@@ -146,7 +147,7 @@ padUdpHandler(int port, int chnl);
  *        commands to different channels with this routine.
  */
 int
-padRequest(int sd, int chnl, int type, uint32_t xid, void *cmdData, UdpCommPkt *wantReply, int timeout_ms);
+padRequest(int sd, int chnl, int type, uint32_t xid, uint32_t tsHi, uint32_t tsLo, void *cmdData, UdpCommPkt *wantReply, int timeout_ms);
 
 #ifdef __cplusplus
 }

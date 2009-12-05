@@ -154,6 +154,9 @@ udpSockSend(int sd, void *payload, int payload_len);
 int
 udpSockSendTo(int sd, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport);
 
+int
+_udpSockSendTo_internal(int sd, LanIpPacket buf_p, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport);
+
 static __inline__ void*
 udpSockUdpBufPayload(LanIpPacket p)
 {

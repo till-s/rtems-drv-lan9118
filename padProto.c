@@ -8,8 +8,6 @@
 #include <errno.h>
 #include <inttypes.h>
 
-#include "hwtmr.h"
-
 #define DEBUG_PROTOHDL 1
 #define DEBUG_REPLYCHK 2
 
@@ -273,7 +271,7 @@ uint32_t	peerip;
 #define RETRIES 2
 
 int
-padRequest(int sd, int who, int type, uint32_t xid, void *cmdData, UdpCommPkt *wantReply, int timeout_ms)
+padRequest(int sd, int who, int type, uint32_t xid, uint32_t tsHi, uint32_t tsLo, void *cmdData, UdpCommPkt *wantReply, int timeout_ms)
 {
 struct {
 	PadRequestRec		req;
@@ -294,23 +292,8 @@ UdpCommPkt  p = 0;
 
 	req->xid     = htonl(xid);
 
-#ifdef __PPC__
-	{
-	uint32_t tbh0, tbh1, tbl;
-		asm volatile("mftbu %0; mftb %1; mftbu %2":"=r"(tbh0),"=r"(tbl),"=r"(tbh1));
-		if ( tbh0 != tbh1 ) {
-			/* rollover just happened */
-			asm volatile("mftb %0":"=r"(tbl));
-		}
-		req->timestampHi = htonl(tbh1);
-		req->timestampLo = htonl(tbl);
-	}
-#else	/* FIXME: this should test for the uc5282 BSP */
-	{
-		req->timestampHi = htonl(0);
-		req->timestampLo = htonl(Read_hwtimer());
-	}
-#endif
+	req->timestampHi = htonl(tsHi);
+	req->timestampLo = htonl(tsLo);
 
 	/* Add command-specific parameters */
 	switch ( PADCMD_GET(cmd->type = type) ) {

@@ -66,7 +66,11 @@ union {
 void
 usage(char *nm)
 {
-	fprintf(stderr,"Usage: %s [-bhvec] [-C channel] [-l port] [-n nsamples] [-s srvr_port] [-S sdds_file:col,col,col,col] [-P server_xmit_period] [-d dbg_flgs] ip:port <msg_type_int>\n",nm);
+	fprintf(stderr,"Usage: %s [-bhvec] [-C channel] [-l port] [-n nsamples] [-s srvr_port] "
+#ifdef USE_SDDS
+	"[-S sdds_file:col,col,col,col] [-p start:end] "
+#endif
+    "[-P server_xmit_period] [-d dbg_flgs] ip:port <msg_type_int>\n",nm);
 	fprintf(stderr,"          -b bcast to all channels\n");
 	fprintf(stderr,"          -h print this help\n");
 	fprintf(stderr,"          -v be verbose\n");
@@ -85,11 +89,15 @@ usage(char *nm)
 	fprintf(stderr,"                      5 = SIM  (simulate BPM)\n");
 	fprintf(stderr,"                     15 = KILL (terminate padUdpHandler on target)\n");
 	fprintf(stderr,"          -s srvr_port  run as a padProto server\n");
+#ifdef USE_SDDS
 	fprintf(stderr,"          -S sdds_file:col,col,col,col SDDS file to 'play'\n");
 	fprintf(stderr,"                                       specified columns.\n");
+#endif
 	fprintf(stderr,"          -P period_ms  transmit simulated or playback\n");
 	fprintf(stderr,"                        waveforms every 'period_ms'\n");
+#ifdef USE_SDDS
 	fprintf(stderr,"          -p start:end  SDDS page range (1-based) to 'play'\n");
+#endif
 }
 
 static void
@@ -103,7 +111,7 @@ UdpCommPkt        p = 0;
 		exit(1);
 	}
 
-	if ( (err=padRequest(sd, theChannel, scmd->type, 0xdead, scmd, &p, 1000)) ) {
+	if ( (err=padRequest(sd, theChannel, scmd->type, 0xdead, 0, 0, scmd, &p, 1000)) ) {
 		fprintf(stderr,">>> Sending request failed: %s <<<\n",strerror(-err));
 	}
 

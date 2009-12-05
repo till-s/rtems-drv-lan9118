@@ -6,6 +6,7 @@ include $(top_srcdir)/rtems-pre.am
 EXEEXT=$(OBJEXEEXT)
 
 liblanIpBasic_a_SOURCES        = lanIpBasicTest.c drvUdpSock.c hwtmr.h
+liblanIpBasic_a_SOURCES       += lhtbl.c lhtbl.h
 
 EXTRA_liblanIpBasic_a_SOURCES  = padProto.c lanIpBasic.c
 EXTRA_liblanIpBasic_a_SOURCES += drvLan9118.c drvLan9118IpBasic.c padStream.c bpmsim.c
@@ -15,14 +16,17 @@ EXTRA_liblanIpBasic_a_SOURCES += gnreth_lldrv.h
 EXTRA_liblanIpBasic_a_SOURCES += mve_lldrv.c
 EXTRA_liblanIpBasic_a_SOURCES += e1k_lldrv.c
 
-lanIpObjs_uC5282               = drvLan9118.$(OBJEXT) drvLan9118IpBasic.$(OBJEXT)
-lanIpObjs_uC5282              += padProto.$(OBJEXT) padStream.$(OBJEXT) bpmsim.$(OBJEXT)
+lanIpObjs_lan9118              = drvLan9118.$(OBJEXT) drvLan9118IpBasic.$(OBJEXT)
+lanIpObjs_pad                  = padProto.$(OBJEXT) padStream.$(OBJEXT) bpmsim.$(OBJEXT)
 
-lanIpObjs_beatnik              = drvGnrIpBasic.$(OBJEXT) padProto.$(OBJEXT) mve_lldrv.$(OBJEXT)
+lanIpObjs_gnreth               = drvGnrIpBasic.$(OBJEXT) padProto.$(OBJEXT) mve_lldrv.$(OBJEXT)
 
-#lanIpObjs_pci                  = drvAmdEthIpBasic.$(OBJEXT)
-lanIpObjs_pci                  = drvGnrIpBasic.$(OBJEXT) e1k_lldrv.$(OBJEXT)
-lanIpObjs_pci_CPPFLAGS         = -I$(srcdir)/../bsd_eth_drivers/if_em/
+lanIpObjs_mve                  = mve_lldrv.$(OBJEXT)
+lanIpObjs_pcn                  = drvAmdEthIpBasic.$(OBJEXT)
+lanIpObjs_e1k                  = e1k_lldrv.$(OBJEXT)
+
+#lanIpObjs_pci                  = drvGnrIpBasic.$(OBJEXT) e1k_lldrv.$(OBJEXT)
+lanIpObjs_e1k_CPPFLAGS         = -I$(srcdir)/../bsd_eth_drivers/if_em/
 
 AM_CPPFLAGS                   += $(lanIpObjs_$(LANIPBASIC_SUPPORT)_CPPFLAGS)
 

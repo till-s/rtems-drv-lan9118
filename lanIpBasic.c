@@ -4165,11 +4165,20 @@ udpSockHdrsSetlen(LanUdpPkt p, int payload_len)
 {
 	p->ip_part.ip.len   = htons(payload_len + sizeof(UdpHeaderRec) + sizeof(IpHeaderRec));
 
+#if 0
+	/* alias-rule is quite nasty. Even though the 'IpHeaderRec' is
+	 * given the 'may_alias' attribute I still found that gcc
+	 * optimizes initialization of the checksum away.
+	 */
+    p->ip_part.ip.csum = 0;
+#else
 	memset( & p->ip_part.ip.csum, 0, sizeof(p->ip_part.ip.csum) );
+#endif
+
 	p->ip_part.ip.csum  = in_cksum_hdr((void*)&p->ip_part.ip);
 
-	p->udp.len          = htons(payload_len + sizeof(UdpHeaderRec));
-	p->udp.csum         = 0;
+	p->udp.len      = htons(payload_len + sizeof(UdpHeaderRec));
+	p->udp.csum     = htonsc(0);
 }
 
 int
@@ -4535,8 +4544,8 @@ uint32_t maxes[20]={0};
 
 #endif
 
-static int
-udpSockSendTo_internal(int sd, LanIpPacket buf_p, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport)
+int
+_udpSockSendTo_internal(int sd, LanIpPacket buf_p, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport)
 {
 int          rval;
 LanUdpPkt    h;
@@ -4700,26 +4709,26 @@ try_again:
 int
 udpSockSend(int sd, void *payload, int payload_len)
 {
-	return udpSockSendTo_internal(sd, 0, payload, payload_len, 0, 0);
+	return _udpSockSendTo_internal(sd, 0, payload, payload_len, 0, 0);
 }
 
 
 int
 udpSockSendTo(int sd, void *payload, int payload_len, uint32_t ipaddr, uint16_t dport)
 {
-	return udpSockSendTo_internal(sd, 0, payload, payload_len, ipaddr, dport);
+	return _udpSockSendTo_internal(sd, 0, payload, payload_len, ipaddr, dport);
 }
 
 int
 udpSockSendBuf(int sd, LanIpPacket b, int payload_len)
 {
-	return udpSockSendTo_internal(sd, b, 0, payload_len, 0, 0);
+	return _udpSockSendTo_internal(sd, b, 0, payload_len, 0, 0);
 }
 
 int
 udpSockSendBufTo(int sd, LanIpPacket b, int payload_len, uint32_t ipaddr, uint16_t dport)
 {
-	return udpSockSendTo_internal(sd, b, 0, payload_len, ipaddr, dport);
+	return _udpSockSendTo_internal(sd, b, 0, payload_len, ipaddr, dport);
 }
 
 
@@ -5004,20 +5013,20 @@ udpCommBufPtr(UdpCommPkt p)
 int
 udpCommSend(int sd, void *payload, int payload_len)
 {
-	return udpSockSendTo_internal(sd, 0, payload, payload_len, 0, 0);
+	return _udpSockSendTo_internal(sd, 0, payload, payload_len, 0, 0);
 }
 
 
 int
 udpCommSendPkt(int sd, UdpCommPkt b, int payload_len)
 {
-	return udpSockSendTo_internal(sd, b, 0, payload_len, 0, 0);
+	return _udpSockSendTo_internal(sd, b, 0, payload_len, 0, 0);
 }
 
 int
 udpCommSendPktTo(int sd, UdpCommPkt b, int payload_len, uint32_t ipaddr, int dport)
 {
-	return udpSockSendTo_internal(sd, b, 0, payload_len, ipaddr, dport);
+	return _udpSockSendTo_internal(sd, b, 0, payload_len, ipaddr, dport);
 }
 
 void

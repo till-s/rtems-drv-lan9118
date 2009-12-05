@@ -13,8 +13,12 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#if 0 /* avoid dependency :-( */
 /* to get alignment only */
 #include <lanIpProto.h>
+#else
+#define LAN_IP_BASIC_PACKET_ALIGNMENT 32
+#endif
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -183,7 +187,13 @@ union {
 
 
 /* can tweak this in special cases so select incoming IF... */
-uint32_t udpCommMcastIfAddr = INADDR_ANY;
+static uint32_t udpCommMcastIfAddr = INADDR_ANY;
+
+void
+udpCommSetIfMcastInp(uint32_t ifipaddr)
+{
+	udpCommMcastIfAddr = ifipaddr;
+}
 
 static int mc_doit(int sd, uint32_t mcaddr, int cmd)
 {
@@ -221,7 +231,7 @@ udpCommLeaveMcast(int sd, uint32_t mcaddr)
 }
 
 int
-udpCommSetIfMcast(int sd, uint32_t ifipaddr)
+udpCommSetIfMcastOut(int sd, uint32_t ifipaddr)
 {
 #ifdef __linux__
 struct ip_mreqn arg;

@@ -138,14 +138,14 @@ udpCommLeaveMcast(int sd, uint32_t mc_addr);
  *          network-byte order.
  */
 int
-udpCommSetIfMcast(int sd, uint32_t ifipaddr);
+udpCommSetIfMcastOut(int sd, uint32_t ifipaddr);
 
-/* This variable can be set to the IP address of
- * the receiving interface (if host has multiple NICs)
- * in network byte order. Defaults to INADDR_ANY,
- * i.e., system picks a suitable IF.
+/* Set the IP address of the receiving interface
+ * (if host has multiple NICs) in network byte order.
+ * Defaults to INADDR_ANY, i.e., system picks a suitable IF.
  */
-extern uint32_t udpCommMcastIfAddr;
+void
+udpCommSetIfMcastInp(uint32_t ifipaddr);
 
 #ifdef __cplusplus
 }

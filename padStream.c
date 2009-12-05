@@ -17,7 +17,6 @@
 
 #include <padStream.h>
 
-#include "hwtmr.h"
 #include "bpmsim.h"
 
 int padStreamDebug = 0;
@@ -256,7 +255,10 @@ uint32_t maxStreamSendDelay1 = 0;
 uint32_t maxStreamSendDelay2 = 0;
 
 #ifdef __mcf5200__
+#include "hwtmr.h"
+
 extern uint32_t drvLan9118RxIntBase;
+
 #endif
 
 int
