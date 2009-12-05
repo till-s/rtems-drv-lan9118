@@ -177,38 +177,6 @@ int
 udpSockSendBufTo(int sd, LanIpPacket b, int payload_len, uint32_t ipaddr, uint16_t dport);
 
 
-/* Operations on packet headers: */
-
-/* Setup Ethernet, IP and UDP headers in a packet.
- * An ARP lookup for 'dipaddr' is done if necessary.
- *
- * NOTES: 'dipaddr' (destination IP address) is in *network* byte order.
- *        'dport' and 'ip_id' are in *host* byte order.
- *
- *        It is legal to provide an all zero destination IP to avoid
- *        ARP lookup. You must fill in the IP and checksum later.
- *
- *        The socket descriptor is only needed to determine the source
- *        UDP port. It is legal to submit a sd < 0 and fill in the source
- *        port 'manually'.
- *
- * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
- */
-int
-udpSockHdrsInit(int sd, LanUdpPkt p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
-
-/* Set length and IP checksum
- * Note: other fields must have been initialized already
- */
-void
-udpSockHdrsSetlen(LanUdpPkt p, int payload_len);
-
-/* Flip source -> dest and fill-in local source addresses
- * (at ethernet, IP and UDP level) and IP checksum.
- */
-void
-udpSockHdrsReflect(LanUdpPkt p);
-
 extern uint32_t udpSockMcastIfAddr;
 
 /*
@@ -278,6 +246,40 @@ udpSockGetBufIf(LanIpPacket buf_p);
  */
 int
 lanIpBscIfDestroy(IpBscIf);
+
+/* Operations on packet headers: */
+
+/* Setup Ethernet, IP and UDP headers in a packet.
+ * An ARP lookup for 'dipaddr' is done if necessary.
+ *
+ * NOTES: 'dipaddr' (destination IP address) is in *network* byte order.
+ *        'dport', 'sport' and 'ip_id' are in *host* byte order.
+ *
+ *        It is legal to provide an all zero destination IP to avoid
+ *        ARP lookup. You must fill in the IP and checksum later.
+ *
+ * RETURNS: 0 on success, -errno on error (-ENOTCONN == ARP lookup failure)
+ */
+int
+udpSockHdrsInit(int sd, LanUdpPkt p, uint32_t dipaddr, uint16_t dport, uint16_t ip_id);
+
+/* Similar to udpSockHdrsInit() but w/o requirement for a 'socket' so that
+ * this can be used from low-level code.
+ */
+int
+udpSockHdrsInitFromIf(IpBscIf intrf, LanUdpPkt p, uint32_t dipaddr, uint16_t dport, uint16_t sport, uint16_t ip_id);
+
+/* Set length and IP checksum
+ * Note: other fields must have been initialized already
+ */
+void
+udpSockHdrsSetlen(LanUdpPkt p, int payload_len);
+
+/* Flip source -> dest and fill-in local source addresses
+ * (at ethernet, IP and UDP level) and IP checksum.
+ */
+void
+udpSockHdrsReflect(LanUdpPkt p);
 
 /* Send a buffer; EVERYTHING (all headers + payload must have been filled in)
  * len: total length (including all headers and initial 2-byte padding).

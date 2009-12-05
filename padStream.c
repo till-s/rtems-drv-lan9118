@@ -108,11 +108,10 @@ int             len;
 
 		if ( !isup ) {
 			/* Avoid ARP lookup, don't provide destination IP yet */
-			udpSockHdrsInit(-1, &lpkt_udp_hdrs(&replyPacket), 0, ntohs(scmd->port), 0); 	
+			udpSockHdrsInitFromIf(intrf, &lpkt_udp_hdrs(&replyPacket), 0, ntohs(scmd->port), ntohs(scmd->port), 0); 	
 
 			/* Add missing bits: destination IP , source port */
 			lpkt_ip(&replyPacket).dst     = hostip;
-			lpkt_udp(&replyPacket).sport  = scmd->port;
 
 			len = nsamples*sizeof(int16_t)*NCHNS + sizeof(*rply);
 			/* Fill in length and IP header checksum etc */
