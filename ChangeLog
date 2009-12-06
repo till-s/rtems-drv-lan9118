@@ -1,3 +1,8 @@
+2009/12/06 (TS):
+ - bpmsim.c, bpmsim.h, hostStream.c, hostStream.h, padProto.c, padProto.h,
+   padProtoHost.c, padStream.c, padStream.h, sddsrd.c, sddsrd.h,
+   udpCommBSD.c, udpComm.h: Unbundled and removed. These are now part
+   of EPICS modules 'udpComm.till'.
 2009/12/05 (TS):
  - BUGFIX: padStreamStart() would call udpSockHdrsInit() with a socket arg
    of (-1). This is invalid since the socket arg is needed to find
