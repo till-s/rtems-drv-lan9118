@@ -5,68 +5,56 @@ include $(top_srcdir)/rtems-pre.am
 
 EXEEXT=$(OBJEXEEXT)
 
-liblanIpBasic_a_SOURCES        = lanIpBasicTest.c drvUdpSock.c hwtmr.h
-liblanIpBasic_a_SOURCES       += lhtbl.c lhtbl.h
+lanIp_SOURCES                    = lanIpBasicTest.c drvUdpSock.c hwtmr.h
+lanIp_SOURCES                   += lhtbl.c lhtbl.h
 
-EXTRA_liblanIpBasic_a_SOURCES  = padProto.c lanIpBasic.c
-EXTRA_liblanIpBasic_a_SOURCES += drvLan9118.c drvLan9118IpBasic.c padStream.c bpmsim.c
-EXTRA_liblanIpBasic_a_SOURCES += drvGnrIpBasic.c
-EXTRA_liblanIpBasic_a_SOURCES += drvAmdEthIpBasic.c
-EXTRA_liblanIpBasic_a_SOURCES += gnreth_lldrv.h
-EXTRA_liblanIpBasic_a_SOURCES += mve_lldrv.c
-EXTRA_liblanIpBasic_a_SOURCES += e1k_lldrv.c
+EXTRA_liblanIpBasic_ln9_a_SOURCES  = lanIpBasic.c drvLan9118.h
+liblanIpBasic_ln9_a_SOURCES = drvLan9118.c drvLan9118IpBasic.c
+liblanIpBasic_ln9_a_SOURCES+= $(lanIp_SOURCES)
+liblanIpBasic_mve_a_SOURCES     = drvGnrIpBasic.c gnreth_lldrv.h mve_lldrv.c
+liblanIpBasic_mve_a_SOURCES    += $(lanIp_SOURCES)
+EXTRA_liblanIpBasic_mve_a_SOURCES  = lanIpBasic.c
+liblanIpBasic_e1k_a_SOURCES     = drvGnrIpBasic.c gnreth_lldrv.h e1k_lldrv.c
+liblanIpBasic_e1k_a_SOURCES    += $(lanIp_SOURCES)
+EXTRA_liblanIpBasic_pcn_a_SOURCES  = lanIpBasic.c
+liblanIpBasic_pcn_a_SOURCES     = drvAmdEthIpBasic.c
+liblanIpBasic_pcn_a_SOURCES    += $(lanIp_SOURCES)
 
-lanIpObjs_lan9118              = drvLan9118.$(OBJEXT) drvLan9118IpBasic.$(OBJEXT)
-lanIpObjs_pad                  = padProto.$(OBJEXT) padStream.$(OBJEXT) bpmsim.$(OBJEXT)
+liblanIpBasic_e1k_a_CPPFLAGS    = -I$(srcdir)/../bsd_eth_drivers/if_em/
 
-lanIpObjs_gnreth               = drvGnrIpBasic.$(OBJEXT) padProto.$(OBJEXT) mve_lldrv.$(OBJEXT)
+include_HEADERS_ln9             = drvLan9118.h
 
-lanIpObjs_mve                  = mve_lldrv.$(OBJEXT)
-lanIpObjs_pcn                  = drvAmdEthIpBasic.$(OBJEXT)
-lanIpObjs_e1k                  = e1k_lldrv.$(OBJEXT)
+include_HEADERS                 = $(foreach h,$(LANIPBASIC_SUPPORT),$(include_HEADERS_$(h)))
+include_HEADERS                += lanIpBasic.h lanIpProto.h
+include_HEADERS                += lanIpBasicSetup.h drvUdpSock.h
 
-#lanIpObjs_pci                  = drvGnrIpBasic.$(OBJEXT) e1k_lldrv.$(OBJEXT)
-lanIpObjs_e1k_CPPFLAGS         = -I$(srcdir)/../bsd_eth_drivers/if_em/
+lib_LIBRARIES                   = $(LANIPBASIC_SUPPORT:%=liblanIpBasic_%.a)
+EXTRA_LIBRARIES                 = liblanIpBasic_ln9.a
+EXTRA_LIBRARIES                += liblanIpBasic_mve.a
+EXTRA_LIBRARIES                += liblanIpBasic_e1k.a
+EXTRA_LIBRARIES                += liblanIpBasic_pcn.a
 
-AM_CPPFLAGS                   += $(lanIpObjs_$(LANIPBASIC_SUPPORT)_CPPFLAGS)
+bin_PROGRAMS                    = @LANIPBASIC_PROG@
+EXTRA_PROGRAMS                  = lanIpBasic_ln9
+EXTRA_PROGRAMS                 += lanIpBasic_mve
+EXTRA_PROGRAMS                 += lanIpBasic_e1k
+EXTRA_PROGRAMS                 += lanIpBasic_pcn
 
-include_HEADERS                = drvLan9118.h lanIpBasic.h lanIpProto.h padProto.h udpComm.h
-include_HEADERS               += padStream.h lanIpBasicSetup.h drvUdpSock.h
+lanIpBasic_ln9_SOURCES          =
+lanIpBasic_mve_SOURCES          =
+lanIpBasic_pcn_SOURCES          =
+lanIpBasic_e1k_SOURCES          =
 
+lanIpBasic_ln9_LDADD            = $(liblanIpBasic_ln9_a_OBJECTS)
+lanIpBasic_mve_LDADD            = $(liblanIpBasic_mve_a_OBJECTS)
+lanIpBasic_pcn_LDADD            = $(liblanIpBasic_pcn_a_OBJECTS)
+lanIpBasic_e1k_LDADD            = $(liblanIpBasic_e1k_a_OBJECTS)
 
-lib_LIBRARIES                  = liblanIpBasic.a
+lanIpBasic_ln9_DEPENDENCIES     = $(liblanIpBasic_ln9_a_OBJECTS)
+lanIpBasic_mve_DEPENDENCIES     = $(liblanIpBasic_mve_a_OBJECTS)
+lanIpBasic_pcn_DEPENDENCIES     = $(liblanIpBasic_pcn_a_OBJECTS)
+lanIpBasic_e1k_DEPENDENCIES     = $(liblanIpBasic_e1k_a_OBJECTS)
 
-liblanIpBasic_a_LIBADD         = $(lanIpObjs_$(LANIPBASIC_SUPPORT))
-liblanIpBasic_a_DEPENDENCIES   = $(liblanIpBasic_a_LIBADD)
-
-bin_PROGRAMS                   = lanIpBasic
-lanIpBasic_SOURCES             =
-lanIpBasic_LDADD               = $(liblanIpBasic_a_OBJECTS) $(liblanIpBasic_a_LIBADD)
-lanIpBasic_DEPENDENCIES        = $(lanIpBasic_LDADD)
-lanIpBasic_LINK                = $(OBJLINK)
+LINK                            = $(OBJLINK)
 
 include $(top_srcdir)/rtems.am
-
-# build a test program on a
-# host computer using the ordinary network stack
-HOSTPROG=padProtoHost
-EXTRA_PROGRAMS=$(HOSTPROG)
-exechostbin_PROGRAMS           = @HOSTPROGRAM@
-
-# empty sources so that no automake doesn't try to use a default
-padProtoHost_SOURCES           =
-EXTRA_padProtoHost_SOURCES     = padProtoHost.c udpCommBSD.c padProtoNative.c
-EXTRA_padProtoHost_SOURCES    += hostStream.c bpmsimNative.c
-
-EXTRA_DIST                     = hostStream.h bpmsim.h
-
-%Native.c: %.c
-	ln -s $^ $@
-
-padProtoHost_OBJCTS           = $(EXTRA_padProtoHost_SOURCES:%.c=%.$(OBJEXT)) 
-
-padProtoHost_LDADD             = $(padProtoHost_OBJCTS) -lm
-padProtoHost_DEPENDENCIES      = $(padProtoHost_OBJCTS)
-
-$(padProtoHost_OBJCTS):%.$(OBJEXT):%.c
-	$(HOSTCC) -c -O2 -DBSDSOCKET -I$(srcdir) -o $@ $<

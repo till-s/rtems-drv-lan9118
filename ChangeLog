@@ -1,4 +1,8 @@
 2009/12/07 (TS):
+ - Makefile.am: unbundled udpComm, padProto etc. (see below) from lanIpBasic.
+   Added support for building multiple lanIpBasic variants (multiple drivers)
+   for a single BSP.
+2009/12/07 (TS):
  - lanIpBasic.c: removed udpComm API (now an unbundled EPICS module in LCLS land).
 2009/12/07 (TS):
  - e1k_lldrv.c: fixed compiler warnings (alloc_rxbuf() callback nowadays
