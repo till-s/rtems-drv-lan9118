@@ -1,3 +1,6 @@
+2009/12/07 (TS):
+ - e1k_lldrv.c: fixed compiler warnings (alloc_rxbuf() callback nowadays
+   takes 'uintptr_t *' argument).
 2009/12/06 (TS):
  - bpmsim.c, bpmsim.h, hostStream.c, hostStream.h, padProto.c, padProto.h,
    padProtoHost.c, padStream.c, padStream.h, sddsrd.c, sddsrd.h,

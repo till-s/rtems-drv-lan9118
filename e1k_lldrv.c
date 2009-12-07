@@ -140,7 +140,7 @@ struct e1k_private {
 	void                     *isr_arg;
 	void                     (*cleanup_txbuf)(void *usr_p, void *cleanup_txbuf_arg, int error_on_tx_occurred);
 	void                    *cleanup_txbuf_arg;
-	void                    *(*alloc_rxbuf)(int *p_size, unsigned long *p_data_addr);
+	void                    *(*alloc_rxbuf)(int *p_size, uintptr_t *p_data_addr);
 	void                     (*consume_rxbuf)(void *usr_buf, void *consume_rxbuf_arg, int len);
 	void                    *consume_rxbuf_arg;
 	uint32_t                 pending;
@@ -310,7 +310,7 @@ int      tarc0;
 }
 
 static void
-put_rxb(struct e1k_private *ad, uint32_t buf)
+put_rxb(struct e1k_private *ad, uintptr_t buf)
 {
 struct e1000_leg_desc *d;
 
@@ -623,7 +623,7 @@ drv_e1k_setup(
 	void     *isr_arg,
 	void     (*cleanup_txbuf)(void *, void *, int),
 	void    *cleanup_txbuf_arg,
-	void    *(*alloc_rxbuf)(int *, unsigned long *),
+	void    *(*alloc_rxbuf)(int *, uintptr_t *),
 	void     (*consume_rxbuf)(void *, void*, int),
 	void    *consume_rxbuf_arg,
 	int     rx_ring_size,
@@ -958,8 +958,7 @@ int                    rval = 0;
 struct e1000_leg_desc  *d;
 uint32_t               sta;
 void                   *nbuf;
-unsigned long          baddr;
-uint32_t               obaddr;
+uintptr_t              baddr, obaddr;
 int                    sz;
 int                    len;
 int                    err;
@@ -1234,7 +1233,7 @@ setup_rx_structs(struct e1k_private *ad)
 {
 int                    i,sz;
 void                  *nbuf;
-unsigned long          baddr;
+uintptr_t              baddr;
 unsigned               diff;
 struct e1000_leg_desc *d;
 
@@ -1254,7 +1253,7 @@ struct e1000_leg_desc *d;
 		 * but we rely on it rejecting packets > 1522 bytes
 		 * so that we should be safe.
 		 */
-		diff = (uintptr_t)baddr  - (uintptr_t)nbuf;
+		diff = baddr  - (uintptr_t)nbuf;
 #warning "XXX disabled test"
 		if ( /*2048 != sz ||*/ diff >= BUF_ALGN ) {
 			errpr("FATAL Error: got size %u, offset %u\n", sz, diff);
