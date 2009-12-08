@@ -76,13 +76,7 @@ NETDRV_SHUTDOWN(void *drv_p);
 #define N_SATELLITES (20)
 #define RX_RING_SIZE (N_SATELLITES+(N_SATELLITES)/4 + 1)
 
-
 #define TX_RING_SIZE (N_SATELLITES/4 + 1)
-
-#undef RX_RING_SIZE
-#undef TX_RING_SIZE
-#define RX_RING_SIZE	8
-#define TX_RING_SIZE	4
 
 #define NRBUFS (RX_RING_SIZE + RX_RING_SIZE*20 + 20)
 
@@ -295,9 +289,10 @@ amdeth_drv            mdrv = 0;
 				| AMDETH_FLG_RX_MODE_SYNC
 				| AMDETH_FLG_DO_RETRY
 				| AMDETH_FLG_HDR_UDP,
-				RX_RING_SIZE, TX_RING_SIZE ) ) {
+				lanIpBscCfg.rx_ring_size,
+				lanIpBscCfg.tx_ring_size ) ) {
 			/* fill ring */
-			for ( i=0; i<RX_RING_SIZE; i++ ) {
+			for ( i=0; i<lanIpBscCfg.rx_ring_size; i++ ) {
 				rbuf_t *buf;
 				if ( ! ( buf = getrbuf() ) ) {
 					fprintf(stderr,"drvAmdIpBasicSetup: enough buffers\n");

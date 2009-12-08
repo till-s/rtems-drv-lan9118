@@ -119,7 +119,7 @@
 #define NSOCKS		5
 #endif
 
-/* RX socket queue depth.                                                     */
+/* RX socket queue depth (initial/default value).                             */
 #ifndef QDEPTH
 #define QDEPTH		20
 #endif
@@ -412,6 +412,22 @@ __attribute__ ((aligned(RBUF_ALIGNMENT)))
 
 /* Static init of rbuf facility                                               */
 static int    ravail        = NRBUFS;
+
+/* Stack configuration                                                        */
+#ifndef RX_RING_SIZE
+#define RX_RING_SIZE 0
+#endif
+#ifndef TX_RING_SIZE
+#define TX_RING_SIZE 0
+#endif
+static LanIpBscConfigRec lanIpBscCfg = {
+	mask:              LANIPCFG_RX_RING | LANIPCFG_TX_RING |
+                       LANIPCFG_N_RBUFS | LANIPCFG_SQDEPTH,
+	rx_ring_size:      RX_RING_SIZE,
+	tx_ring_size:      TX_RING_SIZE,	
+	num_rbufs:         NRBUFS,
+	rx_queue_depth:    QDEPTH,	
+};
 
 /* Counters for available and total number of rbufs                           */
 volatile int  lanIpBufAvail = NRBUFS;
@@ -4260,7 +4276,7 @@ rtems_id  m = 0;
 
 	if ( RTEMS_SUCCESSFUL != rtems_message_queue_create(
 			rtems_build_name('u','d','p','q'),
-			QDEPTH,
+			lanIpBscCfg.rx_queue_depth,
 			sizeof(UdpSockMsgRec),
 			RTEMS_FIFO | RTEMS_LOCAL,
 			&q) ) {
@@ -4920,6 +4936,42 @@ task_killer           killer;
 	lanIpCallout_finalize();
 
 	freeBufMem();
+
+	return 0;
+}
+
+int
+lanIpBscConfig(LanIpBscConfig p_cfg, LanIpBscConfig p_oldcfg)
+{
+	/* Cannot change anything once stack is up */
+	if ( workSema && p_cfg && p_cfg->mask )
+		return -EINVAL;
+
+	if ( p_oldcfg )
+		*p_oldcfg = lanIpBscCfg;
+
+	if ( p_cfg ) {
+		if ( (LANIPCFG_RX_RING & p_cfg->mask) ) {
+			lanIpBscCfg.rx_ring_size = p_cfg->rx_ring_size;
+		}
+		if ( (LANIPCFG_TX_RING & p_cfg->mask) ) {
+			lanIpBscCfg.tx_ring_size = p_cfg->tx_ring_size;
+		}
+		if ( (LANIPCFG_N_RBUFS & p_cfg->mask) ) {
+			int morebufs = p_cfg->num_rbufs - lanIpBufTotal;
+			/* Don't reduce below what we already have */
+			if ( morebufs > 0 ) {
+				if ( lanIpBscAddBufs(morebufs) ) {
+					return -ENOMEM;
+				}
+			}
+			lanIpBscCfg.num_rbufs = lanIpBufTotal;
+		}
+		
+		if ( (LANIPCFG_SQDEPTH & p_cfg->mask) ) {
+			lanIpBscCfg.rx_queue_depth = p_cfg->rx_queue_depth;
+		}
+	}
 
 	return 0;
 }

@@ -1,4 +1,8 @@
 2009/12/07 (TS):
+ - lanIpBasic.c, drvAmdEthIpBasic.c, drvGnrEthIpBasic.c, lanIpBasic.h:
+   Added lanIpBscConfig() entry point for configuring certain stack
+   parameters (request by S. Norum).
+2009/12/07 (TS):
  - Makefile.am: unbundled udpComm, padProto etc. (see below) from lanIpBasic.
    Added support for building multiple lanIpBasic variants (multiple drivers)
    for a single BSP.

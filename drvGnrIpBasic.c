@@ -327,7 +327,8 @@ uint32_t              irq_msk;
 								cleanup_txbuf, gdrv,
 								alloc_rxbuf,
 								consume_rxbuf, gdrv,
-								RX_RING_SIZE, TX_RING_SIZE,
+								lanIpBscCfg.rx_ring_size,
+								lanIpBscCfg.tx_ring_size,
 								irq_msk)) ) {
 			/* SUCCESSFUL EXIT (unit found and initialized) */
 			fprintf(stderr,"drvGnrethIpBasic: using device instance %u\n",unit);

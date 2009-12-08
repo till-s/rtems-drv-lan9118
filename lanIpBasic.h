@@ -426,6 +426,50 @@ arpDumpCache(IpBscIf pd, FILE *f);
 LanIpBscDrv
 lanIpBscDrvCreate(int instance, uint8_t *enaddr_p);
 
+/* 
+ * Set/read configuration parameters of the
+ * lanIpBasic stack.
+ *
+ * Only parameters that have their 'mask bit'
+ * set will be modified.
+ *
+ * The previous values are returned in *p_oldcfg
+ * with 'mask' having all currently supported
+ * fields set.
+ *
+ * RETURNS: Zero on success, nonzero on error (e.g.,
+ *          attempt to change parameters when the
+ *          stack is running already).
+ *
+ * NOTES:   Either pointer may be NULL (if you are
+ *          not interested in the previous values
+ *          or don't want to change anything).
+ *
+ *          It is not possible to change parameters
+ *          once the stack is initialized (lanIpBscInit()).
+ *
+ */
+
+
+/* Pass ORed mask of settings you want to change
+ * (other fields in LanIpBscConfig struct are ignored)
+ */
+#define LANIPCFG_RX_RING	(1<<0)
+#define LANIPCFG_TX_RING	(1<<1)
+#define LANIPCFG_N_RBUFS	(1<<2)
+#define LANIPCFG_SQDEPTH	(1<<3)
+
+typedef struct LanIpBscConfigRec_ {
+	unsigned mask;
+	unsigned rx_ring_size;
+	unsigned tx_ring_size;
+	unsigned num_rbufs;
+	unsigned rx_queue_depth;
+} LanIpBscConfigRec, *LanIpBscConfig;
+
+int
+lanIpBscConfig(LanIpBscConfig p_cfg, LanIpBscConfig p_oldcfg);
+
 /* Initialize and shut-down the stack
  */
 int
