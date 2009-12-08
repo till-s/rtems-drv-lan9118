@@ -1,4 +1,6 @@
 2009/12/07 (TS):
+ - Makefile.am, hash: Added 'lhtbl' from 'hash' CVS-module.
+2009/12/07 (TS):
  - lanIpBasic.c, drvAmdEthIpBasic.c, drvGnrEthIpBasic.c, lanIpBasic.h:
    Added lanIpBscConfig() entry point for configuring certain stack
    parameters (request by S. Norum).

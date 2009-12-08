@@ -6,7 +6,9 @@ include $(top_srcdir)/rtems-pre.am
 EXEEXT=$(OBJEXEEXT)
 
 lanIp_SOURCES                    = lanIpBasicTest.c drvUdpSock.c hwtmr.h
-lanIp_SOURCES                   += lhtbl.c lhtbl.h
+lanIp_SOURCES                   += hash/lhtbl.c hash/lhtbl.h
+
+AM_CPPFLAGS                     += -I$(srcdir)/hash
 
 EXTRA_liblanIpBasic_ln9_a_SOURCES  = lanIpBasic.c drvLan9118.h
 liblanIpBasic_ln9_a_SOURCES = drvLan9118.c drvLan9118IpBasic.c
@@ -20,7 +22,7 @@ EXTRA_liblanIpBasic_pcn_a_SOURCES  = lanIpBasic.c
 liblanIpBasic_pcn_a_SOURCES     = drvAmdEthIpBasic.c
 liblanIpBasic_pcn_a_SOURCES    += $(lanIp_SOURCES)
 
-liblanIpBasic_e1k_a_CPPFLAGS    = -I$(srcdir)/../bsd_eth_drivers/if_em/
+liblanIpBasic_e1k_a_CPPFLAGS    = $(AM_CPPFLAGS) -I$(srcdir)/../bsd_eth_drivers/if_em/
 
 include_HEADERS_ln9             = drvLan9118.h
 
