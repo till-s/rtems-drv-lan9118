@@ -298,7 +298,46 @@ typedef union IpBscMcRef_ {
 
 /* Interface statistics counters                                              */
 typedef struct IpBscIfStatsRec_ {
+	uint32_t    eth_rxfrm;
+	uint32_t    eth_rxdropped;
+	uint32_t    eth_txrawfrm;
 	uint32_t	arp_nosem;            /* failed to create ARP sync semaphore  */
+	uint32_t    arp_gotrep;
+	uint32_t    arp_reqme;
+	uint32_t    arp_reqother;
+	uint32_t    arp_lenopdropped;
+	uint32_t    arp_protdropped;
+	uint32_t    arp_txreq;
+	uint32_t    arp_txrep;
+	uint32_t    ip_dstdropped;
+	uint32_t    ip_rxfrm;
+	uint32_t    ip_frgdropped;
+	uint32_t    ip_lendropped;
+	uint32_t    ip_protdropped;
+	uint32_t    ip_txmcloopback;
+	uint32_t    ip_txrawfrm;
+	uint32_t    icmp_hdrdropped;
+	uint32_t    icmp_opdropped;
+	uint32_t    icmp_rxechoreq;
+	uint32_t    icmp_txechorep;
+	uint32_t    igmp_hdrdropped;
+	uint32_t    igmp_lendropped;
+	uint32_t    igmp_csumdropped;
+	uint32_t    igmp_rxreportv1;
+	uint32_t    igmp_rxreportv2;
+	uint32_t    igmp_rxqueryv1;
+	uint32_t    igmp_rxqueryv2;
+	uint32_t    igmp_txreportv1;
+	uint32_t    igmp_txreportv2;
+	uint32_t    igmp_txleave;
+	uint32_t    udp_hdrdropped;
+	uint32_t    udp_sadropped;
+	uint32_t	udp_nospcdropped;
+	uint32_t    udp_rxfrm;
+	uint32_t    udp_rxbytes;
+	uint32_t    udp_txfrm;
+	uint32_t    udp_txdropped;
+	uint32_t    udp_txbytes;
 } IpBscIfStatsRec, *IpBscIfStats;
 
 /* NOTES: On class C networks (or equivalent A/B subnets) there will never be
@@ -1621,6 +1660,7 @@ int     i,j;
 		frb              = bufs;
 		lanIpBufAvail   += n;
 		lanIpBufTotal   += n;
+		lanIpBscCfg.num_rbufs = lanIpBufTotal;
 		/* chain into list of malloced chunks */
 		*(void**)mem     = rbuf_mem;
 		rbuf_mem         = mem;
@@ -1753,7 +1793,7 @@ register union { uint32_t ip; union arpip_2_aligned bytes; } val;
 
 /* Dump an ARP cache entry                                                    */
 static void
-prarp(FILE *f, ArpEntry e)
+prarp(int ind, FILE *f, ArpEntry e)
 {
 char           ipbuf[4*4];
 rtems_interval now,difft;
@@ -1768,7 +1808,7 @@ rtems_interval now,difft;
 	rtems_clock_get(RTEMS_CLOCK_GET_SECONDS_SINCE_EPOCH, &now);
 	difft = rtems_clock_get_ticks_since_boot();
 
-	fprintf(f,"%s: ", ipbuf);
+	fprintf(f,"%*s%s: ", ind, "", ipbuf);
 	if ( ! e->sync_resp ) {
 		prether(f, e->data.hwaddr);
 	} else  {
@@ -1882,7 +1922,7 @@ ArpEntry    found;
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_ARP ) {
 			printf("arpPutEntry/arpLookup no more slots, evicting #%i: ", oh);
-			prarp(0, arpcache(pif)[oh]);
+			prarp(0, 0, arpcache(pif)[oh]);
 		}
 #endif
 		if ( found->sync_resp ) {
@@ -1923,7 +1963,7 @@ int      i;
 #ifdef DEBUG
 				if ( (lanIpDebug & DEBUG_ARP) ) {
 					printf("arpLookup(): last-chance success for entry #%i\n",h);
-					prarp(0, rval);
+					prarp(0, 0, rval);
 				}
 #endif
 				/* Wow - we have something */
@@ -1934,7 +1974,7 @@ int      i;
 #ifdef DEBUG
 			if ( (lanIpDebug & DEBUG_ARP) ) {
 				printf("arpLookup(): deleting placeholder entry #%i\n",h);
-				prarp(0, rval);
+				prarp(0, 0, rval);
 			}
 #endif
 			/* Still no reply */
@@ -2078,7 +2118,7 @@ rtems_interval    now;
 #ifdef DEBUG
 				if ( lanIpDebug & DEBUG_ARP ) {
 					printf("arpCreateSyncsem(): sem already exists for entry #%i\n",h);
-					prarp(0, rval);
+					prarp(0, 0, rval);
 				}
 #endif
 				now = rtems_clock_get_ticks_since_boot();
@@ -2100,7 +2140,7 @@ rtems_interval    now;
 #ifdef DEBUG
 				if ( lanIpDebug & DEBUG_ARP ) {
 					printf("arpCreateSyncsem(): already got an answer for entry #%i\n", h);
-					prarp(0, rval);
+					prarp(0, 0, rval);
 				}
 #endif
 				memcpy(enaddr, rval->data.hwaddr, 6);
@@ -2141,7 +2181,7 @@ rtems_interval    now;
 #ifdef DEBUG
 			if ( lanIpDebug & DEBUG_ARP ) {
 				printf("arpCreateSyncsem(): created new sem for entry #%i: ", h);
-				prarp(0, rval);
+				prarp(0, 0, rval);
 			}
 #endif
 			err = ARPSEM_OLD;
@@ -2204,7 +2244,7 @@ rtems_status_code sc;
 #ifdef DEBUG
 				if ( lanIpDebug & DEBUG_ARP ) {
 					printf("arpAwaitReply(): already got an answer for entry #%i\n", h);
-					prarp(0, rval);
+					prarp(0, 0, rval);
 				}
 #endif
 				memcpy(enaddr, rval->data.hwaddr, 6);
@@ -2248,7 +2288,7 @@ rtems_status_code sc;
 			if ( ! dbgstr )
 				dbgstr = "created new";
 			printf("arpAwaitReply %s entry #%i: ", dbgstr, h);
-			prarp(0, rval);
+			prarp(0, 0, rval);
 			printf("Blocking for reply...\n");
 		}
 #endif
@@ -2329,6 +2369,7 @@ int               err = -ENOTCONN;
 			 * receive an answer then a cache entry will be created
 			 * or updated (asynchronously).
 			 */
+			pif->stats.arp_txreq++;
 			NETDRV_ATOMIC_SEND_ARPREQ(pif, ipaddr);
 			return 0;
 		}
@@ -2390,6 +2431,7 @@ proceed_unlocked:
 
 			if        ( ARPSEM_OLD == st ) {
 				/* must do a new lookup */
+				pif->stats.arp_txreq++;
 				NETDRV_ATOMIC_SEND_ARPREQ(pif, ipaddr);
 			} else if ( ARPSEM_FRESH == st ) {
 				/* just try again and block */
@@ -2511,7 +2553,7 @@ const char *dbgstr = 0;
 			if ( ! dbgstr )
 				dbgstr = "writing";
 			printf("arpPutEntry %s entry #%i: ", dbgstr, h);
-			prarp(0, rval);
+			prarp(0, 0, rval);
 		}
 #endif
 
@@ -2587,8 +2629,8 @@ arpFlushCache(IpBscIf pif, int perm_also)
 
 /* Print info for all ARP cache entries to file 'f' (stdout is used if NULL)  */
 
-void
-arpDumpCache(IpBscIf pif, FILE *f)
+static void
+arpDumpCacheIndented(int ind, IpBscIf pif, FILE *f)
 {
 ArpEntryRec           abuf;
 int                   i;
@@ -2607,13 +2649,19 @@ int                   i;
 
 					ARPUNLOCK( pif );
 
-					fprintf(f,"ARP cache entry #%i: ",i);
-					prarp(f, &abuf);
+					fprintf(f,"%*sARP cache entry #%i: ",ind,"",i);
+					prarp(ind, f, &abuf);
 				} else {
 					ARPUNLOCK( pif );
 				}
 		}
 	}
+}
+
+void
+arpDumpCache(IpBscIf pif, FILE *f)
+{
+	arpDumpCacheIndented(0, pif, f);
 }
 
 /* Scan the ARP cache for 'nloops' times every 'period' number of OS ticks for
@@ -2661,9 +2709,9 @@ ArpEntry              e;
 					 * changed but for debugging that's good enough...
 					 */
 					if ( e )
-						prarp(0, e);
-					else if ( arpScratch )		/* e has gone to scratch   */
-						prarp(0, arpScratch);	/* probably hasn't changed */
+						prarp(0, 0, e);
+					else if ( arpScratch )			/* e has gone to scratch   */
+						prarp(0, 0, arpScratch);	/* probably hasn't changed */
 					else
 						printf("\n");
 				}
@@ -2677,7 +2725,7 @@ ArpEntry              e;
 				if ( lanIpDebug & DEBUG_ARP ) {
 					printf("ARP cache entry #%i: ",i);
 					if (arpcache(pif)[i])
-						prarp(0, arpcache(pif)[i]);
+						prarp(0, 0, arpcache(pif)[i]);
 					else
 						printf("\n");
 				}
@@ -2828,6 +2876,20 @@ IpBscMcAddr  mca = 0;
 	}
 #endif
 
+	switch ( type ) {
+		case IGMP_TYPE_REPORT_V1:
+			intrf->stats.igmp_txreportv1++;
+		break;
+		case IGMP_TYPE_REPORT_V2:
+			intrf->stats.igmp_txreportv2++;
+		break;
+		case IGMP_TYPE_LEAVE:
+			intrf->stats.igmp_txleave++;
+		break;
+		default:
+		break;
+	}
+
 	if ( buf_p ) {
 		/* look 'mca' up -- entry could be stale if 'Leave' was
 		 * executed during the window where a callout calling
@@ -2839,6 +2901,8 @@ IpBscMcAddr  mca = 0;
 			/* For the moment this routine does not do local loopback
 			 * but we need not see our own IGMP messages...
 			 */
+			/* adjust raw packet counter */
+			intrf->stats.eth_txrawfrm--;
 			lanIpBscSendBufRaw(intrf, &buf_p->pkt, sizeof(lpkt_igmpv2hdr(&buf_p->pkt)));
 			buf_p = 0;
 		}
@@ -2918,14 +2982,17 @@ uint32_t    xx;
 
 	 /* 0x0001 == Ethernet, 0x0800 == IP */
 	NETDRV_READ_INCREMENTAL(pif, pipa, 8);
-	if ( htonlc(0x00010800) != *(uint32_a_t*)pipa )
+	if ( htonlc(0x00010800) != *(uint32_a_t*)pipa ) {
+		pif->stats.arp_protdropped++;
 		return 8;
+	}
 
 	xx = * ( (uint32_a_t *) pipa + 1 );
 
 	/* 0x06 hw addr len, 0x04 proto len, 0x0001 ARP REQUEST */
 	/* 0x06 hw addr len, 0x04 proto len, 0x0002 ARP REPLY   */
 	if ( htonlc(0x06040001) != xx && htonlc(0x06040002) != xx ) {
+		pif->stats.arp_lenopdropped++;
 		return 8;
 	}
 
@@ -2999,6 +3066,7 @@ LanUdpPkt    hdr;
 		&& ! (ismcst = mcListener(pif, pip->dst))
         && ! (isbcst = ISBCST(pip->dst, pif->nmask))
 	   ) {
+		pif->stats.ip_dstdropped++;
 #ifdef DEBUG
 		if ( (lanIpDebug & DEBUG_IP) ) {
 			printf("dropping IP to ");
@@ -3019,6 +3087,8 @@ LanUdpPkt    hdr;
 #endif
 		return rval;
 	}
+
+	pif->stats.ip_rxfrm++;
 
 #ifdef DEBUG
 	if ( (lanIpDebug & DEBUG_IP) ) {
@@ -3042,6 +3112,7 @@ LanUdpPkt    hdr;
      * (more fragments) or an offset.
 	 */
 	if ( ntohs(pip->off) & 0x9fff ) {
+		pif->stats.ip_frgdropped++;
 #ifdef DEBUG
 		if ( (lanIpDebug & DEBUG_IP) )
 			printf("dropping IP packet, vhl: 0x%02x flgs/off 0x%04x\n",
@@ -3056,6 +3127,7 @@ LanUdpPkt    hdr;
 	 * in an 'rbuf_t'
 	 */
 	if ( nbytes > sizeof( p->pkt ) - sizeof(EthHeaderRec) ) {
+		pif->stats.ip_lendropped++;
 #ifdef DEBUG
 		if ( (lanIpDebug & DEBUG_IP) )
 			printf("dropping IP packet, len: 0x%02x too big for rbuf_t\n",
@@ -3070,8 +3142,10 @@ LanUdpPkt    hdr;
 		case IP_PROT_ICMP :
 		{
 			/* reject non-V4 headers or headers with length > 5 */
-			if ( check_vhl(pip->vhl, 0x45) )
+			if ( check_vhl(pip->vhl, 0x45) ) {
+				pif->stats.icmp_hdrdropped++;
 				return rval;
+			}
 
 			if ( ! loopback )
 				NETDRV_READ_INCREMENTAL(pif, &lpkt_icmp(&p->pkt), l);
@@ -3094,6 +3168,7 @@ LanUdpPkt    hdr;
 
 			/* reject non-V4 headers or headers with length > 6 */
 			if ( pip->vhl != 0x46 && pip->vhl != 0x45 ) {
+				pif->stats.igmp_hdrdropped++;
 #ifdef DEBUG
 				if ( (lanIpDebug & DEBUG_IP) )
 					printf("dropping IP packet, vhl: 0x%02x (not 0x45 nor 0x46)\n", pip->vhl);
@@ -3117,8 +3192,10 @@ LanUdpPkt    hdr;
 		LanUdpPkt pudp = &lpkt_udp_hdrs(&p->pkt);
 
 			/* reject non-V4 headers or headers with length > 5 */
-			if ( check_vhl(pip->vhl, 0x45) )
+			if ( check_vhl(pip->vhl, 0x45) ) {
+				pif->stats.udp_hdrdropped++;
 				return rval;
+			}
 
 			/* UDP header is word aligned -> OK */
 			if ( ! loopback )
@@ -3157,6 +3234,7 @@ LanUdpPkt    hdr;
 								printf("DROPPED [peer != connected peer]\n");
 							}
 #endif
+							pif->stats.udp_sadropped++;
 							return rval;
 						}
 					}
@@ -3184,7 +3262,13 @@ LanUdpPkt    hdr;
 							socks[i].nbytes += msg.len;
 							/* they now own the buffer */
 							*ppbuf = 0;
+							pif->stats.udp_rxfrm++;
+							pif->stats.udp_rxbytes+=msg.len;
+						} else {
+							pif->stats.udp_nospcdropped++;
 						}
+					} else {
+						pif->stats.udp_sadropped++;
 					}
 					break;
 				}
@@ -3198,6 +3282,7 @@ LanUdpPkt    hdr;
 		break;
 
 		default:
+			pif->stats.ip_protdropped++;
 		break;
 	}
 
@@ -3243,6 +3328,8 @@ int             i;
 
 	NETDRV_READ_INCREMENTAL(pif, prb, sizeof(*pll));
 
+	pif->stats.eth_rxfrm++;
+
 	if (lanIpDebug & DEBUG_IP) {
 		int i;
 		printf("Ethernet: got 0x%04x\n", ntohs(pll->type));
@@ -3259,6 +3346,7 @@ int             i;
 		/* IP  */
 		len -= handleIP(pprb, pif, 0 /* this is not a looped-back buffer */);
 	} else {
+		pif->stats.eth_rxdropped++;
 #ifdef DEBUG
 		if (lanIpDebug & DEBUG_IP) {
 			int i;
@@ -3291,8 +3379,12 @@ uint32_t    xx;
 		if ( lanIpDebug & DEBUG_ARP )
 			printf("got ARP request for %d.%d.%d.%d\n",pipa->tpa[0],pipa->tpa[1],pipa->tpa[2],pipa->tpa[3]); 
 #endif
-		if ( get_tpa(pipa) != intrf->ipaddr )
+		if ( get_tpa(pipa) != intrf->ipaddr ) {
+			intrf->stats.arp_reqother++;
 			return;
+		}
+
+		intrf->stats.arp_reqme++;
 
 		/* they mean us; send reply */
 		memcpy( intrf->arprep.ll.dst,  pipa->sha, 6);
@@ -3311,6 +3403,7 @@ uint32_t    xx;
 		memcpy( &lpkt_arp_pkt(&p->pkt), &intrf->arprep, sizeof(intrf->arprep) );
 
 		refrbuf( p );
+		intrf->stats.arp_txrep++;
 		NETDRV_ENQ_BUFFER(intrf, p, sizeof(intrf->arprep));
 	} else if ( htonsc(0x0002) == pipa->oper ) {
 		/* REPLY   */
@@ -3321,9 +3414,12 @@ uint32_t    xx;
 			printf("\n");
 		}
 #endif
+		intrf->stats.arp_gotrep++;
 
 		arpPutEntry(intrf, get_spa(pipa), pipa->sha, 0);
 	} else {
+		/* should never get here; handleArp already checks that op is 0001 or 0002 */
+		intrf->stats.arp_lenopdropped++;
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_ARP ) {
 			printf("dropping unknown ARP (oper 0x%04x)\n", ntohs(pipa->oper));
@@ -3340,6 +3436,7 @@ processIcmp(IpBscIf intrf, rbuf_t *p, int len)
 IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
 
 	if ( picmp->type == 8 /* ICMP REQUEST */ && picmp->code == 0 ) {
+		intrf->stats.icmp_rxechoreq++;
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_ICMP )
 			printf("handling ICMP ECHO request\n");
@@ -3358,8 +3455,10 @@ IcmpHeaderRec *picmp = &lpkt_icmp(&p->pkt);
 		fillinSrcCsumIp(intrf, &lpkt_ip_hdrs(&p->pkt));
 
 		refrbuf(p);
+		intrf->stats.icmp_txechorep++;
 		NETDRV_ENQ_BUFFER(intrf, p, sizeof(EthHeaderRec) + len);
 	} else {
+		intrf->stats.icmp_opdropped++;
 #ifdef DEBUG
 		if ( lanIpDebug & DEBUG_ICMP )
 			printf("dropping ICMP (type %u, code %u)\n", picmp->type, picmp->code);
@@ -3390,6 +3489,7 @@ LanIpPart        ipp;
 
 	if ( 0x46 == ipp->ip.vhl ) {
 		if ( htonlc(IP_OPT_ROUTER_ALERT) != ipp->ip.opts[0] ) {
+			intrf->stats.igmp_hdrdropped++;
 #ifdef DEBUG
 			if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
 				printf("Dropping IGMP packet w/o router alert (option[0]: 0x%08"PRIx32")\n",
@@ -3407,6 +3507,7 @@ LanIpPart        ipp;
 	}
 
 	if ( pldlen < 8 ) {
+		intrf->stats.igmp_lendropped++;
 #ifdef DEBUG
 		if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
 			printf("Dropping IGMP packet with length (ip payload %u < 8)\n", pldlen);
@@ -3416,6 +3517,7 @@ LanIpPart        ipp;
 	}
 
 	if ( ipcsum((uint8_t*) pigmp, pldlen) ) {
+		intrf->stats.igmp_csumdropped++;
 #ifdef DEBUG
 		if ( lanIpDebug & (DEBUG_IP | DEBUG_IGMP) ) {
 			printf("Dropping IGMP packet with bad checksum\n");
@@ -3439,7 +3541,10 @@ LanIpPart        ipp;
 
 	switch( pigmp->type ) {
 		case IGMP_TYPE_REPORT_V1:
+			intrf->stats.igmp_rxreportv1++;
+			intrf->stats.igmp_rxreportv2--;
 		case IGMP_TYPE_REPORT_V2:
+			intrf->stats.igmp_rxreportv2++;
 			mca = lhtblFind( intrf->mctable, pigmp->gaddr);
 			if ( igmp_state_delaying( mca ) ) {
 #ifdef DEBUG
@@ -3459,6 +3564,7 @@ LanIpPart        ipp;
 			rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &ticks_per_s);
 
 			if ( igmp_query_is_v1( pigmp ) ) {
+				intrf->stats.igmp_rxqueryv1++;
 #ifdef DEBUG
 				if ( lanIpDebug & (DEBUG_IGMP) ) {
 					printf("IGMP V1 Query seen; switching to V2, starting timer...\n");
@@ -3479,6 +3585,7 @@ LanIpPart        ipp;
 				);
 				report_dly_ticks = 100;
 			} else {
+				intrf->stats.igmp_rxqueryv2++;
 #ifdef DEBUG
 				if ( lanIpDebug & (DEBUG_IGMP) ) {
 					printf("IGMP V2 Query seen -- ");
@@ -3875,6 +3982,7 @@ int
 lanIpBscSendBufRaw(IpBscIf pif, LanIpPacket buf_p, int len)
 {
 	/* TODO ???: handle MC loopback */
+	pif->stats.eth_txrawfrm++;
 	NETDRV_ENQ_BUFFER(pif, (rbuf_t*)buf_p,  len);
 	return len;
 }
@@ -3907,9 +4015,11 @@ int do_mc_loopback;
 
 	len = ntohs(lpkt_ip(buf_p).len) + sizeof(EthHeaderRec);
 	NETDRV_ENQ_BUFFER(pif, (rbuf_t*)buf_p,  len);
+	pif->stats.ip_txrawfrm++;
 
 	/* loop back locally subscribed multicast */
 	if ( do_mc_loopback ) {
+		pif->stats.ip_txmcloopback++;
 		/* all received bufs have the IF handle set... */
 		((rbuf_t*)buf_p)->buf.intrf = pif;
 		handleIP( (rbuf_t**)&buf_p, pif, 1 /* loopback */ );
@@ -4589,13 +4699,16 @@ try_again:
 
 	dodiff(1);
 
+#ifndef NETDRV_SND_PACKET
 	/* If they supply a buffer then we must copy the socket's header
 	 * there.
 	 */
 	if ( buf_p ) {
 		h = & lpkt_udp_hdrs( buf_p );
 		memcpy( h, &socks[sd].hdr, sizeof(*h) );
-	} else {
+	} else
+#endif
+	{
 		h = &socks[sd].hdr;
 	}
 
@@ -4671,11 +4784,14 @@ try_again:
 
 	do_mc_loopback = socks[sd].mclpbk && mcListener( pif, ipp->ip.dst );
 
+#ifdef NETDRV_SND_PACKET
+	if ( buf_p )
+		payload = lpkt_udp_hdrs( buf_p ).pld;
+	rval = NETDRV_SND_PACKET( pif, h, sizeof(*h), payload, payload_len );
+#endif
+
 	if ( ! buf_p ) {
 #ifdef NETDRV_SND_PACKET
-		rval = NETDRV_SND_PACKET( pif, h, sizeof(*h), payload, payload_len );
-
-		
 		if ( do_mc_loopback )
 #endif
 		{
@@ -4689,7 +4805,8 @@ try_again:
 	}
 #ifdef NETDRV_SND_PACKET
 	else {
-		rval = payload_len;
+		if ( ! do_mc_loopback )
+			relrbuf( (rbuf_t*) buf_p );
 	}
 #endif
 
@@ -4702,10 +4819,18 @@ try_again:
 	NETDRV_ENQ_BUFFER( pif, (rbuf_t*)buf_p, payload_len + sizeof(*h) );
 #endif
 
+	if ( rval > 0 ) {
+		pif->stats.udp_txfrm++;
+		pif->stats.udp_txbytes += rval;
+	} else {
+		pif->stats.udp_txdropped++;
+	}
+
 	dodiff(7);
 
 	/* loop back locally subscribed multicast ? */
 	if ( do_mc_loopback ) {
+		pif->stats.ip_txmcloopback++;
 		/* all received bufs have the IF handle set... */
 		((rbuf_t*)buf_p)->buf.intrf = pif;
 		handleIP( (rbuf_t**)&buf_p, pif, 1 /* loopback */ );
@@ -4947,8 +5072,9 @@ lanIpBscConfig(LanIpBscConfig p_cfg, LanIpBscConfig p_oldcfg)
 	if ( workSema && p_cfg && p_cfg->mask )
 		return -EINVAL;
 
-	if ( p_oldcfg )
-		*p_oldcfg = lanIpBscCfg;
+	if ( p_oldcfg ) {
+		*p_oldcfg           = lanIpBscCfg;
+	}
 
 	if ( p_cfg ) {
 		if ( (LANIPCFG_RX_RING & p_cfg->mask) ) {
@@ -4965,7 +5091,7 @@ lanIpBscConfig(LanIpBscConfig p_cfg, LanIpBscConfig p_oldcfg)
 					return -ENOMEM;
 				}
 			}
-			lanIpBscCfg.num_rbufs = lanIpBufTotal;
+			/* lanIpBscCfg.num_rbufs is updated by lanIpBscAddBufs() */
 		}
 		
 		if ( (LANIPCFG_SQDEPTH & p_cfg->mask) ) {
@@ -4974,4 +5100,129 @@ lanIpBscConfig(LanIpBscConfig p_cfg, LanIpBscConfig p_oldcfg)
 	}
 
 	return 0;
+}
+
+void
+lanIpBscDumpConfig(FILE *f)
+{
+	if ( !f )
+		f = stdout;
+	fprintf(f,"LanIpBasic Configuration Parameters:\n");
+	fprintf(f,"RBUFs: Free %6u, Used %6u, Total %6u\n",
+		lanIpBufAvail,
+		lanIpBufTotal - lanIpBufAvail,
+		lanIpBufTotal);
+	fprintf(f,"Socks: Free %6u, Used %6u, Total %6u\n",
+		NSOCKS - nsocks,
+		nsocks,
+		NSOCKS);
+	fprintf(f,"Rings:              RX   %6u,  TX   %6u\n",
+		lanIpBscCfg.rx_ring_size,
+		lanIpBscCfg.tx_ring_size);
+	fprintf(f,"Socket RX queue depth:                 %6u\n",
+		lanIpBscCfg.rx_queue_depth);
+}
+
+void
+lanIpBscDumpIfStats(IpBscIf intrf, unsigned info, FILE *f)
+{
+uint32_t tmp;
+
+	if ( ! intrf ) {
+		fprintf(stderr,"usage: void lanIpBscDumpIfStats(IpBscIf intrf, unsigned info_amount, FILE *f)\n");
+		fprintf(stderr,"       missing 'intrf' handle!\n");
+		return;
+	}
+
+	if ( !f )
+		f = stdout;
+	fprintf(f,"LanIpBasic Interface Statistics:\n");
+	tmp = ntohl(intrf->ipaddr);
+	tmp = ntohl(intrf->nmask);
+	fprintf(f,"Driver: %s\n", NETDRV_NAME(intrf));
+	fprintf(f,"Addresses:\n");
+	fprintf(f," IP ");
+		prip(f,intrf->ipaddr);
+		fputc('/',f);
+		prip(f,intrf->nmask);
+		fprintf(f,"; MAC ");
+		prether(f, intrf->arpreq.ll.src);
+		fputc('\n',f);
+	if ( (IPBSC_IFSTAT_INFO_MAC & info ) ) {
+		fprintf(f,"Ethernet statistics:\n");
+		fprintf(f," # Frames Received:          %9"PRIu32"\n", intrf->stats.eth_rxfrm);
+		fprintf(f," # RX Frames dropped:        %9"PRIu32"\n", intrf->stats.eth_rxdropped);
+		fprintf(f," # Raw Frames Sent:          %9"PRIu32"\n", intrf->stats.eth_txrawfrm);
+	}
+	if ( (IPBSC_IFSTAT_INFO_IP & info ) ) {
+		fprintf(f,"IP statistics:\n");
+		fprintf(f," # Frames Accepted:          %9"PRIu32"\n", intrf->stats.ip_rxfrm);
+		fprintf(f," # Dropped Frames:\n");
+		fprintf(f,"    Address Mismatch:        %9"PRIu32"\n", intrf->stats.ip_dstdropped);
+		fprintf(f,"    Fragmented:              %9"PRIu32"\n", intrf->stats.ip_frgdropped);
+		fprintf(f,"    Too Big:                 %9"PRIu32"\n", intrf->stats.ip_lendropped);
+		fprintf(f,"    Unsupported Protocol:    %9"PRIu32"\n", intrf->stats.ip_protdropped);
+		fprintf(f," # Multicast Loopback:       %9"PRIu32"\n", intrf->stats.ip_txmcloopback);
+		fprintf(f," # Raw IP buffers sent:      %9"PRIu32"\n", intrf->stats.ip_txrawfrm);
+	}
+	if ( (IPBSC_IFSTAT_INFO_UDP & info ) ) {
+		fprintf(f,"UDP statistics:\n");
+		fprintf(f," # Frames Accepted:          %9"PRIu32"\n", intrf->stats.udp_rxfrm);
+		fprintf(f," # Bytes Accepted:           %9"PRIu32"\n", intrf->stats.udp_rxbytes);
+		fprintf(f," # Dropped Frames:\n");
+		fprintf(f,"    Unsup. IP Header:        %9"PRIu32"\n", intrf->stats.udp_hdrdropped);
+		fprintf(f,"    Addr./Port Mismatch:     %9"PRIu32"\n", intrf->stats.udp_sadropped);
+		fprintf(f,"    No Space In Socket Queue:%9"PRIu32"\n", intrf->stats.udp_nospcdropped);
+		fprintf(f," # Frames Sent:              %9"PRIu32"\n", intrf->stats.udp_txfrm);
+		fprintf(f," # Bytes Sent:               %9"PRIu32"\n", intrf->stats.udp_txbytes);
+		fprintf(f," # Frames Dropped (TX):      %9"PRIu32"\n", intrf->stats.udp_txdropped);
+	}
+	if ( (IPBSC_IFSTAT_INFO_ARP & info ) ) {
+		fprintf(f,"ARP statistics:\n");
+		fprintf(f," # Replies Received:         %9"PRIu32"\n", intrf->stats.arp_gotrep);
+		fprintf(f," # Requests Received (Me):   %9"PRIu32"\n", intrf->stats.arp_reqme);
+		fprintf(f," # Requests Received (Other):%9"PRIu32"\n", intrf->stats.arp_reqother);
+		fprintf(f," # Requests Dropped:\n");
+		fprintf(f,"    Unsup. Len. or Operation:%9"PRIu32"\n", intrf->stats.arp_lenopdropped);
+		fprintf(f,"    Unsup. Protocol:         %9"PRIu32"\n", intrf->stats.arp_protdropped);
+		fprintf(f," Failures to Create Sema:    %9"PRIu32"\n", intrf->stats.arp_nosem);
+		fprintf(f," # Requests Sent:            %9"PRIu32"\n", intrf->stats.arp_txreq);
+		fprintf(f," # Replies Sent:             %9"PRIu32"\n", intrf->stats.arp_txrep);
+		fprintf(f," ARP Cache Dump:\n");
+		arpDumpCacheIndented( 2, intrf, f );
+	}
+	if ( (IPBSC_IFSTAT_INFO_ICMP & info ) ) {
+		fprintf(f,"ICMP statistics:\n");
+		fprintf(f," # Echo Requests Received:   %9"PRIu32"\n", intrf->stats.icmp_rxechoreq);
+		fprintf(f," # Echo Replies Sent:        %9"PRIu32"\n", intrf->stats.icmp_txechorep);
+		fprintf(f," # Frames Dropped:\n");
+		fprintf(f,"    Unsup. IP Header:        %9"PRIu32"\n", intrf->stats.icmp_hdrdropped);
+		fprintf(f,"    Unsupported Operation:   %9"PRIu32"\n", intrf->stats.icmp_opdropped);
+	}
+	if ( (IPBSC_IFSTAT_INFO_IGMP & info ) ) {
+		fprintf(f,"ICMP statistics:\n");
+		fprintf(f," # V1 Reports Received:      %9"PRIu32"\n", intrf->stats.igmp_rxreportv1);
+		fprintf(f," # V2 Reports Received:      %9"PRIu32"\n", intrf->stats.igmp_rxreportv2);
+		fprintf(f," # V1 Queries Received:      %9"PRIu32"\n", intrf->stats.igmp_rxqueryv1);
+		fprintf(f," # V2 Queries Received:      %9"PRIu32"\n", intrf->stats.igmp_rxqueryv2);
+		fprintf(f," # Frames Dropped:\n");
+		fprintf(f,"    Unsup. IP Header:        %9"PRIu32"\n", intrf->stats.igmp_hdrdropped);
+		fprintf(f,"    Unsup. Length:           %9"PRIu32"\n", intrf->stats.igmp_lendropped);
+		fprintf(f,"    Bad Checksum:            %9"PRIu32"\n", intrf->stats.igmp_csumdropped);
+		fprintf(f," # V1 Reports Sent:          %9"PRIu32"\n", intrf->stats.igmp_txreportv1);
+		fprintf(f," # V2 Reports Sent:          %9"PRIu32"\n", intrf->stats.igmp_txreportv2);
+		fprintf(f," # Leave Group Msgs. Sent:   %9"PRIu32"\n", intrf->stats.igmp_txleave);
+	}
+	if ( (IPBSC_IFSTAT_INFO_MCGRP & info ) ) {
+		fprintf(f,"Multicast Group Membership Info:\n");
+		lanIpBscDumpMcGroups(intrf, f);
+	}
+	if ( (IPBSC_IFSTAT_INFO_DRV & info ) ) {
+		fprintf(f,"Driver (%s) Statistics/Info:\n", NETDRV_NAME(intrf));
+#ifdef NETDRV_DUMPSTATS
+		NETDRV_DUMPSTATS(intrf, f);
+#else
+		fprintf(f,"UNSUPPORTED BY DRIVER\n");
+#endif
+	}
 }

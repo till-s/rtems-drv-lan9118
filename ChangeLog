@@ -1,3 +1,21 @@
+2009/12/09 (TS):
+ - lanIpBasic.c:
+     o BUGFIX - _udpSockSendTo_internal() would not send if driver
+                provided NETDRV_SND_PACKET() and a buffer was passed.
+     o update num_rbufs in config struct when new buffers are added
+       so that reading the config struct always reflects the correct
+       amount.
+     o Added (many) statistics counters.
+ - lanIpBasic.c, lanIpBasic.h:
+	 o Added lanIpBscDumpIfStats(), lanIpBscDumpConfig().
+ - Makefile.am: Added lanIpBasic.c to EXTRA_liblanIpBasic_mve_a_SOURCES.
+ - drvAmdEthIpBasic.c:
+     o clamp ring sizes to max defined by low-level driver (but not
+       publicly known :-().
+ - drvGnrIpBasic.c, drvLan9118IpBasic.c, e1k_lldrv.c, mve_lldrv.c,
+   drvAmdEthIpBasic.c, gnreth_lldrv.h, lanIpBasic.c: 
+     o New NETDRV entry points for retrieving driver name and for 
+       dumping driver statistics.
 2009/12/07 (TS):
  - Makefile.am, hash: Added 'lhtbl' from 'hash' CVS-module.
 2009/12/07 (TS):
