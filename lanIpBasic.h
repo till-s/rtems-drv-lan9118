@@ -481,14 +481,16 @@ lanIpBscShutdown();
 /*
  * Diagnostics routines.
  * 
- * NOTE: Most diagnostics information is not thread-safe
- *       with minor impact (e.g., it is possible that
- *       the 'used' + 'free' buffer count doesn't add up
- *       to the 'total' because the three counters are
- *       not read atomically).
+ * NOTES: Most diagnostics information is not thread-safe
+ *        with minor impact (e.g., it is possible that
+ *        the 'used' + 'free' buffer count doesn't add up
+ *        to the 'total' because the three counters are
+ *        not read atomically).
  *
- *       However, it may be catastrophic to e.g., tear-down
- *       an interface while dumping information about it.
+ *        However, it may be catastrophic to e.g., tear-down
+ *        an interface while dumping information about it.
+ *
+ *        Most counters are 32-bit and may occasionally roll-over.
  */
 
 /*
@@ -563,6 +565,76 @@ lanIpBscDumpIfStats(IpBscIf intrf, unsigned info, FILE *f);
  * Dump all available info.
  */
 #define IPBSC_IFSTAT_INFO_ALL       ((unsigned)(-1))
+
+/*
+ * 'Machine-readable' summary statistics:
+ */
+
+/* Interface Info */
+typedef struct LanIpBscIfSumStatsRec_ {
+	/* Linked list (in case there is ever support for multiple IFs) */
+	struct      LanIpBscIfSumStatsRec_ *p_next;
+
+	const char *drv_name;  /* name of driver attached to this IF                  */
+
+	uint8_t  en_addr[6];   /* MAC address                                         */
+	uint32_t ip_addr;      /* IP address (NETWORK byte order)                     */
+	uint32_t ip_nmask;     /* IP netmask (NETWORK byte order)                     */
+
+	uint32_t mc_ngroups;   /* # of MC groups IF is a member of                    */
+
+	uint32_t eth_rx_frms;  /* Ethernet frames accepted and passed up              */
+	uint32_t eth_rx_drop;  /* Ethernet frames not handled by upper layers         */
+
+	uint32_t arp_rx_reps;  /* ARP replies received                                */
+	uint32_t arp_rx_reqs;  /* ARP requests received (for this IP or others)       */
+	uint32_t arp_rx_drop;  /* Frames dropped by ARP layer                         */
+
+	uint32_t arp_tx_reqs;  /* ARP requests sent                                   */
+	uint32_t arp_tx_reps;  /* ARP replies sent                                    */
+
+	uint32_t ip_rx_ufrm;   /* IP unicast frames accepted (and passed up)          */
+	uint32_t ip_rx_mfrm;   /* IP multicast frames accepted (and passed up)        */
+	uint32_t ip_rx_bfrm;   /* IP broadcast frames accepted (and passed up)        */
+	uint32_t ip_rx_drop;   /* Frames dropped by IP layer                          */
+
+	uint32_t icmp_rx_ereq; /* ICMP Echo Requests Received ('ping')                */
+	uint32_t icmp_rx_drop; /* Frames dropped by ICMP handler                      */
+
+	uint32_t igmp_rx_reps; /* IGMP Reports received                               */
+	uint32_t igmp_rx_qrys; /* IGMP Queries received                               */
+	uint32_t igmp_rx_drop; /* Frames dropped by IGMP handler                      */
+	uint32_t igmp_tx_reps; /* IGMP Reports sent                                   */
+	uint32_t igmp_tx_leav; /* IGMP Leave msgs. sent                               */
+
+	uint32_t udp_rx_frms;  /* UDP frames receifed                                 */
+	uint32_t udp_rx_drop;  /* Frames dropped by UDP layer                         */
+	uint32_t udp_tx_frms;  /* UDP frames sent (from sockets)                      */
+} LanIpBscIfSumStatsRec, *LanIpBscIfSumStats;
+
+typedef struct LanIpBscSumStatsRec_ {
+	uint32_t           nsocks_max;
+	uint32_t           nsocks_used;
+	uint32_t           sock_qdepth;
+	uint32_t           rbufs_max;
+	uint32_t           rbufs_used;
+
+	uint32_t           if_max;
+	LanIpBscIfSumStats if_stats; /* linked list of IF stats */
+} LanIpBscSumStatsRec, *LanIpBscSumStats;
+
+/*
+ * Obtain summary statistics; when done, the returned object
+ * must be released by lanIpBscFreeStats().
+ */
+LanIpBscSumStats
+lanIpBscGetStats();
+
+/*
+ * Release all resources held by 'stats'
+ */
+void
+lanIpBscFreeStats(LanIpBscSumStats stats);
 
 #ifdef __cplusplus
 }

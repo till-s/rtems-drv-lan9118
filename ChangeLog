@@ -1,4 +1,7 @@
 2009/12/09 (TS):
+ - lanIpBasic.c, lanIpBasic.h: Added lanIpBscGetStats()/lanIpBscFreeStats()
+   for obtaining 'machine-readable' summary statistics.
+2009/12/09 (TS):
  - lanIpBasic.c:
      o BUGFIX - _udpSockSendTo_internal() would not send if driver
                 provided NETDRV_SND_PACKET() and a buffer was passed.

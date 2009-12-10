@@ -4951,10 +4951,6 @@ int rval;
 
 	SOCKLOCK( & socks[sd] );
 
-	/* This flag should be set on the socket, not the interface --
-	 * but then we'd need to change the 'ReturnPacket' API to
-	 * be passed a 'socket' argument....
-	 */
 	rval = socks[sd].mclpbk;
 	if ( val >= 0 ) {
 		/* if val < 0 they want to just read the current state */
@@ -5243,5 +5239,99 @@ uint32_t tmp;
 #else
 		fprintf(f,"UNSUPPORTED BY DRIVER\n");
 #endif
+	}
+}
+
+
+LanIpBscSumStats
+lanIpBscGetStats()
+{
+IpBscIf            pif;
+LanIpBscSumStats   rval    = 0;
+LanIpBscIfSumStats psums   = 0;
+LanIpBscIfSumStats *ppsums = 0;
+
+	if ( ! (rval  = calloc(sizeof(*rval),1)) ) {
+		return 0;
+	}
+	ppsums            = &rval->if_stats;
+	rval->if_max      = 0;
+
+	rval->nsocks_max  = NSOCKS;
+	rval->nsocks_used = nsocks;
+	rval->sock_qdepth = lanIpBscCfg.rx_queue_depth;
+	rval->rbufs_max   = lanIpBufTotal;
+	rval->rbufs_used  = lanIpBufTotal - lanIpBufAvail;
+
+	/* for all IFs DO */
+	{
+
+	pif            = intrf;
+
+	if ( ! (psums = calloc(sizeof(*psums),1)) ) {
+		free(rval);
+		rval = 0;
+		return 0;
+	}
+	rval->if_max++;
+
+	psums->p_next  = 0;
+	*ppsums        = psums;
+	ppsums         = &psums->p_next;
+
+	psums->drv_name      = NETDRV_NAME(pif);
+	memcpy( psums->en_addr, pif->arpreq.ll.src, sizeof(psums->en_addr) );
+	psums->ip_addr       = pif->ipaddr;
+	psums->ip_nmask      = pif->nmask;
+	psums->mc_ngroups    = pif->mcnum;
+
+	psums->eth_rx_frms   = pif->stats.eth_rxfrm;
+	psums->eth_rx_drop   = pif->stats.eth_protdropped  + pif->stats.eth_rxdropped;
+
+	psums->arp_rx_reps   = pif->stats.arp_gotrep;
+	psums->arp_rx_reqs   = pif->stats.arp_reqme        + pif->stats.arp_reqother;
+	psums->arp_rx_drop   = pif->stats.arp_lenopdropped + pif->stats.arp_protdropped;
+	psums->arp_tx_reqs   = pif->stats.arp_txreq;
+	psums->arp_tx_reps   = pif->stats.arp_txrep;
+
+	psums->ip_rx_ufrm    = pif->stats.ip_rxufrm;
+	psums->ip_rx_mfrm    = pif->stats.ip_rxmfrm;
+	psums->ip_rx_bfrm    = pif->stats.ip_rxbfrm;
+
+	psums->ip_rx_drop    = pif->stats.ip_mcdstdropped + pif->stats.ip_frgdropped;
+	psums->ip_rx_drop   += pif->stats.ip_lendropped   + pif->stats.ip_protdropped;
+	psums->ip_rx_drop   += pif->stats.ip_dstdropped;
+
+	psums->icmp_rx_ereq  = pif->stats.icmp_rxechoreq;
+	psums->icmp_rx_drop  = pif->stats.icmp_hdrdropped + pif->stats.icmp_opdropped;
+
+	psums->igmp_rx_reps  = pif->stats.igmp_rxreportv1 + pif->stats.igmp_rxreportv2;
+	psums->igmp_rx_qrys  = pif->stats.igmp_rxqueryv1  + pif->stats.igmp_rxqueryv2;
+	psums->igmp_rx_drop  = pif->stats.igmp_lendropped + pif->stats.igmp_csumdropped;
+	psums->igmp_rx_drop += pif->stats.igmp_hdrdropped;
+	psums->igmp_tx_reps  = pif->stats.igmp_txreportv1 + pif->stats.igmp_txreportv2;
+	psums->igmp_tx_leav  = pif->stats.igmp_txleave;
+
+
+	psums->udp_rx_frms   = pif->stats.udp_rxfrm;
+	psums->udp_rx_drop   = pif->stats.udp_sadropped   + pif->stats.udp_nospcdropped;
+	psums->udp_rx_drop  += pif->stats.udp_hdrdropped;
+	psums->udp_tx_frms   = pif->stats.udp_txfrm;
+
+	}
+
+	return rval;
+}
+
+void
+lanIpBscFreeStats(LanIpBscSumStats stats)
+{
+LanIpBscIfSumStats ifs, ifsn;
+	if ( stats ) {
+		for ( ifs = stats->if_stats; ifs; ifs = ifsn ) {
+			ifsn = ifs->p_next;
+			free( ifs );
+		}
+		free( stats );
 	}
 }
