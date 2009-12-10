@@ -11,16 +11,17 @@ lanIp_SOURCES                   += hash/lhtbl.c hash/lhtbl.h
 AM_CPPFLAGS                     += -I$(srcdir)/hash
 
 EXTRA_liblanIpBasic_ln9_a_SOURCES  = lanIpBasic.c drvLan9118.h
-liblanIpBasic_ln9_a_SOURCES = drvLan9118.c drvLan9118IpBasic.c
-liblanIpBasic_ln9_a_SOURCES+= $(lanIp_SOURCES)
+liblanIpBasic_ln9_a_SOURCES     = drvLan9118.c drvLan9118IpBasic.c
+liblanIpBasic_ln9_a_SOURCES    += $(lanIp_SOURCES)
 liblanIpBasic_mve_a_SOURCES     = drvGnrIpBasic.c gnreth_lldrv.h mve_lldrv.c
 liblanIpBasic_mve_a_SOURCES    += $(lanIp_SOURCES)
 EXTRA_liblanIpBasic_mve_a_SOURCES  = lanIpBasic.c
 liblanIpBasic_e1k_a_SOURCES     = drvGnrIpBasic.c gnreth_lldrv.h e1k_lldrv.c
 liblanIpBasic_e1k_a_SOURCES    += $(lanIp_SOURCES)
-EXTRA_liblanIpBasic_pcn_a_SOURCES  = lanIpBasic.c
+EXTRA_liblanIpBasic_mve_a_SOURCES  = lanIpBasic.c
 liblanIpBasic_pcn_a_SOURCES     = drvAmdEthIpBasic.c
 liblanIpBasic_pcn_a_SOURCES    += $(lanIp_SOURCES)
+EXTRA_liblanIpBasic_pcn_a_SOURCES  = lanIpBasic.c
 
 liblanIpBasic_e1k_a_CPPFLAGS    = $(AM_CPPFLAGS) -I$(srcdir)/../bsd_eth_drivers/if_em/
 
