@@ -478,6 +478,92 @@ lanIpBscInit();
 int
 lanIpBscShutdown();
 
+/*
+ * Diagnostics routines.
+ * 
+ * NOTE: Most diagnostics information is not thread-safe
+ *       with minor impact (e.g., it is possible that
+ *       the 'used' + 'free' buffer count doesn't add up
+ *       to the 'total' because the three counters are
+ *       not read atomically).
+ *
+ *       However, it may be catastrophic to e.g., tear-down
+ *       an interface while dumping information about it.
+ */
+
+/*
+ * Dump stack configuration parameters and actual
+ * run-time values (RBUFs, sockets).
+ *
+ * FILE may be NULL in which case 'stdout' is used.
+ */
+
+void
+lanIpBscDumpConfig(FILE *f);
+
+/* Dump info about all MC groups subscribed on interface to file 'f'.
+ *
+ * RETURNS: Zero on success, nonzero on error.
+ *
+ * NOTES:   Not fully thread-safe; must not destroy interface while using this.
+ *   
+ *          'f' may be passed as NULL in which case 'stdout' is used.
+ *    
+ *          The identical dump may also be obtained via lanIpBscDumpIfStats()
+ *          (see below).
+ */
+int
+lanIpBscDumpMcGroups(IpBscIf ipbif_p, FILE *f);
+
+/*
+ * Dump interface statistics to 'FILE'.
+ *
+ * NOTES:
+ *  - 'f' may be NULL in which case 'stdout' will be used.
+ *  - An ORed bitset must be passed in 'info'. Only counters
+ *    related to the selected flags in 'info' are dumped.
+ *    If 'info' == IPBSC_IFSTAT_INFO_ALL then all available
+ *    info is printed.
+ *  - IPBSC_IFSTAT_INFO_MCGRP calls lanIpBscDumpMcGroups().
+ *  - IPBSC_IFSTAT_INFO_DRV depends on driver-specific
+ *    implementation.
+ */
+void
+lanIpBscDumpIfStats(IpBscIf intrf, unsigned info, FILE *f);
+
+/*
+ * Flags to be passed as 'info' to lanIpBscDumpIfStats()
+ * (may be ORed).
+ */
+
+/* Ethernet/MAC-level counters          */
+#define IPBSC_IFSTAT_INFO_MAC       (1<<0)
+/* IP related statistics                */
+#define IPBSC_IFSTAT_INFO_IP        (1<<1)
+/* UDP related statistics               */
+#define IPBSC_IFSTAT_INFO_UDP       (1<<2)
+/* ARP related statistics               */
+#define IPBSC_IFSTAT_INFO_ARP       (1<<3)
+/* ICMP related statistics              */
+#define IPBSC_IFSTAT_INFO_ICMP      (1<<4)
+/* IGMP related statistics              */
+#define IPBSC_IFSTAT_INFO_IGMP      (1<<5)
+/*
+ * Dump IP multicast memberships etc.;
+ * identical to lanIpBscDumpMcGroups()
+ */
+#define IPBSC_IFSTAT_INFO_MCGRP     (1<<6)
+/*
+ * Call driver's statistics routine
+ * (if available).
+ */
+#define IPBSC_IFSTAT_INFO_DRV       (1<<7)
+
+/*
+ * Dump all available info.
+ */
+#define IPBSC_IFSTAT_INFO_ALL       ((unsigned)(-1))
+
 #ifdef __cplusplus
 }
 #endif
