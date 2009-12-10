@@ -1486,6 +1486,8 @@ static struct IpBscLLDrv_ lldrv_e1k = {
 	med_ioctl     :  drv_e1k_media_ioctl,
 	mc_filter_add :  drv_e1k_mcast_filter_accept_add,
 	mc_filter_del :  drv_e1k_mcast_filter_accept_del,
+	dump_stats    :  drv_e1k_dump_stats,
+	drv_name      :  "e1k",
 };
 
 LLDrv drvGnrethIpBasicLLDrv = &lldrv_e1k;

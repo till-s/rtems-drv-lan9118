@@ -82,6 +82,11 @@ NETDRV_START(struct IpBscIfRec_ *ipbif_p, int pri);
 static inline int
 NETDRV_SHUTDOWN(void * drv_p);
 
+#define NETDRV_NAME(ipbif_p) "lan9118"
+
+#define NETDRV_DUMPSTATS(ipbif_p, f) \
+	drvLan9118DumpStats((DrvLan9118_tps)((ipbif_p)->drv_p), (f))
+
 /* Driver header name with angle brackets e.g., <drvXXX.h> */
 #define NETDRV_INCLUDE	<drvLan9118.h>
 

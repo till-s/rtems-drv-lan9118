@@ -56,6 +56,8 @@ struct IpBscLLDrv_ {
 	int         (*med_ioctl)(LLDev, int, int*); /* obtain media state            */
 	void        (*mc_filter_add)(LLDev, uint8_t*); /* add addr to mcast filter   */
 	void        (*mc_filter_del)(LLDev, uint8_t*); /* del addr from mcast filter */
+	void        (*dump_stats)(LLDev, FILE *); /* dump statistics + info (OPTIONAL) */
+	const char   *drv_name;  /* ID/name for this driver */
 };
 
 #endif

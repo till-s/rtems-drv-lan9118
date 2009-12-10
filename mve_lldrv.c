@@ -25,6 +25,8 @@ static struct IpBscLLDrv_ lldrv_mve = {
 	med_ioctl     :  BSP_mve_media_ioctl,
 	mc_filter_add :  BSP_mve_mcast_filter_accept_add,
 	mc_filter_del :  BSP_mve_mcast_filter_accept_del,
+	dump_stats    :  BSP_mve_dump_stats,
+	drv_name      :  "mve",
 };
 
 LLDrv drvGnrethIpBasicLLDrv = &lldrv_mve;

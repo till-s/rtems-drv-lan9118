@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 
 typedef struct gnreth_drv_s_ *gnreth_drv;
 
@@ -55,6 +56,13 @@ NETDRV_START(struct IpBscIfRec_ *pif, int pri);
 
 static inline int
 NETDRV_SHUTDOWN(void *drv_p);
+
+static inline void NETDRV_DUMPSTATS_(struct IpBscIfRec_ *pif, FILE *f);
+
+#define NETDRV_DUMPSTATS(pif,f) NETDRV_DUMPSTATS_(pif,f)
+
+static inline const char *
+NETDRV_NAME(struct IpBscIfRec_ *pif);
 
 #define NETDRV_INCLUDE "gnreth_lldrv.h"
 
@@ -543,4 +551,19 @@ gnreth_drv gdrv = drv_p;
 	}
 	gdrv_cleanup(gdrv);
 	return 0;
+}
+
+static inline void
+NETDRV_DUMPSTATS_(struct IpBscIfRec_ *pif, FILE *f)
+{
+	gnreth_drv gdrv = (gnreth_drv)(pif)->drv_p;
+	if ( (gdrv)->lldrv.dump_stats )
+		(gdrv)->lldrv.dump_stats( (gdrv)->lldrv.dev, (f) );
+}
+
+static inline const char *
+NETDRV_NAME(struct IpBscIfRec_ *pif)
+{
+	gnreth_drv gdrv = (gnreth_drv)(pif)->drv_p;
+	return gdrv->lldrv.drv_name;
 }
