@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 /* How to send the ARP request structure:
  * Either lock, fillin-IP addr, send, unlock
  * or copy, fillin send copy...
@@ -11,6 +12,8 @@ typedef struct amdeth_drv_s_ *amdeth_drv;
 /* fwd decl of interface struct */
 struct IpBscIfRec_;
 union  rbuf_;
+
+#define NETDRV_NAME(pif) "pcn32"
 
 
 #define NETDRV_ATOMIC_SEND_ARPREQ(pif, ipaddr)								\
@@ -53,6 +56,10 @@ NETDRV_START(struct IpBscIfRec_ *ipbif_p, int pri);
 static inline int
 NETDRV_SHUTDOWN(void *drv_p);
 
+static inline void
+NETDRV_DUMPSTATS_(struct IpBscIfRec_ *ipbif_p, FILE *f);
+#define NETDRV_DUMPSTATS(ipbif_p, f) NETDRV_DUMPSTATS_(ipbif_p, f)
+
 #define NETDRV_INCLUDE	<amdeth.h>
 
 /* No alignment req. on RX buffers, AFAIK.
@@ -75,8 +82,18 @@ NETDRV_SHUTDOWN(void *drv_p);
 
 #define N_SATELLITES (20)
 #define RX_RING_SIZE (N_SATELLITES+(N_SATELLITES)/4 + 1)
-
 #define TX_RING_SIZE (N_SATELLITES/4 + 1)
+
+/* Current limits in amdeth */
+#if     RX_RING_SIZE > 8
+#undef  RX_RING_SIZE
+#define RX_RING_SIZE 8
+#endif
+
+#if     TX_RING_SIZE > 8
+#undef  TX_RING_SIZE
+#define TX_RING_SIZE 8
+#endif
 
 #define NRBUFS (RX_RING_SIZE + RX_RING_SIZE*20 + 20)
 
@@ -337,4 +354,11 @@ rtems_id   sync;
 
 	free(mdrv);
 	return 0;
+}
+
+static inline void
+NETDRV_DUMPSTATS_(struct IpBscIfRec_ *ipbif_p, FILE *f)
+{
+amdeth_drv mdrv = (amdeth_drv)(ipbif_p)->drv_p;
+	amdEthDumpStats(mdrv->mp, f);
 }
