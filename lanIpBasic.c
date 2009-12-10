@@ -299,6 +299,7 @@ typedef union IpBscMcRef_ {
 /* Interface statistics counters                                              */
 typedef struct IpBscIfStatsRec_ {
 	uint32_t    eth_rxfrm;
+	uint32_t    eth_protdropped;
 	uint32_t    eth_rxdropped;
 	uint32_t    eth_txrawfrm;
 	uint32_t	arp_nosem;            /* failed to create ARP sync semaphore  */
@@ -310,7 +311,10 @@ typedef struct IpBscIfStatsRec_ {
 	uint32_t    arp_txreq;
 	uint32_t    arp_txrep;
 	uint32_t    ip_dstdropped;
-	uint32_t    ip_rxfrm;
+	uint32_t    ip_mcdstdropped;
+	uint32_t    ip_rxufrm;
+	uint32_t    ip_rxmfrm;
+	uint32_t    ip_rxbfrm;
 	uint32_t    ip_frgdropped;
 	uint32_t    ip_lendropped;
 	uint32_t    ip_protdropped;
@@ -3062,11 +3066,19 @@ LanUdpPkt    hdr;
 	rval += sizeof(*pip);
 
 	/* accept IP unicast and broadcast */
-	if (   ! (pip->dst == pif->ipaddr)
-		&& ! (ismcst = mcListener(pif, pip->dst))
-        && ! (isbcst = ISBCST(pip->dst, pif->nmask))
-	   ) {
-		pif->stats.ip_dstdropped++;
+	if ( (pip->dst == pif->ipaddr) ) {
+		pif->stats.ip_rxufrm++;
+	} else if ( (ismcst = mcListener(pif, pip->dst)) ) {
+		pif->stats.ip_rxmfrm++;
+	} else if ( (isbcst = ISBCST(pip->dst, pif->nmask)) ) {
+		pif->stats.ip_rxbfrm++;
+	} else {
+
+		if ( ISMCST( pip->dst ) )
+			pif->stats.ip_mcdstdropped++;
+		else
+			pif->stats.ip_dstdropped++;
+
 #ifdef DEBUG
 		if ( (lanIpDebug & DEBUG_IP) ) {
 			printf("dropping IP to ");
@@ -3087,8 +3099,6 @@ LanUdpPkt    hdr;
 #endif
 		return rval;
 	}
-
-	pif->stats.ip_rxfrm++;
 
 #ifdef DEBUG
 	if ( (lanIpDebug & DEBUG_IP) ) {
@@ -3346,7 +3356,9 @@ int             i;
 		/* IP  */
 		len -= handleIP(pprb, pif, 0 /* this is not a looped-back buffer */);
 	} else {
-		pif->stats.eth_rxdropped++;
+		pif->stats.eth_protdropped++;
+		/* Don't count these with eth_rxdropped */
+		pif->stats.eth_rxdropped--;
 #ifdef DEBUG
 		if (lanIpDebug & DEBUG_IP) {
 			int i;
@@ -3357,6 +3369,8 @@ int             i;
 		}
 #endif
 	}
+	if ( *pprb )
+		pif->stats.eth_rxdropped++;
 
 	return len;
 }
@@ -5151,14 +5165,19 @@ uint32_t tmp;
 	if ( (IPBSC_IFSTAT_INFO_MAC & info ) ) {
 		fprintf(f,"Ethernet statistics:\n");
 		fprintf(f," # Frames Received:          %9"PRIu32"\n", intrf->stats.eth_rxfrm);
-		fprintf(f," # RX Frames dropped:        %9"PRIu32"\n", intrf->stats.eth_rxdropped);
+		fprintf(f," # RX Frames dropped\n");
+		fprintf(f,"    Unsupported Protocol:    %9"PRIu32"\n", intrf->stats.eth_protdropped);
+		fprintf(f,"    Rejected by Higher Prot: %9"PRIu32"\n", intrf->stats.eth_rxdropped);
 		fprintf(f," # Raw Frames Sent:          %9"PRIu32"\n", intrf->stats.eth_txrawfrm);
 	}
 	if ( (IPBSC_IFSTAT_INFO_IP & info ) ) {
 		fprintf(f,"IP statistics:\n");
-		fprintf(f," # Frames Accepted:          %9"PRIu32"\n", intrf->stats.ip_rxfrm);
+		fprintf(f," # Frames Accepted (Unicast):%9"PRIu32"\n", intrf->stats.ip_rxufrm);
+		fprintf(f," # Frames Accepted (MCAST):  %9"PRIu32"\n", intrf->stats.ip_rxmfrm);
+		fprintf(f," # Frames Accepted (BCAST):  %9"PRIu32"\n", intrf->stats.ip_rxbfrm);
 		fprintf(f," # Dropped Frames:\n");
 		fprintf(f,"    Address Mismatch:        %9"PRIu32"\n", intrf->stats.ip_dstdropped);
+		fprintf(f,"    Soft Multicast Filter:   %9"PRIu32"\n", intrf->stats.ip_mcdstdropped);
 		fprintf(f,"    Fragmented:              %9"PRIu32"\n", intrf->stats.ip_frgdropped);
 		fprintf(f,"    Too Big:                 %9"PRIu32"\n", intrf->stats.ip_lendropped);
 		fprintf(f,"    Unsupported Protocol:    %9"PRIu32"\n", intrf->stats.ip_protdropped);
