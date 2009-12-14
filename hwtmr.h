@@ -1,6 +1,10 @@
 #ifndef LANIPBASIC_HW_TIMER_H
 #define LANIPBASIC_HW_TIMER_H
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <stdint.h>
 
 #if defined(__mcf5200__)
@@ -16,6 +20,10 @@ Read_hwtimer()
 #elif (defined(__powerpc__) || defined(__PPC__)) && defined(__rtems__)
 
 #include <rtems.h> /*PPC_Get_timebase_register*/
+
+#if RTEMS_VERSION_ATLEAST(4,9,99)
+#include <libcpu/powerpc-utility.h>
+#endif
 
 static __inline__ uint32_t 
 Read_hwtimer()
