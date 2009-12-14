@@ -157,10 +157,10 @@ typedef union LanIpPacketRec_ {
 #define lpkt_udp_hdrs(p)		(p)->p_u.udp_S
 #define lpkt_igmpv2hdr(p)		(p)->p_u.igmpv2_S
 
-#define lpkt_eth_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.eth_S.pld)->x)
-#define lpkt_icmp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.icmp_S.pld)->x)
-#define lpkt_ip_pld(p,type)	    (((union { char c[sizeof(type)]; type x; } *)(p)->p_u.ip_S.pld)->x)
-#define lpkt_udp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } *)(p)->p_u.udp_S.pld)->x)
+#define lpkt_eth_pld(p,type)	(((union { char c[sizeof(type)]; type x; } __attribute__((may_alias)) *)(p)->p_u.eth_S.pld)->x)
+#define lpkt_icmp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } __attribute__((may_alias)) *)(p)->p_u.icmp_S.pld)->x)
+#define lpkt_ip_pld(p,type)	    (((union { char c[sizeof(type)]; type x; } __attribute__((may_alias)) *)(p)->p_u.ip_S.pld)->x)
+#define lpkt_udp_pld(p,type)	(((union { char c[sizeof(type)]; type x; } __attribute__((may_alias)) *)(p)->p_u.udp_S.pld)->x)
 
 #define ETHPKTSZ(eth_payload_sz)	((eth_payload_sz) + sizeof(EthHeaderRec))
 #define IPPKTSZ(ip_payload_sz)      ETHPKTSZ((ip_payload_sz) + sizeof(IpHeaderRec))

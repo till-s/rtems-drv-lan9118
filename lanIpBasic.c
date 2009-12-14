@@ -1772,7 +1772,7 @@ rbuf_t                *rval;
 union arpip_2_aligned {
 	uint8_t	 ipbytes[4];
 	uint16_t aligner[2]; /* dummy to provide 2-byte alignment */
-}; /* spa/tpa are 2-byte aligned */
+} __attribute__ ((may_alias)); /* spa/tpa are 2-byte aligned */
 
 static inline uint32_t get_spa(IpArpRec *arphdr)
 {
