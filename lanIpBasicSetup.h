@@ -12,7 +12,7 @@ extern "C" {
 /* Driver handle     */
 extern void  *lanIpDrv;
 /* Interface handle  */
-IpBscIf       lanIpIf;
+extern IpBscIf lanIpIf;
 /* Udp Socket handle */
 extern int	  lanIpUdpsd;
 

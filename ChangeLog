@@ -1,3 +1,6 @@
+2009/12/14 (TS):
+ - lanIpBasicSetup.h: BUGFIX -- had missed to declare lanIpIf as 'extern' :-(
+   so it would end up being multiply defined.
 2009/12/09 (TS):
  - lanIpBasic.c, lanIpBasic.h: Added lanIpBscGetStats()/lanIpBscFreeStats()
    for obtaining 'machine-readable' summary statistics.
