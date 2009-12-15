@@ -161,6 +161,17 @@ drvLan9118Setup(const uint8_t *enaddr_pa, uint32_t flags);
 void
 drvLan9118ReadEnaddr(DrvLan9118_tps plan_ps, uint8_t *buf_pa);
 
+/* Control broadcast filter.
+ *
+ *  rej > 0 : Disable reception of broadcast frames (filter rejects).
+ *  rej = 0 : Enable  reception of broadcast frames (filter accepts).
+ *  rej < 0 : Don't modify current value (pass -1 to read current setting).
+ *
+ * RETURNS: previous setting (nonzero if bcast rejected, zero if accepted).
+ */
+int
+drvLan9118BcFilterSet(DrvLan9118_tps plan_ps, int rej);
+
 /* Clear Multicast Address Filter
  */
 void

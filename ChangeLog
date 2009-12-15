@@ -1,3 +1,6 @@
+2009/12/15 (TS):
+ - drvLan9118.c, drvLan9118.h: added 'drvLan9118BcFilterSet()' for controlling
+   the bcast filter bit independently from/after 'setup'.
 2009/12/14 (TS):
  - lanIpBasic.c, lanIpProto.h: added 'may_alias' attribute to several unions
    that are used for deliberate type-punning.

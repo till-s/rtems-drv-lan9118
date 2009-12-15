@@ -59,6 +59,9 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.35  2009/11/10 20:11:52  strauman
+		 - added parenthesis to improve readability.
+		
 		Revision 1.34  2009/10/18 02:17:42  strauman
 		
 		2009/10/17 (TS):
@@ -1690,8 +1693,11 @@ DrvLan9118_tps	plan_ps = (DrvLan9118_tps)arg;
 uint32_t	    base    = plan_ps->base;
 uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 
-	if ( plan_ps->rx_cb_pf || plan_ps->rx_cb_arg_p )
+	if ( plan_ps->rx_cb_pf || plan_ps->rx_cb_arg_p ) {
+		REGLOCK(plan_ps);
 		macCsrWrite(plan_ps, MAC_CR, macCsrRead(plan_ps, MAC_CR) | MAC_CR_RXEN);
+		REGUNLOCK(plan_ps);
+	}
 
 	while (1) {
 		rtems_event_set evs;
@@ -2166,4 +2172,24 @@ uint32_t val;
 		macCsrWrite(plan_ps, off, val);
 	}
 	REGUNLOCK(plan_ps);
+}
+
+int
+drvLan9118BcFilterSet(DrvLan9118_tps plan_ps, int val)
+{
+uint32_t v,vo;
+
+	REGLOCK(plan_ps);
+	vo = macCsrRead(plan_ps, MAC_CR);
+	if ( val >= 0 ) {
+		if ( val ) {
+			v = vo |  MAC_CR_BCAST;
+		} else {
+			v = vo & ~MAC_CR_BCAST;
+		}
+		macCsrWrite(plan_ps, MAC_CR, v);
+	}
+	REGUNLOCK(plan_ps);
+
+	return !!(vo & MAC_CR_BCAST);
 }
