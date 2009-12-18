@@ -4739,6 +4739,10 @@ try_again:
 		ipaddr = ipp->ip.dst;
 	} else {
 		/* if the socket is already connected only allow sending to peer */
+
+		/* FIXME: BSD allows 'sendto' to override the 'connected' peer address 
+		 *        BUT (linux) both, IP address AND port must be specified.
+         */
 		if ( (FLG_ISCONN & socks[sd].flags) ) {
 			if (   ipp->ip.dst != ipaddr
 				|| (unsigned short)ntohs( h->udp.dport ) != dport ) {
