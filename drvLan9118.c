@@ -59,6 +59,13 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.36  2009/12/15 22:37:43  strauman
+		2009/12/15 (TS):
+		 - drvLan9118.c, drvLan9118.h: added 'drvLan9118BcFilterSet()' for controlling
+		   the bcast filter bit independently from/after 'setup'.
+		 - added REGLOCK/REGUNLOCK around macCsr access during task startup (very
+		   unlikely to hit this race condition but better be consistent).
+		
 		Revision 1.35  2009/11/10 20:11:52  strauman
 		 - added parenthesis to improve readability.
 		
@@ -1758,10 +1765,10 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 						maxFFDDelay = dly;
 #endif
 				}
-				if ( ( RXSTS_MCST_FRAME & rx_sts ) ) {
-					plan_ps->stats_s.rxm++;
-				} else if ( (RXSTS_BCST & rx_sts) ) {
+				if ( ( RXSTS_BCST & rx_sts ) ) {
 					plan_ps->stats_s.rxb++;
+				} else if ( (RXSTS_MCST_FRAME & rx_sts) ) {
+					plan_ps->stats_s.rxm++;
 				} else {
 					plan_ps->stats_s.rxu++;
 				}
