@@ -307,7 +307,7 @@ typedef struct {
 	switch ( argp->command ) {
 		case UDPSIOC_SETPEER:
 			if ( (SOCK_ISCONN & d->flags) ) {
-				switch ( udpSockConnect( SOCK_SD(d->flags), 0, 0 ) ) {
+				switch ( udpSockConnect( SOCK_SD(d->flags), 0, 0, 0 ) ) {
 					case -ENOTCONN:
 					case 0:
 					break;
@@ -325,7 +325,7 @@ typedef struct {
 				d->peer = *peer;
 
 				if ( peer->ipaddr && peer->port ) {
-					if ( 0 == udpSockConnect( SOCK_SD(d->flags), peer->ipaddr, peer->port) ) {
+					if ( 0 == udpSockConnect( SOCK_SD(d->flags), peer->ipaddr, peer->port, UDPSOCK_MCPASS ) ) {
 						d->flags |= SOCK_ISCONN;
 					} else {
 						sc = RTEMS_IO_ERROR;

@@ -428,7 +428,8 @@ typedef struct UdpSockRec_ {
 } UdpSockRec, *UdpSock;
 
 /* Flag to indicate that a socket is 'connected' (has a fixed peer)           */
-#define FLG_ISCONN	1
+#define FLG_ISCONN	(1<<0)
+#define FLG_MCPASS  (1<<1)
 
 /* Macros to lock/unlock a socket's mutex                                     */
 #define SOCKLOCK(sck)		mutex_lock((sck)->mutx)
@@ -3233,7 +3234,10 @@ LanUdpPkt    hdr;
 			_Thread_Disable_dispatch();
 			for ( i=0; i<NSOCKS; i++ ) {
 				if ( socks[i].port == dport ) {
-					if ( FLG_ISCONN & socks[i].flags ) {
+					/* Skip source filtering if socket is not connected or
+					 * FLG_MCPASS is set.
+					 */
+					if ( FLG_ISCONN == ((FLG_ISCONN | FLG_MCPASS) & socks[i].flags) ) {
 						hdr = &socks[i].hdr;
 						/* filter source IP and port */
 						if (    hdr->udp.dport  != pudp->udp.sport
@@ -4551,7 +4555,7 @@ IpBscMcRef     junk;
 }
 
 int
-udpSockConnect(int sd, uint32_t dipaddr, int dport)
+udpSockConnect(int sd, uint32_t dipaddr, int dport, int flags)
 {
 int rval      = -1;
 
@@ -4570,7 +4574,7 @@ int rval      = -1;
 			goto egress;
 		}
 
-		socks[sd].flags &= ~FLG_ISCONN;
+		socks[sd].flags &= ~(FLG_ISCONN | FLG_MCPASS);
 
 	} else {
 
@@ -4595,6 +4599,11 @@ int rval      = -1;
 		}
 
 		socks[sd].flags |= FLG_ISCONN;
+		if ( ISMCST(dipaddr) && (UDPSOCK_MCPASS & flags) ) {
+			socks[sd].flags |= FLG_MCPASS;
+		} else {
+			socks[sd].flags &= ~ FLG_MCPASS;
+		}
 	}
 
 	rval = 0;

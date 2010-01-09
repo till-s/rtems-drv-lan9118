@@ -199,7 +199,7 @@ int         err = -1;
 int         cnt = 4;
 
 	if ( !raw ) {
-		if ( (err=udpSockConnect(lanIpUdpsd, dipaddr, dport)) ) {
+		if ( (err=udpSockConnect(lanIpUdpsd, dipaddr, dport, UDPSOCK_MCPASS)) ) {
 			fprintf(stderr,"bouncer: Unable to connect socket: %s\n", strerror(-err));
 			return err;
 		}
@@ -256,7 +256,7 @@ int         cnt = 4;
 
 egress:
 	if ( !raw ) {
-		if ( (err=udpSockConnect(lanIpUdpsd, 0, 0)) ) {
+		if ( (err=udpSockConnect(lanIpUdpsd, 0, 0, 0)) ) {
 			fprintf(stderr,"bouncer: Unable to disconnect socket: %s\n", strerror(-err));
 		}
 	}

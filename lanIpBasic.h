@@ -127,9 +127,17 @@ udpSockRecv(int sd, int timeout_ticks);
  *        - call fails if ARP lookup of 'dipaddr' fails
  *          (this is unlike BSD 'connect' for UDP sockets 
  *          IIRC).
+ *
+ *        - if the flag UDPSOCK_MCPASS is set then the
+ *          on reception the source IP may be different
+ *          from the peer IP if it is a multicast address.
+ *          If 'dipaddr' is not a multicast address then
+ *          this flag is ignored.
  */
+
+#define UDPSOCK_MCPASS   (1<<0)
 int
-udpSockConnect(int sd, uint32_t dipaddr, int dport);
+udpSockConnect(int sd, uint32_t dipaddr, int dport, int flags);
 
 /* Send data over a 'connected' socket.
  *
