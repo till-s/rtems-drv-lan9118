@@ -5228,7 +5228,7 @@ uint32_t tmp;
 		fprintf(f,"    Unsupported Operation:   %9"PRIu32"\n", intrf->stats.icmp_opdropped);
 	}
 	if ( (IPBSC_IFSTAT_INFO_IGMP & info ) ) {
-		fprintf(f,"ICMP statistics:\n");
+		fprintf(f,"IGMP statistics:\n");
 		fprintf(f," # V1 Reports Received:      %9"PRIu32"\n", intrf->stats.igmp_rxreportv1);
 		fprintf(f," # V2 Reports Received:      %9"PRIu32"\n", intrf->stats.igmp_rxreportv2);
 		fprintf(f," # V1 Queries Received:      %9"PRIu32"\n", intrf->stats.igmp_rxqueryv1);
