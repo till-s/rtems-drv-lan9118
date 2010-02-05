@@ -4712,14 +4712,20 @@ int          do_mc_loopback = 0;
 IpBscIf      pif;
 PRFDECL;
 
-	if ( payload_len > UDPPAYLOADSIZE )
-		return -EMSGSIZE;
+	if ( payload_len > UDPPAYLOADSIZE ) {
+		rval = -EMSGSIZE;
+		goto bail;
+	}
 
-	if ( sd < 0 || sd >= NSOCKS )
-		return -EBADF;
+	if ( sd < 0 || sd >= NSOCKS ) {
+		rval = -EBADF;
+		goto bail;
+	}
 
-	if ( 0 == socks[sd].port )
-		return -EBADF;
+	if ( 0 == socks[sd].port ) {
+		rval = -EBADF;
+		goto bail;
+	}
 
 	setbase();
 
@@ -4752,7 +4758,8 @@ try_again:
 		/* If they didn't supply a destination address the socket must be connected */
 		if ( ! (FLG_ISCONN & socks[sd].flags) ) {
 			SOCKUNLOCK( &socks[sd] );
-			return -ENOTCONN;
+			rval = -ENOTCONN;
+			goto bail;
 		}
 		ipaddr = ipp->ip.dst;
 	} else {
@@ -4769,7 +4776,7 @@ try_again:
 
 				SOCKUNLOCK( &socks[sd] );
 
-				return rval;
+				goto bail;
 			}
 		} else {
 			ipp->ip.dst  = ipaddr;
@@ -4798,11 +4805,11 @@ try_again:
 
 			if ( -ENOTCONN != rval ) {
 				/* Don't bother to try another lookup */
-				return rval;
+				goto bail;
 			}
 
 			if ( (rval = arpLookup(pif, ipaddr, dummy, 0)) ) {
-				return rval; /* most likely -ENOTCONN */
+				goto bail; /* most likely -ENOTCONN */
 			}
 
 			/* Here we should start over again since things in the socket
@@ -4813,7 +4820,7 @@ try_again:
 	} else {
 		if ( (rval = arpLookup(pif, ipp->ip.dst, ipp->ll.dst, 0)) ) {
 			SOCKUNLOCK( &socks[sd] );
-			return rval;
+			goto bail;
 		}
 	}
 
@@ -4838,7 +4845,8 @@ try_again:
 		{
 			if ( ! (buf_p = (LanIpPacket)getrbuf()) ) {
 				SOCKUNLOCK( &socks[sd] );
-				return -ENOBUFS;
+				rval = -ENOBUFS;
+				goto bail;
 			}
 			memcpy( &lpkt_udp_hdrs( buf_p ), h, sizeof(*h) );
 			memcpy(  lpkt_udp_hdrs( buf_p ).pld,  payload, payload_len );
@@ -4885,6 +4893,10 @@ try_again:
 	
 	dodiff(9);
 
+	return rval;
+
+bail:
+	relrbuf((rbuf_t*)buf_p);
 	return rval;
 }
 

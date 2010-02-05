@@ -1,5 +1,11 @@
 2009/02/04 (TS):
  - lanIpBasic.c:
+    o BUGFIX: _udpSockSendTo_internal() must release rbuf even if the
+      call fails! (As per udpComm API documentation these are the
+      semantics. Implementing different semantics for udpSock would be
+      confusing.)
+2009/02/04 (TS):
+ - lanIpBasic.c:
     o BUGFIX: getrbuf() dereferenced NULL pointer if no buffers
       were available.
     o Added counter for #of times getrbuf() failed due to lack of buffers.
