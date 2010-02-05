@@ -476,6 +476,8 @@ static LanIpBscConfigRec lanIpBscCfg = {
 /* Counters for available and total number of rbufs                           */
 volatile int  lanIpBufAvail = NRBUFS;
 int           lanIpBufTotal = NRBUFS;
+/* Counter for number of times 'getrbuf()' failed due to lack of rbufs        */
+volatile int  lanIpBufGFail = 0;
 
 /* FIXME: only used if we implement some sort of 'bind' operation             */
 uint32_t udpSockMcastIfAddr = 0;
@@ -1595,6 +1597,10 @@ rtems_interrupt_level key;
 		/* get from pool */
 		if ( ravail ) {
 			rval = &rbufs[--ravail];
+		} else {
+			lanIpBufGFail++;
+			rtems_interrupt_enable(key);
+			return 0;
 		}
 	}
 	rval->buf.refcnt++;
@@ -2367,6 +2373,10 @@ int               err = -ENOTCONN;
 				ipmc2ethermc(ipaddr, enaddr);
 			}
 			return 0;
+		}
+
+		if ( (ipaddr & pif->nmask) != (pif->ipaddr & pif->nmask) ) {
+			return -ENETUNREACH;
 		}
 
 		if ( !enaddr ) {
@@ -4590,11 +4600,10 @@ int rval      = -1;
 		}
 #endif
 
-		if ( udpSockHdrsInitFromIf(socks[sd].intrf, &socks[sd].hdr, dipaddr, dport, socks[sd].port, 0) ) {
+		if ( (rval = udpSockHdrsInitFromIf(socks[sd].intrf, &socks[sd].hdr, dipaddr, dport, socks[sd].port, 0)) ) {
 			/* ARP lookup failure; BSD sockets probably would not
 			 * fail here...
 			 */
-			rval = -ENOTCONN;
 			goto egress;
 		}
 
@@ -4763,8 +4772,8 @@ try_again:
 				return rval;
 			}
 		} else {
-			ipp->ip.dst = ipaddr;
-			h->udp.dport  = htons((unsigned short)dport);
+			ipp->ip.dst  = ipaddr;
+			h->udp.dport = htons((unsigned short)dport);
 		}
 	}
 
@@ -4784,11 +4793,16 @@ try_again:
 		 * Check the cache; if not found then unlock the socket,
 		 * do a slow lookup and start over
 		 */
-		if ( arpLookup(pif, ipp->ip.dst, ipp->ll.dst, 1) ) {
+		if ( (rval = arpLookup(pif, ipp->ip.dst, ipp->ll.dst, 1)) ) {
 			SOCKUNLOCK( &socks[sd] );
 
-			if ( arpLookup(pif, ipaddr, dummy, 0) ) {
-				return -ENOTCONN;
+			if ( -ENOTCONN != rval ) {
+				/* Don't bother to try another lookup */
+				return rval;
+			}
+
+			if ( (rval = arpLookup(pif, ipaddr, dummy, 0)) ) {
+				return rval; /* most likely -ENOTCONN */
 			}
 
 			/* Here we should start over again since things in the socket
@@ -4797,9 +4811,9 @@ try_again:
 			goto try_again;
 		}
 	} else {
-		if ( arpLookup(pif, ipp->ip.dst, ipp->ll.dst, 0) ) {
+		if ( (rval = arpLookup(pif, ipp->ip.dst, ipp->ll.dst, 0)) ) {
 			SOCKUNLOCK( &socks[sd] );
-			return -ENOTCONN;
+			return rval;
 		}
 	}
 
@@ -4909,7 +4923,9 @@ udpSockFreeBuf(LanIpPacketRec *b)
 LanIpPacket
 udpSockGetBuf()
 {
-	return &getrbuf()->pkt;
+rbuf_t *buf = getrbuf();
+
+	return buf ? &buf->pkt : 0;
 }
 
 IpBscIf
