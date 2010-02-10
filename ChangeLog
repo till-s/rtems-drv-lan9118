@@ -1,4 +1,9 @@
 2010/02/09 (TS):
+ - mve_lldrv.c: Uncommented BSP_MVE_IRQ_LINK which was commented (zero)
+   and thus not handling link interrupts for unknown reasons (seems to
+   have been present since version 1.1). Probably this is a leftover
+   from when we didn't have the ack_link_chg entry point.
+2010/02/09 (TS):
  - drvGnrEthIpBasic.c: Partly reverted change made on 2009/10/17. By
       default DO stop sending if link is down. However, a variable
       'drvGnreth_ignore_stopped' was introduced to override this

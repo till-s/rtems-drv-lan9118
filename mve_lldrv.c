@@ -10,7 +10,7 @@
 static struct IpBscLLDrv_ lldrv_mve = {
 	tx_irq_msk    :  BSP_MVE_IRQ_TX,
 	rx_irq_msk    :  BSP_MVE_IRQ_RX,
-	ln_irq_msk    :  /* BSP_MVE_IRQ_LINK */ 0,
+	ln_irq_msk    :  BSP_MVE_IRQ_LINK,
 	setup         :  BSP_mve_setup_1,
 	detach        :  BSP_mve_detach,
 	read_eaddr    :  BSP_mve_read_eaddr,
