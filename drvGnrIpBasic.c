@@ -121,6 +121,8 @@ typedef struct gnreth_drv_s_ {
 #define DRVLOCK(drv)   mutex_lock( (drv)->mutex )
 #define DRVUNLOCK(drv) mutex_unlk( (drv)->mutex )
 
+volatile unsigned drvGnreth_ignore_stopped = 0;
+
 static inline int
 gnr_send_buf_locked(gnreth_drv gdrv, void *pbuf, void *data, int len)
 {
@@ -130,7 +132,7 @@ int rval;
 		 * the PHY to 'loopback' mode in which case the link goes
 		 * 'away' but we still want to send.
 		 */
-		if ( 0 && (gdrv->flags & IF_FLG_STOPPED) ) {
+		if ( (gdrv->flags & IF_FLG_STOPPED) && ! drvGnreth_ignore_stopped ) {
 			/* drop */
 			rval = 0;
 		} else
