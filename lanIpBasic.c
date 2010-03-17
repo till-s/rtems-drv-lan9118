@@ -2905,22 +2905,25 @@ IpBscMcAddr  mca = 0;
 		break;
 	}
 
-	if ( buf_p ) {
-		/* look 'mca' up -- entry could be stale if 'Leave' was
-		 * executed during the window where a callout calling
-		 * this routine couldn't be cancelled because it was already
-		 * half-ways executing.
+	/* Even if buffer allocation fails we may still find a valid return
+	 * value.
+	 *
+	 * Look 'mca' up -- entry could be stale if 'Leave' was
+	 * executed during the window where a callout calling
+	 * this routine couldn't be cancelled because it was already
+	 * half-ways executing.
+	 */
+	mca = lhtblFind( intrf->mctable, gaddr );
+
+	if ( buf_p && mca ) {
+		igmp_prepare_msg(intrf, buf_p, gaddr, type);
+		/* For the moment this routine does not do local loopback
+		 * but we need not see our own IGMP messages...
 		 */
-		if ( (mca = lhtblFind( intrf->mctable, gaddr )) ) {
-			igmp_prepare_msg(intrf, buf_p, gaddr, type);
-			/* For the moment this routine does not do local loopback
-			 * but we need not see our own IGMP messages...
-			 */
-			/* adjust raw packet counter */
-			intrf->stats.eth_txrawfrm--;
-			lanIpBscSendBufRaw(intrf, &buf_p->pkt, sizeof(lpkt_igmpv2hdr(&buf_p->pkt)));
-			buf_p = 0;
-		}
+		/* adjust raw packet counter */
+		intrf->stats.eth_txrawfrm--;
+		lanIpBscSendBufRaw(intrf, &buf_p->pkt, sizeof(lpkt_igmpv2hdr(&buf_p->pkt)));
+		buf_p = 0;
 	}
 
 	relrbuf(buf_p);
@@ -2957,8 +2960,8 @@ IpBscMcAddr mca;
 		/* msg type is corrected if the interface has recently seen a V1 query */
 		if ( (mca = igmp_send_msg(intrf, mcaddr, IGMP_TYPE_REPORT_V2)) ) {
 			mca->mc_flags |= MC_FLG_IGMP_LEAVE;
+			lanIpCallout_deactivate( &mca->mc_igmp );
 		}
-		lanIpCallout_deactivate( &mca->mc_igmp );
 	MCUNLOCK( intrf );
 }
 
@@ -4069,7 +4072,9 @@ int            rval = 0;
 rtems_interval ticks_per_s;
 uint32_t       report_dly_ticks;
 
-	mcan = calloc(1, sizeof(*mcan));
+	if ( ! (mcan = calloc(1, sizeof(*mcan))) ) {
+		return -ENOMEM;
+	}
 
 	lanIpCallout_init( &mcan->mc_igmp );
 	mcan->mc_addr = mcaddr;
@@ -4221,7 +4226,7 @@ int     lhtblDelFailedFatally;
 		 */
 		lanIpCallout_trystop( &mca->mc_igmp );
 
-		assert( ! lanIpCallout_active( &mca->mc_igmp ) );
+		assert( ! lanIpCallout_pending( &mca->mc_igmp ) );
 
 		c_deq( &mca->mc_node );
 

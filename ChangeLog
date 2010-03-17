@@ -1,3 +1,20 @@
+2010/03/17 (TS):
+ - lanIpBasic.c: Fixed IGMP problems:
+     o igmp_send_msg(): even if buffer allocation fails a valid
+       MC address may still be found. Moved lookup outside of
+       'if ( buf_p )' statement.
+     o BUGFIX: igmp_timeo() dereferenced 'mca' pointer even if
+       no address was found (which could happen if no buffer
+       was available, see above).
+   With these two fixes: if igmp_timeo() finds that 'mca' lookup
+   failed it means that the group was unsubscribed between the
+   callout task marking the callout as not pending and the 
+   igmp_timeo() being executed. In this case, no callout_deactivate()
+   operation is necessary because the mca and associated callout
+   struct are defunct and will be destroyed.
+     o should assert !lanIpCallout_pending instead of !lanIpCallout_active
+       after a trystop operation (because if trystop fails the callout
+       is still active but not pending).
 2010/02/09 (TS):
  - mve_lldrv.c: Uncommented BSP_MVE_IRQ_LINK which was commented (zero)
    and thus not handling link interrupts for unknown reasons (seems to
