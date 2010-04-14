@@ -1,3 +1,10 @@
+2010/04/14 (TS):
+ - Makefile.am, tsec_lldrv.c: Added support for mvme3100's tsec NIC
+   (***UNTESTED*** [I don't have a transition module for testing with
+   a secondary ethernet port]).
+
+   NOTE: This requires rtems-4.10 with some new API features!
+
 2010/03/17 (TS):
  - lanIpBasic.c: Fixed IGMP problems:
      o igmp_send_msg(): even if buffer allocation fails a valid
