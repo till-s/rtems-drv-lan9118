@@ -1,3 +1,8 @@
+2010/06/11 (TS):
+ - drvGnrIpBasic.c: BUGFIX -- rtems_task_start() clears all RTEMS events.
+   Therefore, IRQs happening between hw_start (which enables IRQs) and
+   task_start are lost. To make sure no IRQs are lost we enable irqs
+   from the driver task before entering its work loop.
 2010/04/14 (TS):
  - Makefile.am, tsec_lldrv.c: Added support for mvme3100's tsec NIC
    (***UNTESTED*** [I don't have a transition module for testing with

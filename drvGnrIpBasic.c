@@ -387,6 +387,12 @@ uint32_t              irqs;
 	}
 #endif
 
+	/* rtems_task_start() clears pending events that were sent
+     * after task creation :-(
+	 * As a work-around we enforce enabled interrupts here...
+     */
+	lldrv->enb_irqs(lldev, lldrv->rx_irq_msk);	
+
 	do {
 		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
 
@@ -440,6 +446,12 @@ int                   media;
 	}
 	
 	my_irqs = lldrv->ln_irq_msk | lldrv->tx_irq_msk;
+
+	/* rtems_task_start() clears pending events that were sent
+     * after task creation :-(
+	 * As a work-around we enforce enabled interrupts here...
+     */
+	lldrv->enb_irqs(lldev, my_irqs);
 
 	do {
 		rtems_event_receive( ev_mask, RTEMS_WAIT | RTEMS_EVENT_ANY, RTEMS_NO_TIMEOUT, &evs);
