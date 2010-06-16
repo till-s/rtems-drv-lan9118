@@ -59,6 +59,11 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.37  2009/12/18 16:47:46  strauman
+		 - seemed we never counted bcast frames; could have been that bcast
+		   also has the mcast bit set. Hence, check for and count bcast first
+		   and mcast afterwards. Seems to work now...
+		
 		Revision 1.36  2009/12/15 22:37:43  strauman
 		2009/12/15 (TS):
 		 - drvLan9118.c, drvLan9118.h: added 'drvLan9118BcFilterSet()' for controlling
@@ -1295,13 +1300,11 @@ rtems_status_code sc;
 		plan_ps->phy_cb_pf		= 0;
 		plan_ps->phy_cb_arg_p	= 0;
 
-		BSP_installVME_isr( LAN9118_VECTOR, lan9118isr, 0 );
-
-		/* configure IRQ output as push-pull, enable interrupts */
+		/* configure IRQ output as push-pull, don't enable enable interrupts
+		 * yet -- we do that eventually from the daemon task context.
+		 */
 		wr9118Reg(plan_ps->base, IRQ_CFG, IRQ_CFG_BITS | IRQ_CFG_IRQ_EN);
 		wr9118Reg(plan_ps->base, INT_EN,  plan_ps->int_msk);
-
-		drvLan9118IrqEnable();
 	}
 
 
@@ -1458,8 +1461,8 @@ rtems_status_code sc;
 			rtems_task_wake_after(20);
 		}
 
+		BSP_removeVME_isr(LAN9118_VECTOR, lan9118isr, 0);
 		plan_ps->tid            = 0;
-
 	}
 
 	plan_ps->rx_cb_pf		= 0;
@@ -1479,7 +1482,6 @@ rtems_status_code sc;
 	if ( plan_ps->txq )
 		rtems_message_queue_delete(plan_ps->txq);
 	plan_ps->txq  = 0;
-	BSP_removeVME_isr(LAN9118_VECTOR, lan9118isr, 0);
 }
 
 int
@@ -1699,6 +1701,12 @@ drvLan9118Daemon(rtems_task_argument arg)
 DrvLan9118_tps	plan_ps = (DrvLan9118_tps)arg;
 uint32_t	    base    = plan_ps->base;
 uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
+
+	/* Install ISR and enable interrupts; ISR will post
+	 * events to this task.
+	 */
+	BSP_installVME_isr( LAN9118_VECTOR, lan9118isr, 0 );
+	drvLan9118IrqEnable();
 
 	if ( plan_ps->rx_cb_pf || plan_ps->rx_cb_arg_p ) {
 		REGLOCK(plan_ps);

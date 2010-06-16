@@ -1,3 +1,8 @@
+2010/06/16 (TS):
+ - drvLan9118.c: BUGFIX -- ISR was installed and interrupts enabled BEFORE
+   the daemon task executed. Thus it could happen that interrupts were lost
+   (because the RTEMS event was posted to an invalid TID or to one that
+   had not been started yet) leaving the daemon blocked and interrupts disabled.
 2010/06/11 (TS):
  - drvGnrIpBasic.c: BUGFIX -- rtems_task_start() clears all RTEMS events.
    Therefore, IRQs happening between hw_start (which enables IRQs) and
