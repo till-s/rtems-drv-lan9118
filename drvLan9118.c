@@ -59,6 +59,13 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.38  2010/06/16 19:14:49  strauman
+		2010/06/16 (TS):
+		 - drvLan9118.c: BUGFIX -- ISR was installed and interrupts enabled BEFORE
+		   the daemon task executed. Thus it could happen that interrupts were lost
+		   (because the RTEMS event was posted to an invalid TID or to one that
+		   had not been started yet) leaving the daemon blocked and interrupts disabled.
+		
 		Revision 1.37  2009/12/18 16:47:46  strauman
 		 - seemed we never counted bcast frames; could have been that bcast
 		   also has the mcast bit set. Hence, check for and count bcast first
@@ -1461,7 +1468,6 @@ rtems_status_code sc;
 			rtems_task_wake_after(20);
 		}
 
-		BSP_removeVME_isr(LAN9118_VECTOR, lan9118isr, 0);
 		plan_ps->tid            = 0;
 	}
 
@@ -1850,6 +1856,10 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 		wr9118Reg(base, INT_STS, int_sts);
 		drvLan9118IrqEnable();
 	}
+
+	drvLan9118IrqDisable();
+	BSP_removeVME_isr(LAN9118_VECTOR, lan9118isr, 0);
+
 	if ( plan_ps->sync ) {
 		rtems_semaphore_release(plan_ps->sync);
 		rtems_task_suspend(RTEMS_SELF);
