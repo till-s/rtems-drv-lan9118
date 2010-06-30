@@ -4566,7 +4566,7 @@ IpBscMcRef     junk;
 	if (m) {
 		rtems_semaphore_delete(m);
 	}
-	return -EBADFD;
+	return -ENXIO;
 }
 
 int
