@@ -1,3 +1,5 @@
+2011/04/19 (TS):
+ - lanIpBasic.c, lanIpBasic.h: added udpSockRefBuf().
 2010/06/30 (TS):
  - lanIpBasic.c: Let udpSockDestroy() return ENXIO instead of EBADFD
    (not POSIX and gone in newlib-1.18/rtems-4.10) if the socket had no
