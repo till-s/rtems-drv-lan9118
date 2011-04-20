@@ -1,3 +1,5 @@
+2011/04/19 (TS):
+ - lanIpBasic.c, lanIpBasic.h: added udpSockRefBuf().
 2010/06/16 (TS):
  - drvLan9118.c: BUGFIX -- ISR was installed and interrupts enabled BEFORE
    the daemon task executed. Thus it could happen that interrupts were lost

@@ -4937,6 +4937,12 @@ udpSockFreeBuf(LanIpPacketRec *b)
 	relrbuf((rbuf_t*)b);
 }
 
+void
+udpSockRefBuf(LanIpPacketRec *b)
+{
+	refrbuf((rbuf_t*)b);
+}
+
 LanIpPacket
 udpSockGetBuf()
 {

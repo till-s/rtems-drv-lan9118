@@ -97,6 +97,14 @@ udpSockGetBuf();
 void
 udpSockFreeBuf(LanIpPacketRec *ppacket);
 
+/* Increment a buffer's reference count.
+ * udpSockFreeBuf() decrements this count
+ * and releases the packet when the count
+ * drops to zero.
+ */
+void
+udpSockRefBuf(LanIpPacketRec *ppacket);
+
 /* Read packet from a socket
  *
  * 'timeout_ticks': how long to block
