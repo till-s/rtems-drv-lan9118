@@ -1,3 +1,6 @@
+2011/07/21 (TS):
+ - e1k_lldrv.c: register/unregister this driver with e1000 generic
+   support (new feature of e1000_osdep).
 2011/04/19 (TS):
  - lanIpBasic.c, lanIpBasic.h: added udpSockRefBuf().
 2010/06/30 (TS):

@@ -129,10 +129,14 @@ struct ring {
 };
 
 struct e1k_private {
+	/* struct e1000_hw MUST be first; adapter is sometimes calculated
+	 * by cast from 'hw' pointer (ugly, sorry).
+	 */
 	struct e1000_hw          hw;
 	struct ring              tx_ring;
 	struct ring              rx_ring;
 	uint32_t                 txd_cmd;
+	struct e1000_pcisig      pci_sig;
 	int                      num_rx_ring;
 	int                      num_tx_ring;
 	int                      unit;
@@ -651,6 +655,13 @@ uint8_t                line;
 		return 0;	
 	}
 
+	if ( e1000_register( &ad->pci_sig, b, s, f ) ) {
+		errpr("Unit %u already in use (unable to register)\n", unit);
+		free( ad );
+		return 0;
+	}
+	ad->hw.back           = &ad->pci_sig;
+
 	ad->isr               = isr;
 	ad->isr_arg           = isr_arg;
 
@@ -829,6 +840,8 @@ bail:
 	if ( ad->irq.hdl ) {
 		(void)IRQREMV( &ad->irq );
 	}
+
+	e1000_unregister( &ad->pci_sig );
 
 	free(ad);
 	
@@ -1425,6 +1438,8 @@ struct e1000_hw *hw = &ad->hw;
 
 	free( ad->tx_ring.mem );
 	free( ad->rx_ring.mem );
+
+	e1000_unregister( &ad->pci_sig );
 
 	free( ad );
 
