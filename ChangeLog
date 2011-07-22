@@ -1,4 +1,8 @@
 2011/07/21 (TS):
+ - e1k_lldrv.c: BUGFIX - only first unit would be accepted because
+   return values of pci_scan() (== unit) other than zero were rejected.
+   Accept any that is not -1.
+2011/07/21 (TS):
  - e1k_lldrv.c: register/unregister this driver with e1000 generic
    support (new feature of e1000_osdep).
 2011/04/19 (TS):

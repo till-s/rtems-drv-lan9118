@@ -571,6 +571,7 @@ uint32_t val,cmp;
 				pci_read_config_dword(b, s, f, PCI_VENDOR_ID, &val);
 				if ( 0xffffffff != val ) {
 					if ( 0 == hwmatch( hw, b, s, f ) ) {
+printf("TSILL: HW Match @ %u-%u-%u, (unit %u, u: %u)\n", b,s,f,unit,u);
 						if ( unit > 256 ) {
 							/* they gave us a PCI triple (0:0:0 is usually the host bridge) */
 							cmp = ((b<<8) | (s<<3) | f) << 8;
@@ -649,7 +650,7 @@ uint8_t                line;
 	ad = calloc(1, sizeof(*ad));
 	hw = &ad->hw;
 
-	if ( (ad->unit = pci_scan(hw, &b, &s, &f, unit)) ) {
+	if ( -1 == (ad->unit = pci_scan(hw, &b, &s, &f, unit)) ) {
 		errpr("No compatible device found\n");
 		free(ad);
 		return 0;	
