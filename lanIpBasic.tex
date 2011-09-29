@@ -1,0 +1,609 @@
+\documentclass{article}
+
+\newcommand{\lip}{lanIpBasic}
+\newcommand{\ethn}{ethernet}
+\newcommand{\Ethn}{Ethernet}
+\newcommand{\pad}{{\em PAD}}
+\newcommand{\rbuf}{{rbuf}}
+\newcommand{\Rbuf}{{Rbuf}}
+\newcommand{\lipc}[1]{{\tt #1}}
+\newcommand{\lipf}[1]{{\tt #1}}
+\newcommand{\cmd}[1]{{\tt #1}}
+
+\begin{document}
+\section{Introduction}
+\lip{} is a simple implementation of the UDP protocol -- with some
+limitations -- designed to run on an \ethn-LAN. For convenience,
+a ``pseudo-IP'' layer has been implemented, too, so that the \lip{}
+protocol stack can coexist and communicate with ordinary TCP/IP on
+a LAN. No real IP features such as routing, fragmentation etc. are
+provided, however.
+
+\lip{} allows several nodes on a \ethn-LAN to communicate without much
+overhead and in a pseudo-deterministic%
+\footnote{
+\Ethn{} is not ideally suited for applications which need strict
+determinism due to features such as collisions nor is it very efficient
+for transmitting very small packet sizes. Some of these drawbacks are
+mitigated in a switched, full-duplex environment.
+} fashion. \lip runs independently from ordinary TCP/IP; there exists
+absolutely no coupling between the two.
+
+The API of \lip, however, was designed to stay close to the BSD socket
+API for sake of convenience.
+
+  \subsection{History}
+\label{sec:history}
+\lip{} was originally developed for a very special, small-scope
+application and some of the design decisions that were made must
+be understood given \lip{}'s history.
+
+When the LCLS BPM project -- due to a tight schedule and unavailability
+of a suitable commercial product -- at the time decided to use the 
+same digitizer (AKA, ``\pad'') that had been developed for the LCLS RF project
+it became evident that a dedicated communication path between the \pad{}
+and it's associated main processor was needed. It was decided to add
+a second ethernet controller to the \pad{} board which was reserved
+for this task.
+
+The design of the communication software laid the foundation for \lip{}
+as it was decided to add minimal IPV4 and UDP protocol headers rather than
+communicating over raw ethernet. This allowed for development of the
+higher application layers as well as \lip{} itself in an ordinary
+TCP/IP environment where many diagnostics and development tools are
+available thus permitting rapid deployment of \lip{} and the main
+applications under a tight schedule.
+
+Only later, other projects, most notably the LCLS fast-feedback project
+decided to use \lip{} as a platform and its functionality was subsequently
+expanded (e.g., by adding multicast- and IGMP support).
+
+\section{lanIpBasic}
+  \subsection{Design Goals}
+The main purpose of \lip{} is providing a fast means of
+communication over \ethn{} with quasi-deterministic
+timing. Due to the complexity of the ``ordinary'' TCP/IP
+networking stack and the intrinsic coupling of the many
+pieces and users of this stack it is almost impossible
+to assert the required deterministic behavior. Also, the
+high complexity might not yield the required fast response
+time on low-end CPUs (and such a CPU was present in the 
+system for which \lip{} was originally developed).
+
+Therefore, \lip{} was developed as ``standalone'' software
+which is completely independent from TCP/IP although it
+borrows some abstract concepts (such as e.g., sockets) and
+implements or supports some of the well-known protocols.
+
+However, rather than just developing and implementing a
+``raw ethernet'' protocol we felt that it would be useful
+to add minimal IPV4 and UDP functionality. This allows
+for \lip{} to interact with ``normal'' UDP sockets which
+was very useful for development and testing. Also,
+high-level applications can be written so that they
+are agnostic to the existence of \lip{} which then
+can be used as a ``plug-in replacement'' for TCP/IP.
+
+The decision to incorporate basic IPV4 functionality into
+the design proved to be a good one when the request for
+supporting multicasting arose. Flooding of multicast
+packets on a switched \ethn{} LAN can be reduced by a
+technique called ``IGMP snooping'' which is implemented
+on commercial switches. However, IGMP snooping requires
+the receivers of multicast traffic -- in this case \lip{} --
+to participate in the IGMP protocol which is part of
+the IP protocol suite. It would have been much harder
+to add IGMP support to \lip{} if there hadn't been basic
+IP support from the beginning.
+
+The most important design goals can be summarized as
+follows:
+\begin{itemize}
+\item Standalone software, independent from ordinary TCP/IP software stack.
+\item Simple, rather than a general-purpose solution. This requirement
+      has some implications:
+      \begin{itemize}
+      \item Should execute efficiently on low-end CPU.
+      \item Easier and faster to develop with less risk for bugs.
+      \item Some features are hardcoded and more difficult to change.
+      \end{itemize}
+\item Support basic IPV4 functionality. Full standard compliance is
+      {\em not} required; just basic features so that cooperation
+      with other nodes on a LAN is possible. Some features that
+      can be missing include
+      \begin{itemize}
+      \item Fragmentation.
+      \item Routing.
+      \item IP options.
+      \item Full ICMP support.
+      \end{itemize}
+\item Support IGMP ECHO REQUEST so that a \lip{} node can be ``ping''ed.
+\item Full support for IGMP V2.
+\item Basic UDP support. However, support for packets larger than the
+      \ethn{} MTU is not required. Neither is support for the UDP checksum
+      required.
+\item ARP support. Even though ARP lookups violate the requirement of
+      deterministic behavior support for ARP was considered useful - especially
+      for testing purposes or applications with less strict requirements.
+      Tight control over how ARP is done should be possible (explicit lookup,
+      prohibit implicit lookups, user-control over cache-aging).
+\item ``Zero copy'', i.e., the RX and TX buffers are passed to/from the
+      user directly to the hardware/driver w/o the need for intermediate
+      copying.
+\item Diagnostics and debugging features such as statistics counters, and
+      printed messages that can be enabled in ``debug-mode''.
+\end{itemize}
+
+  \subsection{Programming Interface}
+The latest version of the API documentation is always present in
+the \lipf{<lanIpBasic.h>} header file.
+  \subsection{Configuration}
+Before \lip{} can be used it must be properly set up and initialized.
+This procedure consists of a few steps:
+\begin{enumerate}
+\item Configure basic \lip{} parameters with \libc{lanIpBscConfig()}
+  \begin{itemize}
+    \item TX and RX descriptor ring size. This information is passed
+          down to the driver which may (or in the case of very simple
+          hardware may not) use it.
+    \item Number of \rbuf{}s that is allocated initially. More buffers
+          can always be added at run-time (\lipc{lanIpBscAddBufs()}).
+    \item Depth of packet queue per UDP socket. This is the number
+          of received UDP datagrams that \lip{} may store in a socket
+          before the user picks them up (\lipc{udpSockRecv()}).
+  \end{itemize}
+
+  Parameters can only be set {\em prior} to initializing \lip{}.
+  However, the routine can be called at any time in order to
+  read-back the current configuration.
+
+  Use of this call is optional; \lipc{} picks default values for
+  all configurable parameters.
+\item Initialize \lip{} proper by executing \lipc{lanIpBscInit()}.
+  This routine doesn't take any parameters but the return value
+  should be checked (non-zero indicates failure due to inability
+  to allocate vital resources). If this step fails then \lip{} cannot
+  be used.
+\item Create a driver instance. Because currently there can only be
+  a single driver which is hard-compiled into \lip{} (see
+  section~\ref{sec:history} about history) there is no choice to
+  make regarding which driver is going to be used.
+
+  The driver is instantiated by \lipc{lanIpBscDrvCreate()}. This
+  routine is passed a {\em device-}instance and an optional link-level
+  (``ethernet'') address. The (zero-based) device instance identifies 
+  a specific device in case multiple hardware devices supported by
+  the driver are present. If the instance $-1$ is requested then the
+  first available instance is used (e.g., a device already attached
+  to the regular TCP/IP stack of the operating system would be
+  regarded ``unavaliable'' and skipped).
+
+  
+\end{enumerate}
+%TODO
+%TODO
+  \subsection{Limitations}
+%TODO
+  \subsection{Implementation}
+This subsection describes some basic objects inside 
+\lip{} and other implementation details.
+    \subsubsection{\Rbuf{}s}
+All payload data and protocol headers in \lip{} are stored
+in simple memory buffers called {\em \rbuf{}s}. \Rbuf{}s are
+properly aligned, contiguous blocks of memory of a fixed size,
+slightly larger than the \ethn{} MTU. Since \lip{} is intended for 
+special-purpose applications (i.e., the total number of \rbuf{}s
+in use at a time is small to moderate) on modern CPUs with several
+if not many MBs of memory it seems reasonable to sacrifice 
+some memory-efficiency for sake of simplicity.%
+\footnote{
+  However, if \lip{} was to be redesigned from scratch we would
+  consider a slightly different approach and manage headers and
+  payload separately. This would allow for efficient re-use of
+  headers with a changing payload. Most modern \ethn{} hardware
+  supports scatter/gather DMA or similar techniques so that
+  non-contiguous buffers could be handled seamlessly.%
+}
+
+While unused, \rbuf{}s are maintained on a linked, ``free-'' list
+from where they are allocated either by the user or \lip{} 
+internally.
+
+Several API entry points are defined for filling protocol
+headers into an \rbuf, accessing the payload and performing
+other operations.
+
+New \rbuf{}s can be added to the pool at run-time should there
+be a shortage.
+	\subsubsection{Interface}
+\lip{} implements a ``network interface'' object which is an abstraction
+of the underlying \ethn{} hardware. Even though there are provisions
+for adding support for multiple interfaces to \lip{}, currently there
+can only be one single interface and there are still a few places
+in \lip{} relying on the assumption that this restriction applies.
+
+The interface object contains the following parts
+\begin{itemize}
+\item Pointer to the driver software which handles the hardware. However,
+      due to historical reasons and still in the current version of \lip{}
+      the driver entry points are actually {\em hard-compiled} into \lip{}
+      (by means of macros) and the interface's driver pointer merely points\
+      to a driver-internal data structure. 
+
+      In the future, it would be easy to completely upgrade this design
+      and make the driver and generic \lip{} code strictly separate modules.
+\item IPV4 address.
+\item \ethn{} address.
+\item IPV4 multicast group addresses the interface is a member of.
+\item ARP cache.
+\item Statistics counters.
+\item Mutex for synchronizing access to interface data.
+\end{itemize}
+
+    \subsubsection{Sockets}
+A \lip{} socket is similar in concept to a BSD socket, i.e., it is
+an abstraction for a communication endpoint. Also, like under BSD,
+the user deals with ``socket descriptors'' which are small integer
+numbers (internally used as an index into a table of socket objects).
+However, \lip{} and BSD sockets exist in a separate, completely
+disjunct ``space'' with no functional overlap. E.g., BSD socket
+descriptor $2$ refers to something entirely different from \lip{}
+descriptor $2$.
+
+Implicitly, \lip{} sockets are always ``datagram'' (UDP) sockets
+and the IPV4 ``domain''. A \lip{} socket contains the following
+data:
+\begin{itemize}
+\item Pointer to the interface this socket is using.
+\item UDP port number.
+\item Message queue holding received packets that have not yet been
+      fetched/received by the user. When the hardware receives a new
+      packet then the driver sends it up the \lip{} stack which parses
+      the headers and when detecting a UDP message being sent to this
+      socket's port posts it to the end of this message queue. If the
+      queue is full (i.e., if the queue already holds the pre-configured
+      maximum of messages) then the datagram is discarded.
+
+      When the user ``receives'' a message from the socket then
+      \lip{} removes the first packet from the queue and hands
+      it back to the user.
+\item Peer address (for a ``connected'' socket).
+\item Lock for serializing access to the socket. Most but not all
+      operations on a socket are thread-safe (consult the API section
+      for details). The (rather rare) exceptions
+      (which exist for sake of increased efficiency) are:
+      \begin{itemize}
+        \item Deleting a socket that is in use (a second thread is
+              e.g., sending or receiving while a first thread deletes
+              a socket).
+        \item Querying the number of bytes available on a socket
+              (\lipc{udpSockNRead()})
+              from one thread while a second thread is reading from
+              the same socket.
+      \end{itemize}
+\item Flags.
+\end{itemize}
+Note that a \lip{} socket is {\em always} ``bound'' to an address since
+it always references an interface and holds a port number.
+
+    \subsubsection{Drivers}
+\lip{} defines an interface to the driver software
+which interacts with specific \ethn{} hardware.
+For historical (and efficiency) reasons the driver entry points are
+a set of {\em macros} or {\em global subroutines}
+which must be defined by the
+driver and which are compiled into \lip{} proper.%
+\footnote{
+Again, if \lip{} was to be redesigned from scratch
+this software interface would be an area that would be designed
+differently.}
+
+The names of driver entry points all start with the
+string \cmd{NETDRV\_} and the driver source file has
+the following structure (note that it must include
+the file \lipf{lanIpBasic.c} which contains most of
+the \lip{} code):
+
+\begin{verbatim}
+/*
+ * Inclusion of vital headers (only) that are needed for forward
+ * declarations of driver entry points:
+ *
+ * Do not include any other headers here!
+ */
+#include <stdint.h>
+
+/*
+ * Forward declaration of interface struct which is defined
+ * by lanIpBasic.c so that it can be used by forward declarations
+ * of driver entry points.
+ */
+struct IpBscIfRec_;
+
+/* Definition of driver entry points which are macros, e.g:            */
+#define NETDRV_READ_INCREMENTAL(pif, ptr, nbytes)  do {} while ()
+
+/* Forward declarations of driver entry points which are subroutines:  */
+static void
+NETDRV_READ_ENADDR(struct IpBscIfRec_ *pif, uint8_t *buf);
+
+/* Definition of driver-specific API header                            */
+#define NETDRV_INCLUDE "drvxxx.h"
+
+/* Inclusion of lanIpBasic bulk code */
+#include "lanIpBasic.c"
+
+/* Definition of driver entry points which are routines and other code */
+
+static void
+NETDRV_READ_ENADDR(struct IpBscIfRec_ *pif, uint8_t *buf)
+{
+	/* Implementation goes here */
+}
+
+\end{verbatim}
+
+The choice whether a given entry point is best implemented as
+a macro or subroutine is up to the driver developer.
+
+    \subsubsection{Tasks and Locks}
+This subsection describes the fundamental tasks which
+execute the \lip{} stack and locks that are in place to
+synchronize access to critial data structures. Note
+that the driver creates additional tasks and locks which
+are driver-specific and not described here in detail for
+all available drivers.
+
+\lip{} creates two tasks the ``callout'' task which is used
+to schedule future work and the ``work'' task which is used
+to schedule low-priority work that may be deferred.
+
+The callout task runs at RTEMS priority $25$ which is relatively
+high. A ``callout'' is an object holding timing information, a 
+pointer to a user callback routine and user-provided arguments
+to that callback routine. The user may schedule a callout which
+means that the callback routine will be executed by the callout
+task when the predefined timeout expires. Callouts can be
+cancelled or rescheduled etc.
+
+\lip{} uses callouts to implement the various timers involved
+with the IGMP protocol.
+
+The work task runs at the relatively low RTEMS priority $180$
+and deals with low-priority aspects of the IP protocol suite
+such as ARP, ICMP and IGMP so that UDP receives the highest
+attention. When the main protocol dispatcher \cmd{lanIpProcessBuffer()}
+(of the receive path) discovers that the \rbuf{} it is working on 
+contains an ARP, ICMP or IGMP packet then it queues the \rbuf{}
+onto the list of work for the ``work'' task which will deal
+with the packet when no high-priority task needs to execute.
+
+Most drivers create a RX (receiver) task which executes
+\lip{}'s main protocol dispatcher (\cmd{lanIpProcessBuffer()}) when
+a new packet arrives. A driver also might use a mutex to
+protect it's internal data structures in order to make
+the driver enty points thread-safe. This is a requirement
+since \lip{} may call the entry points from different
+task contexts.
+
+Some drivers create additional tasks, e.g., to cleanup
+TX DMA rings when transmission has finished or to handle
+state changes of the physical link. Other drivers may
+handle such events from the same task context that deals
+with reception.
+
+\lip{} internally uses four mutexes:
+\begin{description}
+\item[ARP Lock] serializing access to the ARP cache of an interface.
+The ARP lock is acquired when an ARP entry is created or deleted but
+also when an entry is looked-up (regardless whether the lookup
+hits or misses in the cache).
+\item[MC Lock] serializing access to the list of multicast addresses
+of an interface. This lock is acquired by the IGMP protocol state machine
+but also when the user joins or leaves a multicast group.%
+\footnote{Currently, the ARP and Multicast locks are actually the {\em same}
+  lock as we felt that an extra mutex could be avoided - however, the code
+  is written in a way that would make it trivial to introduce a separate
+  mutex.}
+\item[Callout Lock] is held by the callout task while walking the list
+of callouts belonging to a particular time-slot. This lock protects
+the list when the user concurrently tries to cancel a callback.
+Note that code which needs to cancel callouts must be written
+carefully in order to avoid deadlocks. Make sure to read the comments
+in \lipf{lanIpBasic.c} where the \lipc{COLOCK} macro is defined.
+\item[Socket Lock] serializing access to a particular socket. Every
+open socket has an individual mutex associated. All socket operations
+but \lipc{udpSockDestroy()} acquire this mutex to ensure thread-safety.
+It is a programming error to destroy a socket that is still being used.
+\end{description}
+
+    \subsubsection{Data Flow}
+In this subsection we describe the basic flow of packet data
+through \lip{}.
+
+\Ethn{} frames are transmitted for the following reasons:
+\begin{itemize}
+\item The user explicitly sends a UDP datagram. Depending on the call chosen
+      by the user \lip{} allocates a fresh \rbuf{} or is passed one that
+      already contains the UDP payload by the user. \lip{} fills in \ethn{},
+      IPV4 and UDP protocol headers, copies the UDP payload (unless the
+      user already passed a \rbuf{}), computes the IP checksum and hands
+      the \rbuf{} down to the driver for transmission. Note that \lip{}
+      needs to look up the \ethn{} address of the destination in the ARP
+      cache and initiate a ARP lookup if the desired address is not found
+      in the cache.
+
+      If an ARP lookup must be done and the socket is {\em not connected}
+      then the socket mutex is relinquished while the sender waits for
+      the ARP reply so that another thread could still send (or receive)
+      from the same socket.
+
+      In the case of a {\em connected} socket (which can only send to
+      or receive from the peer) the socket mutex is not given up while
+      waiting for an ARP reply because no other thread could send until
+      the ARP reply from the peer arrives anyways. If automatic updating
+      of the ARP cache is enabled then reception of any frame from the
+      peer has the same effect as reception of an ARP reply so that 
+      a sender holding the socket mutex across an ARP lookup doesn't
+      unnecessarily delay a receiving thread either.
+      
+\item \lip{} broadcasts an ARP REQUEST. This is necessary if a lookup
+      in the ARP cache misses and an ARP lookup becomes necessary. 
+\item \lip{} sends an ARP REPLY as a response to receiving an ARP REQUEST
+      which matches the receiving interface's IPV4 address.
+\item \lip{} sends IGMPV2 messages.
+\item \lip{} sends an ICMP ECHO REPLY message as a response to receiving
+      an ICMP ECHO REQUEST. This feature is intended for testing/debugging
+      so that \lip{} can be ``pinged''.
+\end{itemize}
+
+Packet reception is usually handled in the context of a driver task
+which executes \cmd{lanIpProcessBuffer()} on a received frame.
+This routine handles ARP, ICMP (echo requests only), IGMP and queues
+UDP packets on a socket's message queue if the port number of a socket
+matches the UDP destination port of the packet. Any thread blocking
+for data to arrive (in \cmd{udpSockRecv()}) then becomes ready to run
+and eventually dequeues the packet from the socket's queue.
+
+As already mentioned ARP, ICMP and IGMP are not processed directly
+by \cmd{lanIpProcessBuffer()} but are put on the work queue to
+be dealt with by the ``low-priority work task'' thus ensuring
+that critical UDP packets reach their destination as fast as 
+possible.
+
+    \subsubsection{ARP}
+\lip{} maintains an ARP cache where associations between \ethn{} and
+IPV4 addresses are stored. Cache entries can be created automatically
+or explicitly by the user. Implicit creation of entries happens under
+the following circumstances
+\begin{itemize}
+\item The destination address passed to \lipc{udpSockConnect()},
+      \lipc{udpSockHdrsInit()}, \lipc{udpSockHdrsInitFromIf()},
+      \lipc{udpSockSend()}, \lipc{udpSockSendBuf()}, \lipc{udpSockSendTo()}
+      or \lipc{udpSockSendBufTo()} misses in the
+      cache and the implicit ARP lookup that results is successful.
+\item If the global variable \lipc{lanIpBscAutoRefreshARP} is nonzero (default)
+      then arrival of a UDP or ICMP ECHO REQUEST packet results in a 
+      cache entry for the sender of the frame being created or refreshed.
+\end{itemize}
+Note that by default ARP cache entries {\em do not expire}. This has
+the implication that e.g., \lipc{udpSockSend()} never has to perform
+an ARP lookup since a successful \lipc{udpSockConnect()} that must 
+preceed \lipc{udpSockSend()} already created a cache entry.
+
+However, \lip{} provides a routine \lipc{arpScavenger()} which implements
+an algorithm for proper cache ageing. It is up to the user to create a
+task and let it execute the \lipc{arpScavenger()}. Note that while not
+letting the cache age minimizes ARP lookups but it carries the risk that
+changes of networking hardware and/or IPV4 addresses etc. are not
+dealt with transparently but cause communication failure. If the
+\lipc{lanIpBscAutoRefreshARP} feature is enabled then ARP lookups
+may be minimized even if cache ageing is started provided that 
+packets arrive from the relevant peers at a sufficient rate.
+
+Note also that the automatic refreshing of the ARP cache is
+handled in the context of the ``work task'', i.e., a cache entry
+might not be present yet when a user task receives a datagram
+(because the low-priority work task had no chance to execute yet).
+Under such circumstances the user may choose to explicitly create
+an ARP entry when receiving a packet using the information from
+the packet headers.
+
+  \subsection{Driver Interface}
+%TODO
+  \subsection{Debugging}
+%TODO
+\section{The udpSock API}
+  The {\em udpSock} API provides simplified access to UDP socket
+  communication.
+  \subsection{Design Goals}
+%TODO
+  \subsection{Relation to udpComm}
+  The {\em udpComm} API (which originally was part of \lip{} but 
+  since has been unbundled and moved into the ``EPICS modules''
+  realm) is a very slim ``wrapper'' API on top of ``udpSock''.
+  Most udpSock API calls translate one-to-one into a corresponding
+  udpComm call. However, udpComm is designed to be {\em portable}.
+  In particular, an implementation of udpComm using regular BSD
+  sockets is available. This makes it possible to develop applications
+  on udpComm and develop/test using the udpCommBSD implementation
+  (which exists on every platform with BSD sockets). Only where
+  real-time requirements must be met the udpCommBSD layer can
+  simply be swapped for \lip{}/udpSock. This architecture has
+  greatly helped development, e.g., of the LCLS/BPM implementation
+  since most work could be done and tested (non-real time) on
+  an ordinary linux workstation (using udpCommBSD).
+
+  \subsection{Programming Interface}
+  For a more detailed and up-to-date description of the 
+  API please consult the \lipc{lanIpBasic.h} header file.
+  Note that some more specialized entry points are not
+  listed here (see the aforementioned header file).
+
+  \subsubsection{Socket Creation and Destruction}
+  \begin{description}
+  \item[\lipc{udpSockCreate()}] Create a communication endpoint
+  bound to a specific UDP port.
+  \item[\lipc{udpSockDestroy()}] Release resources associated with
+  a given socket.
+  \end{description}
+
+  \subsubsection{Buffer Management}
+  One design goal for \lip{} was to allow the user to interact 
+  directly with buffers used for transmission and reception thus
+  enabling him/her to avoid unnecessary copying of payload data
+  since data can be written or read from buffers used by \lip{}
+  directly.
+  \begin{description}
+  \item[\lipc{udpSockGetBuf()}] Allocate a buffer.
+  \item[\lipc{udpSockRefBuf()}] Increment reference count of
+  a buffer. The buffer reference-count facilitates sharing
+  a single buffer among multiple ``users'' (this is mostly useful
+  for shared RX buffers that are treated as ``read-only'').
+  \item[\lipc{udpSockFreeBuf()}] Decrement reference count and
+  release the buffer when the count drops to zero.
+  \end{description}
+
+  \subsubsection{``Connections''}
+  \begin{description}
+  \item[\lipc{udpSockConnect()}] UDP is of course not connection
+  oriented. The term ``connection'' in this context simply means
+  establishing an association with a given peer (IP-address and
+  UDP port). The peer is used as a destination when sending
+  and received datagrams are accepted only if they are sent
+  by the peer (a special mode also accepts datagrams from
+  any source if the ``peer''/target of the connection is a
+  multicast group).
+  \end{description}
+
+  \subsubsection{Data Transmission and Reception}
+
+  \begin{description}
+  \item[\lipc{udpSockSendTo()}] Allocates a fresh \rbuf{}, fills
+  the \ethn{}, IPV4 and UDP headers and copies the user data to
+  the UDP payload area. The destination address (IPV4 address and
+  UDP port) is provided by arguments to this call.
+  \item[\lipc{udpSockSend()}] Like \lipc{udpSockSendTo()} but the
+  socket must be ``connected'', i.e., peer address information has
+  already been provided and stored using \lipc{udpSockConnect()}.
+  \item[\lipc{udpSockSendBufTo()}] Like \lipc{udpSockSendTo()} but
+  the user passes an \rbuf() rather than a pointer to a data area.
+  The \rbuf{} must have been allocated by the user previously and
+  filled with the UDP payload. Using this entry point avoids
+  copying the entire payload into an \rbuf{}.
+  \item[\lipc{udpSockSendBuf()}] relates to \lipc{udpSockSendBufTo}
+  in the same way as \lipc{udpSockSend} relates to \lipc{udpSockSendTo}.
+  \item[\lipc{udpSockRecv()}] Return first datagram that is
+  stored in a socket's queue. If none is available then block
+  for data to arrive for some user-specified time.
+  \item[\lipc{udpSockNRead()}] Return the number of bytes available
+  in the socket's receiving queue.
+  \end{description}
+
+  \subsubsection{Multicast Groups}
+  \begin{description}
+  \item[\lipc{udpSockJoinMcast}] Join a multicast group.
+  \item[\lipc{udpSockLeaveMcast}] Leave a multicast group.
+  \end{description}
+
+\end{document}
