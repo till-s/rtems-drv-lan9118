@@ -1,4 +1,6 @@
 2011/09/29 (TS):
+ - lanIpBasic.h: export/declare lanIpBscAddBufs().
+2011/09/29 (TS):
  - Makefile.am:    added rules to Makefile.am to build + clean PDF
  - lanIpBasic.tex: further work.
  - lanIpBasic.h, lanIpBasicSetup.h: added comment that ethernet addresses

@@ -90,7 +90,7 @@ udpSockDestroy(int sd);
 int
 udpSockNRead(int sd);
 
-/* Alloc and free buffers */
+/* Alloc and free buffers from/to the internal buffer pool */
 LanIpPacketRec *
 udpSockGetBuf();
 
@@ -466,6 +466,11 @@ lanIpBscDrvCreate(int instance, uint8_t *enaddr_p);
  *          It is not possible to change parameters
  *          once the stack is initialized (lanIpBscInit()).
  *
+ *          It is not possible to reduce the number
+ *          of rbufs below the amount that is already
+ *          available (internal default plus any
+ *          buffers added by lanIpBscAddBufs() prior
+ *          to executing lanIpBscConfig()).
  */
 
 
@@ -495,6 +500,17 @@ lanIpBscInit();
 
 int
 lanIpBscShutdown();
+
+/* Allocate more buffers from malloc heap and add them
+ * to the pool. This routine may be called after the
+ * 
+ * If 'n' is zero then an internally defined default
+ * number of buffers is added.
+ *
+ * RETURNS: zero on success, nonzero on malloc() failure.
+ */
+int
+lanIpBscAddBufs(unsigned n);
 
 /*
  * Diagnostics routines.
