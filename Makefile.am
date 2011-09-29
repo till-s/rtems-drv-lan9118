@@ -68,4 +68,20 @@ lanIpBasic_e1k_DEPENDENCIES     = $(liblanIpBasic_e1k_a_OBJECTS)
 
 LINK                            = $(OBJLINK)
 
+EXTRA_DIST                      = lanIpBasic.tex
+PDFS                            = lanIpBasic.pdf
+
+clean-local:
+	$(RM) *.out *.toc *.aux *.log
+
+maintainer-clean-local:
+	$(RM) *.pdf
+
+pdf-local: $(PDFS)
+
+%.pdf: %.tex
+	pdflatex $^
+	pdflatex $^
+
+
 include $(top_srcdir)/rtems.am

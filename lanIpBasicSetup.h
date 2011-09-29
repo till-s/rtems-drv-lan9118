@@ -30,6 +30,8 @@ lanIpTakedown();
  * 'enaddr'   : Ethernet address to use; may be
  *              NULL (driver should try to read
  *              from eeprom).
+ *              Note that this is not a character
+ *              string but an array of 6 octets.
  *
  * RETURNS: 0 on success, nonzero on error.
  */

@@ -437,6 +437,8 @@ arpDumpCache(IpBscIf pd, FILE *f);
  *             A value < 0 picks the first instance available.
  *   'enaddr': ethernet address (driver may either ignore this or
  *             use it to override hardware settings).
+ *             Note that this is not a character string but an array
+ *             of 6 octets.
  * RETURNS: driver handle.
  */
 LanIpBscDrv

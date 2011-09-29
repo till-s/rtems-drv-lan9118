@@ -26,7 +26,7 @@ overhead and in a pseudo-deterministic%
 determinism due to features such as collisions nor is it very efficient
 for transmitting very small packet sizes. Some of these drawbacks are
 mitigated in a switched, full-duplex environment.
-} fashion. \lip runs independently from ordinary TCP/IP; there exists
+} fashion. \lip{} runs independently from ordinary TCP/IP; there exists
 absolutely no coupling between the two.
 
 The API of \lip, however, was designed to stay close to the BSD socket
@@ -127,8 +127,8 @@ follows:
       for testing purposes or applications with less strict requirements.
       Tight control over how ARP is done should be possible (explicit lookup,
       prohibit implicit lookups, user-control over cache-aging).
-\item ``Zero copy'', i.e., the RX and TX buffers are passed to/from the
-      user directly to the hardware/driver w/o the need for intermediate
+\item ``Zero copy'', i.e., RX and TX buffers can be passed to/from the
+      user directly to/from the hardware/driver w/o the need for intermediate
       copying.
 \item Diagnostics and debugging features such as statistics counters, and
       printed messages that can be enabled in ``debug-mode''.
@@ -137,11 +137,22 @@ follows:
   \subsection{Programming Interface}
 The latest version of the API documentation is always present in
 the \lipf{<lanIpBasic.h>} header file.
-  \subsection{Configuration}
+
+IPV4 addresses and port numbers are passed to several routines.
+It should be noted that IPV4 addresses
+are sometimes passed as character strings (in IPV4 ``dot-notation'')
+but mostly as 32-bit unsigned integers (\lipc{uint32\_t}). When encoded
+as such integers the representation is always in {\em network byte order}
+(AKA ``big-endian''). UDP port numbers, however, are always passed in
+{\em native (CPU) byte order} and are internally converted when necessary.
+Link-level (``ethernet'') addresses are passed as arrays of
+six binary octets ({\em not} as character strings).
+
+  \subsection{Configuration and Initialization}
 Before \lip{} can be used it must be properly set up and initialized.
 This procedure consists of a few steps:
 \begin{enumerate}
-\item Configure basic \lip{} parameters with \libc{lanIpBscConfig()}
+\item Configure basic \lip{} parameters with \lipc{lanIpBscConfig()}
   \begin{itemize}
     \item TX and RX descriptor ring size. This information is passed
           down to the driver which may (or in the case of very simple
@@ -157,7 +168,7 @@ This procedure consists of a few steps:
   However, the routine can be called at any time in order to
   read-back the current configuration.
 
-  Use of this call is optional; \lipc{} picks default values for
+  Use of this call is optional; \lip{} picks default values for
   all configurable parameters.
 \item Initialize \lip{} proper by executing \lipc{lanIpBscInit()}.
   This routine doesn't take any parameters but the return value
@@ -166,8 +177,8 @@ This procedure consists of a few steps:
   be used.
 \item Create a driver instance. Because currently there can only be
   a single driver which is hard-compiled into \lip{} (see
-  section~\ref{sec:history} about history) there is no choice to
-  make regarding which driver is going to be used.
+  section~\ref{sec:history} about history) there is no run-time
+  choice to make regarding what driver is to be used.
 
   The driver is instantiated by \lipc{lanIpBscDrvCreate()}. This
   routine is passed a {\em device-}instance and an optional link-level
@@ -177,11 +188,18 @@ This procedure consists of a few steps:
   first available instance is used (e.g., a device already attached
   to the regular TCP/IP stack of the operating system would be
   regarded ``unavaliable'' and skipped).
-
-  
+\item Create an ``interface'' instance by executing \lipc{lanIpBscIfCreate()}.
+  A handle to the driver instance created in the previous step is passed
+  as well as the IPV4 address and netmask to be used by the interface.
+  Both of these are passed as strings in IP ``dot'' notation.
 \end{enumerate}
-%TODO
-%TODO
+
+A convenience wrapper routine \lipc{lanIpSetup()}
+(see \lipc{<lanIpBasicSetup.h>}) is available which performs all of
+the above steps (except for \lipc{lanIpBscConfig()}). Unless
+there are special user requirements (e.g., using a specific device
+instance) the convenience routine should be sufficient for
+most applications.
   \subsection{Limitations}
 %TODO
   \subsection{Implementation}
@@ -266,7 +284,7 @@ data:
 
       When the user ``receives'' a message from the socket then
       \lip{} removes the first packet from the queue and hands
-      it back to the user.
+      it over to the user.
 \item Peer address (for a ``connected'' socket).
 \item Lock for serializing access to the socket. Most but not all
       operations on a socket are thread-safe (consult the API section
@@ -283,8 +301,8 @@ data:
       \end{itemize}
 \item Flags.
 \end{itemize}
-Note that a \lip{} socket is {\em always} ``bound'' to an address since
-it always references an interface and holds a port number.
+Note that a \lip{} socket is {\em always} ``bound'' (in the BSD sense)
+ to an address since it always references an interface and holds a port number.
 
     \subsubsection{Drivers}
 \lip{} defines an interface to the driver software
@@ -494,7 +512,7 @@ preceed \lipc{udpSockSend()} already created a cache entry.
 However, \lip{} provides a routine \lipc{arpScavenger()} which implements
 an algorithm for proper cache ageing. It is up to the user to create a
 task and let it execute the \lipc{arpScavenger()}. Note that while not
-letting the cache age minimizes ARP lookups but it carries the risk that
+letting the cache age minimizes ARP lookups this policy carries the risk that
 changes of networking hardware and/or IPV4 addresses etc. are not
 dealt with transparently but cause communication failure. If the
 \lipc{lanIpBscAutoRefreshARP} feature is enabled then ARP lookups
@@ -512,19 +530,106 @@ the packet headers.
   \subsection{Driver Interface}
 %TODO
   \subsection{Debugging}
-%TODO
+  \lip{} provides limited diagnostics which can prove useful for
+  debugging. Since \lip{} is independent from ``normal'' TCP-IP
+  none of the standard tools are available (however, sniffing
+  communication with \lip{} from another host connected to the
+  same LAN using standard tools may produce very valuable information,
+  too).
+
+  Diagnostic information consists of several diagnostic entry
+  points as well as console messages that may be enabled selectively.
+
+  \subsubsection{Diagnostic Routines}
+  The following diagnostic routines are available. They all accept
+  a \lipc{FILE} pointer so that the output may be routed to an
+  arbitrary file. A \lipc{NULL} value is accepted and results
+  in the information being printed on \lipc{stdout}.
+  \begin{description}
+  \item[\lipc{arpDumpCache()}] Print the contents of the ARP cache
+    associated with an interface to a file (or stdout).
+  \item[\lipc{lanIpBscDumpConfig()}] Dump the configuration parameters
+    of \lip{} but also the amount of corresponding resources that are
+    currently in use.
+  \item[\lipc{lanIpBscDumpMcGroups()}] Dump information about all
+    multicast groups that are subscribed on a given interface.
+  \item[\lipc{lanIpBscDumpIfStats()}] Print select information
+    associated with an interface. Note that some of this information
+    is redundant with \lipc{arpDumpCache()} and \lipc{lanIpBscDumpMcGroups()}.
+    An integer ``bitmask'' argument is passed which allows the
+    user to select the information she wishes to obtain:
+    \begin{description}
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_MAC}]
+        Link-level (``ethernet'') statistics.
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_IP}]
+        IP related statistics.
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_UDP}]
+        UDP related statistics.
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_ARP}]
+        ARP related statistics.
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_ICMP}]
+        ICMP related statistics.
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_IGMP}]
+        IGMP related statistics.
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_MCGRP}]
+        IP multicast memberships etc. (like \lipc{lanIpBscDumpMcGroups()}).
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_DRV}]
+        Driver-specific statistics (if supported by driver).
+      \item[\lipc{IPBSC\_IFSTAT\_INFO\_ALL}]
+        All of the above.
+    \end{description}
+  \item[\lipc{lanIpBscGetStats()}] Obtain summary statistics. Sometimes the user
+    wishes to process statistics information further rather than having a printout.
+    This entry point provides statistics in binary form.
+  \item[\lipc{lanIpBscFreeStats()}] Free resources associated with the object
+    returned by \lipc{lanIpBscGetStats()}.
+  \end{description}
+
+  \subsubsection{Debug Messages}
+  Provided that \lip{} was compiled with the symbol \lipc{DEBUG} defined (default)
+  then a global variable \lipc{lanIpDebug} is available (the initial value
+  of this variable is assigned the value of \lipc{DEBUG}, usually zero).
+  By setting select bits in this variable the generation of messages by the
+  protocol handler is enabled:
+  \begin{description}
+    \item[\lipc{DEBUG\_ARP}] Handling of the ARP related events such as
+      arrival of ARP requests or replies, generation or displacement of
+      cache entries etc.
+    \item[\lipc{DEBUG\_IP}] Handling of IP related events such as the processing
+      of received IP headers. 
+    \item[\lipc{DEBUG\_ICMP}] Handling of ICMP related events.
+    \item[\lipc{DEBUG\_UDP}] Handling of UDP related events such as the
+      filtering of arriving datagrams etc.
+    \item[\lipc{DEBUG\_TASK}] Events related to driver task(s) such as
+      successful startup or shutdown.
+    \item[\lipc{DEBUG\_IGMP}] Report IGMP related events.
+  \end{description}
+  Note that the \lipc{lanIpDebug} feature is considered rather low-level
+  ``internal'' business
+  and is not exported to the \lipc{<lanIpBasic.h>} header. Consult the
+  source code for details.
+
 \section{The udpSock API}
   The {\em udpSock} API provides simplified access to UDP socket
   communication.
   \subsection{Design Goals}
-%TODO
+  \begin{itemize}
+  \item Provide a simple interface to low-level datagram communication.
+  \item Use familiar ``BSD socket''-like abstraction.
+  \item Provide some hooks into low-level protocol features (for sake
+        of efficiency on low-end CPU).
+  \item Give the user access to raw data buffers so that (on select hardware)
+        payload data does not have to be copied but can be accessed
+        directly by hardware (if it features DMA). 
+  \item Support IPV4 multicast groups and IGMP.
+  \end{itemize}
   \subsection{Relation to udpComm}
   The {\em udpComm} API (which originally was part of \lip{} but 
   since has been unbundled and moved into the ``EPICS modules''
   realm) is a very slim ``wrapper'' API on top of ``udpSock''.
   Most udpSock API calls translate one-to-one into a corresponding
-  udpComm call. However, udpComm is designed to be {\em portable}.
-  In particular, an implementation of udpComm using regular BSD
+  udpComm call. However, udpComm is designed to be portable.
+  An implementation of udpComm using regular BSD
   sockets is available. This makes it possible to develop applications
   on udpComm and develop/test using the udpCommBSD implementation
   (which exists on every platform with BSD sockets). Only where
@@ -551,9 +656,7 @@ the packet headers.
   \subsubsection{Buffer Management}
   One design goal for \lip{} was to allow the user to interact 
   directly with buffers used for transmission and reception thus
-  enabling him/her to avoid unnecessary copying of payload data
-  since data can be written or read from buffers used by \lip{}
-  directly.
+  enabling him/her to avoid unnecessary copying of payload data.
   \begin{description}
   \item[\lipc{udpSockGetBuf()}] Allocate a buffer.
   \item[\lipc{udpSockRefBuf()}] Increment reference count of
@@ -562,6 +665,9 @@ the packet headers.
   for shared RX buffers that are treated as ``read-only'').
   \item[\lipc{udpSockFreeBuf()}] Decrement reference count and
   release the buffer when the count drops to zero.
+  \item[\lipc{udpSockUdpBufPayload()}] Given a buffer handle
+  this routine computes the starting address of the UDP
+  payload area inside the (otherwise opaque) buffer.
   \end{description}
 
   \subsubsection{``Connections''}
