@@ -22,6 +22,9 @@ void      *lanIpDrv  =  0;
 IpBscIf   lanIpIf    =  0;
 int		  lanIpUdpsd = -1;
 
+unsigned  lanIpUdpSlvTo = 2000;
+unsigned  lanIpUdpMstTo = 1000;
+
 int
 lanIpTakedown()
 {
@@ -190,6 +193,25 @@ static LanIpPacketRec dummy = {{{{{0}}}}};
 	return len;
 }
 
+static inline int ms2ticks(int ms)
+{
+    if ( ms > 0 ) {
+        rtems_interval rate;
+        rtems_clock_get(RTEMS_CLOCK_GET_TICKS_PER_SECOND, &rate);
+        if ( ms > 50000 ) {
+            ms /= 1000;
+            ms *= rate;
+        } else {
+            ms *= rate;
+            ms /= 1000;
+        }
+        if ( 0 == ms ) {
+            ms = 1;
+        }
+    }
+    return ms;
+}
+
 int
 udpBouncer(int master, int raw, uint32_t dipaddr, uint16_t dport)
 {
@@ -197,6 +219,11 @@ LanIpPacket p;
 int         st;
 int         err = -1;
 int         cnt = 4;
+int         tout = master ? lanIpUdpMstTo : lanIpUdpSlvTo;
+
+	/* Don't convert a negative [forever] timeout */
+	if ( tout > 0 )
+		tout = ms2ticks( tout );
 
 	if ( !raw ) {
 		if ( (err=udpSockConnect(lanIpUdpsd, dipaddr, dport, UDPSOCK_MCPASS)) ) {
@@ -231,7 +258,7 @@ int         cnt = 4;
 
 			lanIpTst_pktsent++;
 
-			while ( (st = udpSocketEcho(lanIpUdpsd, raw, 1, 50)) > 0 ) {
+			while ( (st = udpSocketEcho(lanIpUdpsd, raw, 1, tout)) > 0 ) {
 				if ( !lanIpTst_keeprunning ) {
 					lanIpTst_pktlost--;
 					break;
@@ -248,7 +275,7 @@ int         cnt = 4;
 			/* make sure socket is flushed */
 			while ( (p = udpSockRecv(lanIpUdpsd,0)) )		
 				udpSockFreeBuf(p);
-			while ( (st = udpSocketEcho(lanIpUdpsd, raw, 0, 100)) > 0)
+			while ( (st = udpSocketEcho(lanIpUdpsd, raw, 0, tout)) > 0)
 					;
 			fprintf(stderr,"Slave timed out; terminating (status %i)\n", st);
 	}
