@@ -1,3 +1,18 @@
+2012/02/10 (TS):
+ - drvLan9118.c: Attempt to do a hard reset first thing during
+   initialization (drvLan9118Setup()). However, this only works
+   if the reset line (nReset) is tied to a GPIO pin on the uC5282.
+   This is the case with the current PAD design but the PAC does
+   *not* feature this connection.
+ - drvLan9118.c: Cleaned up endianness detection and handling.
+   Should now work for all cases (including 32-bit port size).
+   Added more comments explaining the endianness issues including
+   a table exploring all possibilities of ENDIAN, cross-wiring
+   and software-byte swapping.
+ - drvLan9118.c: Fixed stdint 'printf' formats using macros
+   from <inttypes.h>.
+ - lanIpBasicTest.c: made timeouts for udpBouncer global variables
+   (in milli-seconds) allowing for tuning them.
 2011/09/29 (TS):
  - lanIpBasic.h: export/declare lanIpBscAddBufs().
 2011/09/29 (TS):
