@@ -59,6 +59,10 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.39  2010/06/17 18:19:00  strauman
+		 - Moved 'BSP_removeVME_isr()' to daemon, i.e., the same context from where
+		   the ISR was installed.
+		
 		Revision 1.38  2010/06/16 19:14:49  strauman
 		2010/06/16 (TS):
 		 - drvLan9118.c: BUGFIX -- ISR was installed and interrupts enabled BEFORE
@@ -273,11 +277,62 @@
  *      and need to be swapped again (in software) when the driver accesses
  *      registers.
  *
- * THIS DRIVER ASSUMES THAT BYTE LANES CONNECTING THE 9118 TO A BIG-ENDIAN
- * SYSTEM ARE SWAPPED IN HARDWARE.
- *
  * The 'ENDIAN' register is unused in this scenario and the port-width doesn't
  * matter.
+ *
+ *
+ * Table of the various possible combinations of how a 4-byte value '3210'
+ * reads back:
+ *
+ * HBS: bytes swapped in hardware, i.e., byte lanes 'wired across'. 
+ *      32-bit port wires B0 <-> B3, B1 <-> B2, B2 <-> B1, B3 <-> B0.
+ *
+ *      16-bit port wires B0 <-> B1, B1 <-> B0
+ *
+ * SBS: bytes swapped in software (i.e., by this driver)
+ *
+ * DBS: byte-swapp required when transferring memory (packet data) to
+ *      register
+ *
+ * END: ENDIAN register set to swap 16-bit words
+ *
+ * NOTE: only the combinations which have a 'DBS' setting marked are
+ *       useful/legal.
+ *
+ * a) 32-bit port (ENDIAN has no effect)
+ * -------------------------------------
+ *
+ *  HBS  SBS       CPU-BE DBS     CPU-LE DBS
+ *
+ *   n    n         3210   y       3210   n
+ *   n    y         0123           0123
+ *   y    n         0123           0123
+ *   y    y         3210   n       3210   y
+ *
+ * b) 16-bit port (ENDIAN switches order of 16-bit words)
+ *
+ *  HBS  SBS  END  CPU-BE DBS     CPU-LE DBS
+ * 
+ *   n    n    n    1032           3210   n       
+ *   n    y    n    2301           0123           
+ *   y    n    n    0123           2301           
+ *   y    y    n    3210   n       1032           
+ *   n    n    y    3210   y       1032           
+ *   n    y    y    0123           2301           
+ *   y    n    y    2301           0123           
+ *   y    y    y    1032           3210   y       
+ *
+ * For BE CPUs (32 and 16-bit port) swapping HW bytes is
+ * preferable to using ENDIAN since it allows for direct
+ * transfer of memory/packet data.
+ * 
+ * For LE CPUs (32 and 16-bit port) straight wiring of
+ * HW bytes is preferable since no byte-swapping is needed
+ * at all.
+ * 
+ * However, if hw bytes are swapped (cross-wired) then
+ * this can be corrected by swapping back in SW and using
+ * ENDIAN for a 16-bit port.
  */
 
 #include <rtems.h>
@@ -767,8 +822,10 @@ typedef union {
 #define BYTEREV_REG(x)	(x)
 #define BYTEREV_BUF(x)	(x)
 #else
-#define BYTEREV_REG(x)	(x)
-#define BYTEREV_BUF(x)	(x)
+#error "Unsupported Configuration: swapped byte lanes and little-endian CPU"
+/* It should still work, however inefficiently... */
+#define BYTEREV_REG(x) byterev(x)
+#define BYTEREV_BUF(x) (CopyItem_u)byterev(UINTOF(x))
 #endif
 #endif /* if BYTE_ORDER == BIG_ENDIAN */
 #endif /* ifdef BYTE_ORDER */
@@ -784,7 +841,7 @@ typedef union {
 #define MCF5282_DMA_DCR_DSIZE_LINE                      (0x00030000)
 #endif
 
-#include <stdint.h>
+#include <inttypes.h>
 
 /* Configuration Parameters */
 
@@ -1040,7 +1097,7 @@ uint32_t oendian;
 	/* verify that we can read signature from BYTE_TEST */
 	o = rd9118Reg(plan_ps->base, BYTE_TEST);
 	if ( 0x87654321 != o ) {
-		fprintf(stderr,"drvLan9118: probing BYTE_TEST failed -- is there a chip? (read 0x%08lx -- expected 0x87654321)\n", o);
+		fprintf(stderr,"drvLan9118: probing BYTE_TEST failed -- is there a chip? (read 0x%08"PRIx32" -- expected 0x87654321)\n", o);
 		rval = -1;
 	}
 
@@ -1072,11 +1129,11 @@ uint32_t oendian;
 		z = rd9118Reg(plan_ps->base, ENDIAN);
 	}
 	if ( z != 0 ) {
-		fprintf(stderr,"drvLan9118: SANITY CHECK FAILURE -- writing 0x00000000 to  register failed; read back 0x%08lx\n",z);
+		fprintf(stderr,"drvLan9118: SANITY CHECK FAILURE -- writing 0x00000000 to  register failed; read back 0x%08"PRIx32"\n",z);
 		rval = -1;
 	}
 	if ( o != 0xffffffff ) {
-		fprintf(stderr,"drvLan9118: SANITY CHECK FAILURE -- writing 0xffffffff to  register failed; read back 0x%08lx\n",o);
+		fprintf(stderr,"drvLan9118: SANITY CHECK FAILURE -- writing 0xffffffff to  register failed; read back 0x%08"PRIx32"\n",o);
 		rval = -1;
 	}
 
@@ -1208,6 +1265,7 @@ int               i;
 unsigned char     buf_a[6];
 unsigned short    sbuf_a[6];
 rtems_status_code sc;
+struct timespec   tv;
 
 	theLan9118_s.base = LAN_9118_BASE;
 	plan_ps           = &theLan9118_s;
@@ -1218,35 +1276,76 @@ rtems_status_code sc;
 	/* setup BSP specific glue stuff   */
 	drvLan9118_setup_uc5282();
 
+	/* try to hard-reset the device. This only works
+	 * if the board provides a connection of the NIC's
+	 * nRESET pin to a GPIO pin on the uC5282 (and this
+	 * driver was compiled using the correct port and pin,
+	 * see above.
+	 */
+	drvLan9118HardReset(0);
+
+	/* Must hold for 200us in reset */
+	tv.tv_sec  = 0;
+	tv.tv_nsec = 220000;
+	nanosleep(&tv, 0);
+
+	drvLan9118HardReset(1);
+
+	/* should poll the PMT_CTL[READY] bit. If not set after 100ms
+	 * then something is bad. Unfortunately, we don't know if
+	 * the driver endianness matches the devices'. We could
+	 * check both, bit-0 and bit-24 but unfortunately bit-24
+	 * is 'reserved' and has no defined value :-( so that
+	 * is not viable. Also, depending on the byte-lane swapping
+	 * bit-0 may end up pretty much anywhere.
+	 * After a timeout we just proceed to the
+	 * endian-test. That one should fail anyways if the device
+	 * is still not ready...
+	 */
+	tv.tv_sec  = 0;
+	tv.tv_nsec = 100000000;
+	nanosleep(&tv, 0);
+
 	/* Initialize the 9118 */
 	memset(&plan_ps->stats_s, 0, sizeof(plan_ps->stats_s));
 
 	/* First, we must perform a read access to the BYTE TEST register */
 	tmp = rd9118Reg(plan_ps->base, BYTE_TEST);
 
+	/* Verify the BYTE TEST register and make sure the driver was compiled
+	 * in a mode compatible with the byte-lane wiring.
+	 */
+	switch ( tmp ) {
+		case 0x87654321: /* we got it right */
+		break;
+
+		case 0x43218765: /* we can fix it setting ENDIAN */
+			/* Setup for 'big-endian' mode (should also swap 16-bit words correctly for little-endian CPUs */
+			wr9118Reg(plan_ps->base, ENDIAN, 0xffffffff);
+		break;
+
+
+		case 0x21436587: /* bad configuration */
 #ifdef HW_BYTES_NOT_SWAPPED
-	if ( 0x21436587 == tmp ) {
-		fprintf(stderr,"ERROR: Seems this board has swapped byte lanes but the driver was compiled otherwise\n");
-		return 0;
-	}
+			fprintf(stderr, "ERROR: Seems this board has has swapped byte lanes but the driver was compiled otherwise\n");
 #else
-	if ( 0x65872143 == tmp ) {
-		fprintf(stderr,"ERROR: Seems this board has NON-swapped byte lanes but the driver was compiled otherwise\n");
-		return 0;
-	}
+			/* if we use a 32-bit port or are on a LE CPU then this pattern also occurs if: */
+			fprintf(stderr, "ERROR: Seems this board has has NON-swapped byte lanes but the driver was compiled otherwise\n");
 #endif
-	
+		return 0;
+
+		case 0x65872143:
 #if BYTE_ORDER == BIG_ENDIAN
-#ifdef HW_BYTES_NOT_SWAPPED
-	/* Setup for big endian mode */
-	if ( 0x87654321 != tmp )
-		wr9118Reg(plan_ps->base, ENDIAN, 0xffffffff);
-#endif
+			fprintf(stderr, "ERROR: Seems this board has has NON-swapped (32-bit) byte lanes but the driver was compiled otherwise\n");
 #else
-#ifndef HW_BYTES_NOT_SWAPPED
-#error "Setup of ENDIAN register not implemented for byte-swapped connection to a little-endian CPU"
+			fprintf(stderr, "ERROR: Seems this board has has swapped byte lanes but the driver was compiled otherwise\n");
 #endif
-#endif
+		return 0;
+
+		default:
+			fprintf(stderr, "ERROR: Unexpected contents of BYTE_TEST: 0x%08"PRIx32"\n", tmp);
+		return 0;
+	}
 
 	if ( drvLan9118SanityCheck(plan_ps) )
 		return 0;
@@ -1829,7 +1928,7 @@ uint32_t	    int_sts, rx_sts, tx_sts, phy_sts;
 #ifdef DEBUG
 					else
 						if ( (drvLan9118Debug & DEBUG_TXSTS) && (tx_sts & 0xffff) )
-							printf("Discarding TX status 0x%08lx\n", tx_sts);
+							printf("Discarding TX status 0x%08"PRIx32"\n", tx_sts);
 #endif
 				}
 
