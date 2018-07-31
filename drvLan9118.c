@@ -59,6 +59,27 @@
  
   Mod:  (newest to oldest)  
 		$Log$
+		Revision 1.39.2.2  2012/05/02 19:49:52  strauman
+		 - drvLan9118.c: undefine LAN9118_RESET_TD_PIN -- some versions of
+		   the PAD board have the coldfire #MR (master-reset) line connected
+		   there, too. I.e., trying to hard-reset the 9118 results in the
+		   entire system being reset.
+		
+		Revision 1.39.2.1  2012/02/10 15:59:54  strauman
+		2012/02/10 (TS):
+		 - drvLan9118.c: Attempt to do a hard reset first thing during
+		   initialization (drvLan9118Setup()). However, this only works
+		   if the reset line (nReset) is tied to a GPIO pin on the uC5282.
+		   This is the case with the current PAD design but the PAC does
+		   *not* feature this connection.
+		 - drvLan9118.c: Cleaned up endianness detection and handling.
+		   Should now work for all cases (including 32-bit port size).
+		   Added more comments explaining the endianness issues including
+		   a table exploring all possibilities of ENDIAN, cross-wiring
+		   and software-byte swapping.
+		 - drvLan9118.c: Fixed stdint 'printf' formats using macros
+		   from <inttypes.h>.
+		
 		Revision 1.39  2010/06/17 18:19:00  strauman
 		 - Moved 'BSP_removeVME_isr()' to daemon, i.e., the same context from where
 		   the ISR was installed.
@@ -398,8 +419,11 @@ extern const char *getbenv(const char *);
 
 /* To which GPIO port TD pin (NOTE: this is arcturus port PTC!!)
  * is the reset line wired. Leave undefined if no connection exists.
- */
+
+ NOTE: I believe the TD pin pulls the system reset line on 
+       certain PAD versions (email. R. Akre 2/13/2012)...
 #define LAN9118_RESET_TD_PIN	(0)
+ */
 
 /* Which vector is the ISR connected to                      */
 #define LAN9118_VECTOR	(64+LAN9118_PIN)

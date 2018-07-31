@@ -1,3 +1,8 @@
+2012/05/02 (TS):
+ - drvLan9118.c: undefine LAN9118_RESET_TD_PIN -- some versions of
+   the PAD board have the coldfire #MR (master-reset) line connected
+   there, too. I.e., trying to hard-reset the 9118 results in the
+   entire system being reset.
 2012/02/10 (TS):
  - drvLan9118.c: Attempt to do a hard reset first thing during
    initialization (drvLan9118Setup()). However, this only works
