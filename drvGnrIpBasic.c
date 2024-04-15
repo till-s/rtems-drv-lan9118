@@ -6,6 +6,8 @@ typedef struct gnreth_drv_s_ *gnreth_drv;
 #define ETHERPADSZ sizeof(((EthHeaderRec*)0)->pad)
 #define ETHERHDRSZ (sizeof(EthHeaderRec) - ETHERPADSZ) 
 
+#define IFM_PHY(idx) ((idx)<<28)
+
 /* fwd decl of interface struct */
 struct IpBscIfRec_;
 
@@ -430,6 +432,7 @@ rtems_event_set       ev_mask = IRQ_EVENT | KILL_EVENT;
 rtems_event_set       evs;
 uint32_t              irqs, my_irqs;
 int                   media;
+int                   status;
 
 #ifdef DEBUG
 	if ( lanIpDebug & DEBUG_TASK ) {
@@ -437,12 +440,13 @@ int                   media;
 	}
 #endif
 
-	if ( 0 == lldrv->med_ioctl( lldev, SIOCGIFMEDIA, &media ) ) {
+	media = IFM_PHY(0); /* must pass the PHY index in 'media' !*/
+	if ( 0 == (status = lldrv->med_ioctl( lldev, SIOCGIFMEDIA, &media )) ) {
 		if ( (IFM_LINK_OK & media) ) {
 			gdrv->flags &= ~IF_FLG_STOPPED;
 		}
 	} else {
-		fprintf(stderr,"WARNING: unable to determine link state; may be unable to send\n");
+		fprintf(stderr,"WARNING: unable to determine link state; may be unable to send %i\n", status);
 	}
 	
 	my_irqs = lldrv->ln_irq_msk | lldrv->tx_irq_msk;
@@ -466,6 +470,7 @@ int                   media;
 		}
 		if ( (irqs & lldrv->ln_irq_msk) ) {
 			/* propagate link change to serial port */
+			media = IFM_PHY(0); /* must pass PHY idx in 'media' */
 		DRVLOCK(gdrv);
 			lldrv->ack_ln_chg(lldev, &media); /* propagate link change to serial port */
 			if ( (IFM_LINK_OK & media) ) {
