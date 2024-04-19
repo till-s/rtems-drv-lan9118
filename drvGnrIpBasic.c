@@ -6,6 +6,13 @@ typedef struct gnreth_drv_s_ *gnreth_drv;
 #define ETHERPADSZ sizeof(((EthHeaderRec*)0)->pad)
 #define ETHERHDRSZ (sizeof(EthHeaderRec) - ETHERPADSZ) 
 
+/* Must be compatible with BSD networking because the
+ * BSP driver may call into BSD code; we dont' want to pull
+ * in any BSD header, however, because lanIpBsc
+ * code should not have any explicit dependency on BSD.
+ *
+ * phy address/instance is bits 31..28.
+ */
 #define IFM_PHY(idx) ((idx)<<28)
 
 /* fwd decl of interface struct */
